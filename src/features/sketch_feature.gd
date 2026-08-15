@@ -9,6 +9,27 @@ var plane: String = "XY"
 var sketch: Sketch = null
 
 
+## Sketch-plane basis in 3D world space (world units are mm, like the model).
+## Columns: x = sketch +X, y = sketch +Y, z = plane normal. A sketch point
+## (u, v) sits at world `plane_transform() * Vector3(u, v, 0)`.
+static func plane_basis(plane_name: String) -> Basis:
+	match plane_name:
+		"XZ":
+			return Basis(Vector3(1, 0, 0), Vector3(0, 0, -1), Vector3(0, 1, 0))
+		"YZ":
+			return Basis(Vector3(0, 1, 0), Vector3(0, 0, 1), Vector3(1, 0, 0))
+	return Basis(Vector3(1, 0, 0), Vector3(0, 1, 0), Vector3(0, 0, 1))   # XY
+
+
+func plane_transform() -> Transform3D:
+	return Transform3D(plane_basis(plane), Vector3.ZERO)
+
+
+## Sketch (u, v) mm -> world position.
+func to_world(p: Vector2) -> Vector3:
+	return plane_transform() * Vector3(p.x, p.y, 0.0)
+
+
 static func make(fname: String, fplane := "XY") -> SketchFeature:
 	var f := SketchFeature.new()
 	f.name = fname
