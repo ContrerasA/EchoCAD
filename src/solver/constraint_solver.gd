@@ -14,8 +14,13 @@ extends RefCounted
 ## MAX_ROUNDS; over-constrained systems don't explode — iteration returns
 ## the best compromise. Driven dimensions measure and never project.
 
-const MAX_ROUNDS := 60
+const MAX_ROUNDS := 200
 const CONVERGED := 0.0005      # mm — max correction magnitude to stop
+## Under-relaxation on every point move. Stiff loops (a slot's shared rim
+## points feed four tangencies + equal radii + arc couplings) overshoot and
+## explode at full step; damped Gauss-Seidel trades round count for
+## stability.
+const RELAX := 0.6
 
 ## Solve the sketch. `pinned` — Dictionary set OR Array of point entity ids
 ## that must not move (dragged points, FIX operands are added internally).
@@ -49,17 +54,36 @@ static func solve(sk: Sketch, pinned = []) -> Dictionary:
 		elif e.kind() == "circle":
 			rad[e.id] = (e as SketchCircle).radius
 
+	var arcs: Array = []
+	for e in sk.entities():
+		if e.kind() == "arc":
+			arcs.append(e)
+
 	var rounds := 0
 	for round_i in MAX_ROUNDS:
 		rounds = round_i + 1
+		# Rigid propagation: when a projection translates an arc's CENTER,
+		# its rim points ride along (minimal-motion behavior — driving a
+		# slot's length must not shrink its width). Snapshot centers, then
+		# apply the round's center deltas to unpinned rims afterwards.
+		var centers_before := {}
+		for a: SketchArc in arcs:
+			centers_before[a.id] = pos.get(a.center, Vector2.ZERO)
 		var worst := 0.0
 		for c in sk.constraints:
 			if c.driven:
 				continue
 			worst = maxf(worst, _project(sk, c, pos, rad, pin))
-		for e in sk.entities():
-			if e.kind() == "arc":
-				worst = maxf(worst, _project_arc_radius(sk, e as SketchArc, pos, pin))
+		for a: SketchArc in arcs:
+			var delta: Vector2 = (pos.get(a.center, Vector2.ZERO) as Vector2) \
+				- (centers_before[a.id] as Vector2)
+			if delta.length() > 1e-12:
+				for pid: String in [a.start, a.end]:
+					if not pin.has(pid) and pos.has(pid):
+						pos[pid] = (pos[pid] as Vector2) + delta
+						worst = maxf(worst, delta.length())
+		for a: SketchArc in arcs:
+			worst = maxf(worst, _project_arc_radius(sk, a, pos, pin))
 		if worst < CONVERGED:
 			break
 
@@ -252,9 +276,10 @@ static func _project(sk: Sketch, c: SketchConstraint, pos: Dictionary,
 static func _move(id: String, to: Vector2, pos: Dictionary, pin: Dictionary) -> float:
 	if id == "" or pin.has(id) or not pos.has(id):
 		return 0.0
-	var d := (to - (pos[id] as Vector2)).length()
-	pos[id] = to
-	return d
+	var cur: Vector2 = pos[id]
+	var step := (to - cur) * RELAX
+	pos[id] = cur + step
+	return step.length()
 
 
 ## Split a correction between two points honoring pins. `delta` moves a
@@ -464,19 +489,26 @@ static func _tangent_line_circle(sk: Sketch, line_id: String, circ_id: String,
 	if absf(err) < 1e-9:
 		return 0.0
 	var sgn := signf(signed if signed != 0.0 else 1.0)
+	var moved := 0.0
+	# ARC radius is defined by its own rim points — self-referential, so the
+	# projection must give it a radius pathway (pull rims toward the gap) or
+	# stiff loops like a slot never converge. Circles keep their radius here.
+	var is_arc := sk.entity(circ_id) is SketchArc
+	if is_arc:
+		moved = maxf(moved, _set_radius(sk, circ_id, r + err * 0.5, pos, rad, pin))
+		err *= 0.5
 	# Move the center toward/away, or translate the line, by mobility.
 	var line_mobile := not (pin.has(ids[0]) and pin.has(ids[1]))
 	var center_mobile := not pin.has(cid)
-	var moved := 0.0
 	if center_mobile and line_mobile:
 		moved = maxf(moved, _move(cid, cc - n * sgn * err * 0.5, pos, pin))
 		moved = maxf(moved, _move(ids[0], a + n * sgn * err * 0.5, pos, pin))
 		moved = maxf(moved, _move(ids[1], b + n * sgn * err * 0.5, pos, pin))
 	elif center_mobile:
-		moved = _move(cid, cc - n * sgn * err, pos, pin)
+		moved = maxf(moved, _move(cid, cc - n * sgn * err, pos, pin))
 	elif line_mobile:
-		moved = maxf(_move(ids[0], a + n * sgn * err, pos, pin),
-			_move(ids[1], b + n * sgn * err, pos, pin))
+		moved = maxf(moved, maxf(_move(ids[0], a + n * sgn * err, pos, pin),
+			_move(ids[1], b + n * sgn * err, pos, pin)))
 	return moved
 
 

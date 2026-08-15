@@ -201,3 +201,28 @@ Status: PENDING sign-off
 Fix log:
 - SketchConstraint.make now copies its operand array — the smart dimension
   tool cleared a shared array on reset and gutted the stored constraint.
+
+## §M9 — Slot tool
+
+Status: PENDING sign-off
+
+1. Slot (S) — center-to-center: click two center points, move the cursor
+   off-axis (live outline + W readout follows), click to set width. Result:
+   two side lines + two end caps, tangent everywhere, no seams.
+2. Type-in: after the two clicks, type `0.5` Enter for an exact 0.5 in
+   width. Suffixes work.
+3. Slot (Overall): the two clicks are the OUTER extremes; caps inset so the
+   total length matches the clicks.
+4. Slot (Center Pt): first click is the slot's midpoint, second an end
+   center; the other end mirrors automatically.
+5. One Ctrl+Z removes the whole slot.
+6. Dimension the center distance (D, click both centers) and drive it —
+   the slot stretches, width unchanged, caps stay tangent. Dimension an end
+   arc radius — width drives. Drag a center with Select — the slot follows
+   as a slot.
+7. Esc mid-placement leaves nothing behind.
+
+Fix log:
+- Solver: damped Gauss-Seidel (RELAX 0.6) + arc rims ride rigidly with
+  their center each round + arc tangency gets a radius pathway — the slot's
+  stiff constraint loop exploded (or collapsed its width) without these.
