@@ -24,6 +24,10 @@ const COLOR_AXIS_Y := Color(0.35, 0.80, 0.35, 0.8)
 var bridge: RenderBridge = null
 ## The unit whose steps the grid follows (document display unit).
 var grid_unit: UnitConverter.Unit = UnitConverter.Unit.IN
+## Tool input hook: Callable(world: Vector2, screen: Vector2, event) -> bool.
+## LMB buttons and non-pan motion are offered here first (AppRoot routes to
+## the ToolManager); camera input (wheel, MMB) never reaches it.
+var tool_input: Callable = Callable()
 
 var _zoom := 4.0
 var _pan := Vector2.ZERO
@@ -96,12 +100,18 @@ func _gui_input(event: InputEvent) -> void:
 		elif mb.pressed and mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 			zoom_at(1.0 / 1.1, mb.position)
 			accept_event()
+		elif mb.button_index == MOUSE_BUTTON_LEFT and tool_input.is_valid():
+			if tool_input.call(screen_to_world(mb.position), mb.position, mb):
+				accept_event()
 	elif event is InputEventMouseMotion:
 		var mm := event as InputEventMouseMotion
 		if mm.button_mask & MOUSE_BUTTON_MASK_MIDDLE:
 			_pan += Vector2(-mm.relative.x, mm.relative.y) / _zoom
 			_on_view_changed()
 			accept_event()
+		elif tool_input.is_valid():
+			if tool_input.call(screen_to_world(mm.position), mm.position, mm):
+				accept_event()
 
 
 ## --- rendering ---------------------------------------------------------------
