@@ -256,6 +256,62 @@ func _cmd_action_add_constraint(a: Dictionary, p: StreamPeerTCP, id: Variant) ->
 		"dof": DofAnalyzer.summary(sk)}
 
 
+func _cmd_query_parameters(_a: Dictionary, _p: StreamPeerTCP, _id: Variant) -> Dictionary:
+	var out: Array = []
+	for prm in app.doc.parameters:
+		out.append(prm.to_dict())
+	return {"parameters": out}
+
+
+## Create or update a named parameter: {name, expr, unit?("mm"/"in"/...,
+## omit = scalar)}. Re-values dependent dimensions + re-solves (one step).
+func _cmd_action_set_parameter(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
+	var pname := String(a.get("name", ""))
+	if not CadExpression.valid_name(pname):
+		_reply_err(p, id, "bad_args", "invalid parameter name %s" % pname)
+		return null
+	var unit: int = CadParameter.UNIT_SCALAR
+	if a.has("unit"):
+		unit = UnitConverter.unit_from_string(String(a["unit"]))
+	var new_list: Array = []
+	var found := false
+	for prm in app.doc.parameters:
+		if prm.name == pname:
+			var np := prm.duplicate_parameter()
+			np.expr = String(a.get("expr", prm.expr))
+			np.unit = unit if a.has("unit") else prm.unit
+			new_list.append(np)
+			found = true
+		else:
+			new_list.append(prm)
+	if not found:
+		new_list.append(CadParameter.make(pname, String(a.get("expr", "0")), unit))
+	var resolved := CadExpression.evaluate_params(new_list)
+	for prm: CadParameter in new_list:
+		prm.value = float((resolved["values"] as Dictionary).get(prm.name, 0.0))
+	app.set_parameters(new_list)
+	return {"values": resolved["values"], "errors": resolved["errors"]}
+
+
+func _cmd_action_set_dimension(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
+	var index := int(a.get("index", -1))
+	var batch := CmdMergeBatch.new("Edit Dimension", [])
+	app.stack.push_no_merge(batch)
+	var why := app.set_dimension_value(index, String(a.get("text", "")))
+	batch.seal()
+	if why != "":
+		_reply_err(p, id, "invalid", why)
+		return null
+	var sk := app.active_sketch()
+	return {"value": sk.constraints[index].value,
+		"expr": sk.constraints[index].expr}
+
+
+func _cmd_action_set_driven(a: Dictionary, _p: StreamPeerTCP, _id: Variant) -> Dictionary:
+	app.set_dimension_driven(int(a.get("index", -1)), bool(a.get("driven", true)))
+	return {}
+
+
 func _cmd_action_delete_constraint(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
 	var sk := app.active_sketch()
 	if sk == null:

@@ -57,7 +57,7 @@ var label_offset := Vector2.ZERO
 static func make(t: Type, ops: Array[String], v := 0.0) -> SketchConstraint:
 	var c := SketchConstraint.new()
 	c.type = t
-	c.operands = ops
+	c.operands = ops.duplicate()   # never alias the caller's array
 	c.value = v
 	return c
 

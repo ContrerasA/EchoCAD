@@ -24,6 +24,8 @@ var selected_constraint := -1
 var dof := {}
 ## Constraint badge hit rects from the last overlay draw: [{index, rect}].
 var badge_hits: Array = []
+## Dimension label hit rects from the last overlay draw: [{index, rect}].
+var dim_hits: Array = []
 var mode: Mode = Mode.MODEL
 ## Feature id of the sketch being edited ("" in model mode).
 var active_sketch_id := ""
@@ -68,6 +70,7 @@ func _ready() -> void:
 	tools.register(CenterArcTool.new())
 	tools.register(TangentArcTool.new())
 	tools.register(PointTool.new())
+	tools.register(SmartDimensionTool.new())
 	tools.overlay_needs_redraw.connect(func() -> void: overlay.queue_redraw())
 	tools.active_changed.connect(func(_id: String) -> void: _refresh_ui())
 	_build_ui()
@@ -133,6 +136,99 @@ func delete_constraint(index: int) -> void:
 	solve_followers()
 	batch.seal()
 	selected_constraint = -1
+
+
+## Drive a dimension from user text: a literal ("2.5", "10mm") sets the
+## value in the display unit; anything else becomes a live EXPRESSION over
+## the document parameters, stored with the unit space it was typed in.
+## Edit + re-solve = one undo step (merges into an open batch if any).
+## Returns "" or an error message.
+func set_dimension_value(index: int, text: String) -> String:
+	var sk := active_sketch()
+	if sk == null or index < 0 or index >= sk.constraints.size():
+		return "no such dimension"
+	var c := sk.constraints[index]
+	var unit_space: int = CadParameter.UNIT_SCALAR \
+		if c.type == SketchConstraint.Type.ANGLE else int(doc.display_unit)
+	var edited := c.duplicate_constraint()
+	if CadExpression.is_literal(text):
+		if c.type == SketchConstraint.Type.ANGLE:
+			edited.value = text.to_float()
+		else:
+			var r := UnitConverter.parse(text, doc.display_unit)
+			if not r["ok"]:
+				return String(r["error"])
+			edited.value = r["mm"]
+		edited.expr = ""
+	else:
+		var r := _eval_dimension_text(text, unit_space)
+		if not bool(r["ok"]):
+			_status_hint.text = "Expression error: " + String(r["error"])
+			return String(r["error"])
+		edited.value = float(r["value"])
+		edited.expr = text
+		edited.expr_unit = unit_space
+	var after: Array = sk.constraints.duplicate()
+	after[index] = edited
+	stack.push(CmdSetConstraints.new(active_sketch_id, sk.constraints, after))
+	solve_followers()
+	return ""
+
+
+func set_dimension_driven(index: int, driven: bool) -> void:
+	var sk := active_sketch()
+	if sk == null or index < 0 or index >= sk.constraints.size():
+		return
+	var edited := sk.constraints[index].duplicate_constraint()
+	edited.driven = driven
+	var after: Array = sk.constraints.duplicate()
+	after[index] = edited
+	var batch := CmdMergeBatch.new("Driven", [])
+	stack.push_no_merge(batch)
+	stack.push(CmdSetConstraints.new(active_sketch_id, sk.constraints, after))
+	solve_followers()
+	batch.seal()
+
+
+## Evaluate text in `unit_space` against the document parameters (angle
+## dimensions are scalar degrees; lengths convert to canonical mm).
+func _eval_dimension_text(text: String, unit_space: int) -> Dictionary:
+	return CadExpression.eval_text(doc.parameters, text, unit_space)
+
+
+## Replace the parameter list, re-value every expression-driven dimension in
+## every sketch, and re-solve — ONE undo step (Fusion's parameter edit).
+func set_parameters(new_params: Array) -> void:
+	var batch := CmdMergeBatch.new("Parameters", [])
+	stack.push_no_merge(batch)
+	stack.push(CmdSetParameters.new(doc.parameters, new_params))
+	for f in doc.features:
+		if not (f is SketchFeature):
+			continue
+		var sk := (f as SketchFeature).sketch
+		var changed := false
+		var after: Array = sk.constraints.duplicate()
+		for i in after.size():
+			var c: SketchConstraint = after[i]
+			if c.expr == "":
+				continue
+			var r := CadExpression.eval_text(doc.parameters, c.expr, c.expr_unit)
+			if bool(r["ok"]) and absf(float(r["value"]) - c.value) > 1e-9:
+				var edited := c.duplicate_constraint()
+				edited.value = float(r["value"])
+				after[i] = edited
+				changed = true
+		if changed:
+			stack.push(CmdSetConstraints.new(f.id, sk.constraints, after))
+			if f.id == active_sketch_id:
+				solve_followers()
+			else:
+				var res := ConstraintSolver.solve(sk)
+				if not (res["points"] as Dictionary).is_empty():
+					stack.push(CmdMovePoints.new(f.id, res["points"]))
+				if not (res["radii"] as Dictionary).is_empty():
+					stack.push(CmdSetRadii.new(f.id, res["radii"]))
+	batch.seal()
 
 
 func _refresh_dof() -> void:
@@ -549,6 +645,8 @@ func _on_overlay_draw() -> void:
 			continue
 		_draw_selected_entity(sk, e)
 	badge_hits = ConstraintOverlay.draw(overlay, v, sk, dof, selected_constraint)
+	dim_hits = DimensionOverlay.draw(overlay, v, sk, dof, selected_constraint,
+		doc.display_unit)
 	tools.draw_overlay(overlay)
 
 

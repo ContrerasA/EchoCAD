@@ -174,3 +174,30 @@ Fix log:
 - Conflict detection now flags every violated constraint once redundancy
   exists — the iterative solver satisfies whichever duplicate ran last, so
   the violated one is often NOT the redundant one.
+
+## §M8 — Dimensions + parameters
+
+Status: PENDING sign-off
+
+1. Smart Dimension (D): click a line — a live dimension follows the cursor
+   showing its length; click empty space to park it. Extension lines,
+   dimension line with arrowheads, value chip at the parked spot.
+2. After parking, type `2` Enter — the line drives to exactly 2 in and the
+   whole flow is ONE Ctrl+Z.
+3. Pick two points → distance; a circle → ⌀ diameter with leader; an arc →
+   R radius; two angled lines → angle arc with degrees; two parallel lines
+   → gap. Wrong combos just restart the pick.
+4. Select tool: drag a dimension label — it parks where you drop it (world-
+   anchored: pans/zooms with the sketch); geometry never moves.
+5. Click a label to select it (yellow), type a new value, Enter — drives.
+   `10mm` and `0.5in` suffixes work. Delete removes the dimension.
+6. Expressions: type `width / 2` into a dimension after creating parameter
+   `width` (RPC action.set_parameter for now) — label shows the formula;
+   changing the parameter re-drives every dependent dimension and re-solves
+   in one undo step. Typos ("wdith") are refused with a message, nothing
+   changes.
+7. Driven dimensions render in parentheses/grey and never move geometry.
+
+Fix log:
+- SketchConstraint.make now copies its operand array — the smart dimension
+  tool cleared a shared array on reset and gutted the stored constraint.
