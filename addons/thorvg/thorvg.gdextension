@@ -1,0 +1,34 @@
+[configuration]
+
+entry_symbol = "thorvg_library_init"
+compatibility_minimum = "4.6"
+reloadable = true
+
+[libraries]
+
+; Library names follow godot-cpp's <platform>.<target>.<arch> suffix scheme,
+; matching SConstruct's output (libthorvg_gd<suffix>.<ext>). Build per platform
+; with: scons target=template_debug   and   scons target=template_release
+;
+; The `.editor.` entries reuse the debug build so the class is available while
+; editing. Only the platforms/arches you actually build need to be present; a
+; missing entry simply means the extension won't load on that platform.
+
+; --- Linux x86_64 ---
+linux.debug.x86_64   = "res://addons/thorvg/bin/libthorvg_gd.linux.template_debug.x86_64.so"
+linux.release.x86_64 = "res://addons/thorvg/bin/libthorvg_gd.linux.template_release.x86_64.so"
+linux.editor.x86_64  = "res://addons/thorvg/bin/libthorvg_gd.linux.template_debug.x86_64.so"
+
+; --- Windows x86_64 ---
+windows.debug.x86_64   = "res://addons/thorvg/bin/libthorvg_gd.windows.template_debug.x86_64.dll"
+windows.release.x86_64 = "res://addons/thorvg/bin/libthorvg_gd.windows.template_release.x86_64.dll"
+windows.editor.x86_64  = "res://addons/thorvg/bin/libthorvg_gd.windows.template_debug.x86_64.dll"
+
+; --- macOS (universal: built as a single dylib covering x86_64+arm64) ---
+macos.debug   = "res://addons/thorvg/bin/libthorvg_gd.macos.template_debug.framework"
+macos.release = "res://addons/thorvg/bin/libthorvg_gd.macos.template_release.framework"
+macos.editor  = "res://addons/thorvg/bin/libthorvg_gd.macos.template_debug.framework"
+
+; --- Web (wasm32; single-threaded by default) ---
+web.debug.wasm32   = "res://addons/thorvg/bin/libthorvg_gd.web.template_debug.wasm32.wasm"
+web.release.wasm32 = "res://addons/thorvg/bin/libthorvg_gd.web.template_release.wasm32.wasm"
