@@ -413,6 +413,26 @@ func _cmd_action_activate_tool(a: Dictionary, p: StreamPeerTCP, id: Variant) -> 
 	return {"tool": app.tools.active_id()}
 
 
+func _cmd_action_set_marker(a: Dictionary, _p: StreamPeerTCP, _id: Variant) -> Dictionary:
+	var to := clampi(int(a.get("marker", app.doc.features.size())),
+		0, app.doc.features.size())
+	var cmd := CmdSetMarker.new(app.doc.timeline_marker, to)
+	cmd.open = false
+	app.stack.push_no_merge(cmd)
+	return {"marker": app.doc.timeline_marker}
+
+
+func _cmd_action_suppress(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
+	var fid := String(a.get("feature", ""))
+	var f := app.doc.feature_by_id(fid)
+	if f == null:
+		_reply_err(p, id, "not_found", "no feature %s" % fid)
+		return null
+	app.stack.push_no_merge(CmdSetFeatureFlag.new(fid, "suppressed",
+		bool(a.get("suppressed", true))))
+	return {"suppressed": f.suppressed}
+
+
 func _cmd_action_set_pref(a: Dictionary, _p: StreamPeerTCP, _id: Variant) -> Dictionary:
 	if a.has("inference"):
 		app.prefs["inference"] = bool(a["inference"])
