@@ -1,0 +1,101 @@
+class_name ViewCube
+extends SubViewportContainer
+## Fusion-style view cube: a small corner viewport with a cube whose
+## orientation mirrors the main camera; clicking a face snaps the main
+## camera to that view. Face detection is math (ray vs box), no physics.
+
+signal face_picked(normal: Vector3, up: Vector3)
+
+const SIZE_PX := 96
+const CUBE_HALF := 25.0
+const CAM_DIST := 120.0
+
+var _cube: MeshInstance3D = null
+var _cam: Camera3D = null
+
+
+func _ready() -> void:
+	custom_minimum_size = Vector2(SIZE_PX, SIZE_PX)
+	stretch = true
+	var vp := SubViewport.new()
+	vp.name = "VP"
+	vp.transparent_bg = true
+	vp.size = Vector2i(SIZE_PX, SIZE_PX)
+	add_child(vp)
+	var root := Node3D.new()
+	vp.add_child(root)
+	var box := BoxMesh.new()
+	box.size = Vector3.ONE * CUBE_HALF * 2.0
+	_cube = MeshInstance3D.new()
+	_cube.mesh = box
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_PER_VERTEX
+	mat.albedo_color = Color(0.75, 0.78, 0.84)
+	_cube.material_override = mat
+	root.add_child(_cube)
+	var light := DirectionalLight3D.new()
+	light.rotation = Vector3(-0.8, 0.5, 0)
+	root.add_child(light)
+	_cam = Camera3D.new()
+	_cam.position = Vector3(0, 0, CAM_DIST)
+	_cam.near = 1.0
+	_cam.far = 500.0
+	root.add_child(_cam)
+
+
+## Mirror the main rig's orientation: the cube camera orbits the cube exactly
+## as the main camera orbits the model.
+func sync_orientation(rig_rotation: Vector3) -> void:
+	if _cam == null:
+		return
+	var b := Basis.from_euler(rig_rotation)
+	_cam.transform = Transform3D(b, b * Vector3(0, 0, CAM_DIST))
+
+
+func _gui_input(event: InputEvent) -> void:
+	if not (event is InputEventMouseButton):
+		return
+	var mb := event as InputEventMouseButton
+	if not mb.pressed or mb.button_index != MOUSE_BUTTON_LEFT:
+		return
+	var n := _pick_face(mb.position)
+	if n == Vector3.ZERO:
+		return
+	accept_event()
+	var up := Vector3(0, 1, 0)
+	if absf(n.y) > 0.9:                       # top/bottom: north = -Z
+		up = Vector3(0, 0, -1) * signf(n.y)
+	face_picked.emit(n, up)
+
+
+## Ray vs axis-aligned cube; returns the hit face's outward normal or ZERO.
+func _pick_face(pos: Vector2) -> Vector3:
+	# Container pixels -> viewport pixels (stretch may scale).
+	var vp := get_child(0) as SubViewport
+	var scale_v := Vector2(vp.size) / size
+	var origin := _cam.project_ray_origin(pos * scale_v)
+	var dir := _cam.project_ray_normal(pos * scale_v)
+	var t_enter := -INF
+	var t_exit := INF
+	var enter_axis := -1
+	for axis in 3:
+		var o := origin[axis]
+		var d := dir[axis]
+		if absf(d) < 1e-9:
+			if absf(o) > CUBE_HALF:
+				return Vector3.ZERO
+			continue
+		var t1 := (-CUBE_HALF - o) / d
+		var t2 := (CUBE_HALF - o) / d
+		var lo := minf(t1, t2)
+		var hi := maxf(t1, t2)
+		if lo > t_enter:
+			t_enter = lo
+			enter_axis = axis
+		t_exit = minf(t_exit, hi)
+	if t_enter > t_exit or t_exit < 0.0 or enter_axis < 0:
+		return Vector3.ZERO
+	var hit := origin + dir * t_enter
+	var n := Vector3.ZERO
+	n[enter_axis] = signf(hit[enter_axis])
+	return n

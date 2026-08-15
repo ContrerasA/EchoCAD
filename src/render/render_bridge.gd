@@ -1,0 +1,111 @@
+class_name RenderBridge
+extends RefCounted
+## The ONLY code that touches TVGCanvas. Converts typed sketch entities to
+## ThorVG stroke paths and rasterizes the visible plane rect to a texture.
+## Sketch coordinates are Y-UP (CAD); ThorVG raster space is Y-DOWN — every
+## position crossing this seam is flipped here (`_doc(p)`), and arc winding
+## flips with it. Nothing outside this file may compensate for Y.
+##
+## M2 keeps sync simple: full rebuild per change (`full_sync`). Per-entity
+## diff handles come with the tool milestones when interaction makes rebuild
+## cost visible.
+
+const COLOR_FREE := Color(0.30, 0.62, 0.96)          # under-constrained (Fusion blue)
+const COLOR_CONSTRUCTION := Color(0.72, 0.55, 0.95)  # construction: violet dashed
+const STROKE_PX := 2.0                               # on-screen stroke width
+
+var _canvas: TVGCanvas = null
+## Stroke width in document mm for the CURRENT render (screen px / zoom).
+var _stroke_mm := 0.5
+
+
+func _init() -> void:
+	if ClassDB.class_exists("TVGCanvas"):
+		_canvas = TVGCanvas.new()
+
+
+func available() -> bool:
+	return _canvas != null
+
+
+## Rebuild the whole canvas from a sketch. `zoom` = screen px per mm, used to
+## keep stroke width constant on screen.
+func full_sync(sketch: Sketch, zoom: float) -> void:
+	if _canvas == null:
+		return
+	_canvas.clear()
+	_stroke_mm = STROKE_PX / maxf(zoom, 0.001)
+	for e in sketch.entities():
+		_add_entity(sketch, e)
+
+
+func _add_entity(sketch: Sketch, e: SketchEntity) -> void:
+	var path: Array = []
+	match e.kind():
+		"line":
+			var l := e as SketchLine
+			var a := sketch.point(l.p0)
+			var b := sketch.point(l.p1)
+			if a == null or b == null:
+				return
+			path = TVGShapes.line_path(_doc(a.pos), _doc(b.pos))
+		"arc":
+			var arc := e as SketchArc
+			var c := sketch.point(arc.center)
+			var s := sketch.point(arc.start)
+			var t := sketch.point(arc.end)
+			if c == null or s == null or t == null:
+				return
+			var cd := _doc(c.pos)
+			var sd := _doc(s.pos)
+			var td := _doc(t.pos)
+			var r := cd.distance_to(sd)
+			# Y-flip reverses winding: sketch ccw renders as doc cw.
+			path = TVGShapes.arc_path_between(cd, r,
+				(sd - cd).angle(), (td - cd).angle(), not arc.ccw)
+		"circle":
+			var ci := e as SketchCircle
+			var cc := sketch.point(ci.center)
+			if cc == null:
+				return
+			path = TVGShapes.circle_path(_doc(cc.pos), ci.radius)
+		_:
+			return   # points are editor chrome, drawn by the overlay
+	var handle := _canvas.add_path(path[0], path[1])
+	if e.construction:
+		_canvas.set_stroke(handle, _stroke_mm * 0.75, COLOR_CONSTRUCTION,
+			TVGCanvas.CAP_ROUND, TVGCanvas.JOIN_ROUND)
+		_canvas.set_stroke_dash(handle, PackedFloat32Array(
+			[_stroke_mm * 4.0, _stroke_mm * 3.0]), 0.0)
+	else:
+		_canvas.set_stroke(handle, _stroke_mm, COLOR_FREE,
+			TVGCanvas.CAP_ROUND, TVGCanvas.JOIN_ROUND)
+
+
+## Render the sketch rect `view_mm` (sketch coords, Y-up) to an Image at
+## w x h pixels — the source of truth for tests and screenshots. (Texture
+## readback via ImageTexture.get_image() is unreliable under --headless: the
+## dummy renderer ignores texture_2d_update, so both update() and
+## same-size set_image() serve stale pixels. Assert on THIS image, never on
+## a texture.)
+func render_image(view_mm: Rect2, w: int, h: int) -> Image:
+	if _canvas == null or w <= 0 or h <= 0:
+		return null
+	# Y-up rect -> Y-down doc rect: top edge (max y) maps to doc min y.
+	var doc_box := Rect2(view_mm.position.x, -view_mm.end.y,
+		view_mm.size.x, view_mm.size.y)
+	_canvas.set_view_box(doc_box)
+	return _canvas.render_to_image(w, h, false)
+
+
+## Render into `tex` for display (windowed runs).
+func render(view_mm: Rect2, w: int, h: int, tex: ImageTexture) -> bool:
+	var img := render_image(view_mm, w, h)
+	if img == null:
+		return false
+	tex.set_image(img)
+	return true
+
+
+func _doc(p: Vector2) -> Vector2:
+	return Vector2(p.x, -p.y)
