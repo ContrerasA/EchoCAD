@@ -42,6 +42,39 @@ func _ready() -> void:
 	stack.changed.connect(_on_stack_changed)
 	_build_ui()
 	_refresh_ui()
+	_maybe_start_automation()
+
+
+## Replace the whole document (open/new). History is cleared — a loaded file
+## starts with a clean timeline of its own.
+func load_document(new_doc: CadDocument) -> void:
+	doc = new_doc
+	stack.doc = new_doc
+	stack.clear()
+	active_sketch_id = ""
+	picking_plane = false
+	mode = Mode.MODEL
+	sketch_view.visible = false
+	world.set_planes_visible(true)
+	world.rebuild_sketches(doc)
+	mode_changed.emit(mode)
+	_refresh_ui()
+
+
+func _maybe_start_automation() -> void:
+	var port := 0
+	for arg in OS.get_cmdline_args() + OS.get_cmdline_user_args():
+		if arg.begins_with("--automation-port="):
+			port = arg.get_slice("=", 1).to_int()
+	if port == 0 and OS.get_environment("ECHOCAD_AUTOMATION_PORT") != "":
+		port = OS.get_environment("ECHOCAD_AUTOMATION_PORT").to_int()
+	if port <= 0:
+		return
+	var server := AutomationServer.new()
+	server.name = "AutomationServer"
+	server.app = self
+	add_child(server)
+	server.start(port)
 
 
 ## --- UI construction ---------------------------------------------------------
@@ -58,9 +91,13 @@ func _build_ui() -> void:
 	top.name = "TopBar"
 	vbox.add_child(top)
 	_btn_create = _button(top, "Create Sketch", _on_create_sketch)
+	_btn_create.name = "CreateSketchBtn"
 	_btn_finish = _button(top, "Finish Sketch", _on_finish_sketch)
+	_btn_finish.name = "FinishSketchBtn"
 	_btn_undo = _button(top, "Undo", func() -> void: stack.undo())
+	_btn_undo.name = "UndoBtn"
 	_btn_redo = _button(top, "Redo", func() -> void: stack.redo())
+	_btn_redo.name = "RedoBtn"
 
 	var stack_area := Control.new()
 	stack_area.name = "CanvasStack"

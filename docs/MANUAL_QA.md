@@ -45,3 +45,21 @@ Status: PENDING sign-off
 
 Fix log:
 - (none yet)
+
+## §M3 — Automation API
+
+Status: PENDING sign-off
+
+1. Launch `godot --path . -- --automation-port=4777`, then run
+   `python3 tests/rpc/demo_tour.py`. **Expect:** the app visibly orbits,
+   zooms, clicks "Create Sketch", clicks a plane, pans around the sketch,
+   finishes the sketch — all with smooth, human-looking pointer motion; the
+   script prints the timeline at the end.
+2. While the app is open with the server on, run
+   `python3 tests/rpc/test_shell.py` (ECHOCAD_PORT=4777). **Expect:** all
+   checks print `ok`, app quits itself at the end.
+3. Launch WITHOUT `--automation-port`. **Expect:** no server, no listening
+   port, app behaves normally.
+
+Fix log:
+- (none yet)
