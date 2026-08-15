@@ -31,6 +31,10 @@ var mode: Mode = Mode.MODEL
 var active_sketch_id := ""
 ## True while "Create Sketch" waits for a plane click.
 var picking_plane := false
+## True while "Extrude" waits for a profile click.
+var picking_profile := false
+## Pending extrude target set by the profile click: {sketch_id, at}.
+var _pending_extrude := {}
 
 var world: CadWorld
 var rig: OrbitCamera
@@ -45,7 +49,10 @@ var _tool_bar: HFlowContainer
 var _constraint_bar: HFlowContainer
 var _tool_buttons := {}
 var _btn_create: Button
+var _btn_extrude: Button
 var _btn_finish: Button
+var _extrude_dialog: Window
+var _extrude_dist: LineEdit
 var _btn_undo: Button
 var _btn_redo: Button
 var _status_mode: Label
@@ -327,6 +334,8 @@ func _build_ui() -> void:
 	vbox.add_child(top)
 	_btn_create = _button(top, "Create Sketch", _on_create_sketch)
 	_btn_create.name = "CreateSketchBtn"
+	_btn_extrude = _button(top, "Extrude", _on_extrude_pressed)
+	_btn_extrude.name = "ExtrudeBtn"
 	_btn_finish = _button(top, "Finish Sketch", _on_finish_sketch)
 	_btn_finish.name = "FinishSketchBtn"
 	_btn_undo = _button(top, "Undo", func() -> void: stack.undo())
@@ -520,7 +529,92 @@ func active_sketch() -> Sketch:
 
 func _on_create_sketch() -> void:
 	picking_plane = true
+	picking_profile = false
 	_refresh_ui()
+
+
+func _on_extrude_pressed() -> void:
+	picking_profile = true
+	picking_plane = false
+	_refresh_ui()
+
+
+## Create an extrude feature from a profile hit (undoable). Returns the
+## feature id or "" when no profile encloses `at`.
+func extrude(sketch_id: String, at: Vector2, dist: float) -> String:
+	var sf := doc.sketch_feature(sketch_id)
+	if sf == null:
+		return ""
+	if ProfileFinder.profile_at(sf.sketch, at).is_empty():
+		return ""
+	var f := ExtrudeFeature.make(sketch_id, at, dist)
+	f.name = doc.auto_name("Extrude")
+	f.id = doc.next_feature_id()
+	stack.push_no_merge(CmdAddFeature.new(f))
+	return f.id
+
+
+## Ray -> (sketch feature, uv on its plane) for the topmost live sketch
+## whose profile contains the hit. {} when none.
+func _profile_under_ray(origin: Vector3, dir: Vector3) -> Dictionary:
+	for f in doc.live_features():
+		if not (f is SketchFeature):
+			continue
+		var sf := f as SketchFeature
+		var xf := sf.plane_transform()
+		var n: Vector3 = xf.basis.z
+		var denom := dir.dot(n)
+		if absf(denom) < 1e-9:
+			continue
+		var t := -origin.dot(n) / denom
+		if t <= 0.0:
+			continue
+		var hit := origin + dir * t
+		var uv := Vector2(hit.dot(xf.basis.x), hit.dot(xf.basis.y))
+		if not ProfileFinder.profile_at(sf.sketch, uv).is_empty():
+			return {"sketch_id": sf.id, "at": uv}
+	return {}
+
+
+func _open_extrude_dialog() -> void:
+	if _extrude_dialog == null:
+		_extrude_dialog = Window.new()
+		_extrude_dialog.name = "ExtrudeDialog"
+		_extrude_dialog.title = "Extrude"
+		_extrude_dialog.size = Vector2i(220, 90)
+		_extrude_dialog.exclusive = false
+		_extrude_dialog.close_requested.connect(
+			func() -> void: _extrude_dialog.hide())
+		var box := VBoxContainer.new()
+		box.set_anchors_preset(Control.PRESET_FULL_RECT)
+		_extrude_dialog.add_child(box)
+		_extrude_dist = LineEdit.new()
+		_extrude_dist.name = "ExtrudeDistEdit"
+		_extrude_dist.placeholder_text = "Distance (e.g. 0.5in)"
+		box.add_child(_extrude_dist)
+		var okb := Button.new()
+		okb.name = "ExtrudeOkBtn"
+		okb.text = "OK"
+		okb.pressed.connect(_commit_extrude)
+		box.add_child(okb)
+		_extrude_dist.text_submitted.connect(
+			func(_t: String) -> void: _commit_extrude())
+		add_child(_extrude_dialog)
+	_extrude_dist.text = ""
+	_extrude_dialog.popup_centered()
+	_extrude_dist.grab_focus()
+
+
+func _commit_extrude() -> void:
+	var r := UnitConverter.parse(_extrude_dist.text, doc.display_unit)
+	if not r["ok"]:
+		_status_hint.text = "Extrude: enter a distance"
+		return
+	_extrude_dialog.hide()
+	if not _pending_extrude.is_empty():
+		extrude(_pending_extrude["sketch_id"], _pending_extrude["at"],
+			float(r["mm"]))
+	_pending_extrude = {}
 
 
 func _on_finish_sketch() -> void:
@@ -546,6 +640,14 @@ func _on_viewport_input(event: InputEvent) -> void:
 			var plane := world.pick_plane(ray[0], ray[1])
 			if plane != "":
 				create_sketch(plane)
+		elif mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT and picking_profile:
+			var ray2 := rig.pixel_ray(mb.position)
+			var hit := _profile_under_ray(ray2[0], ray2[1])
+			if not hit.is_empty():
+				picking_profile = false
+				_pending_extrude = hit
+				_open_extrude_dialog()
+				_refresh_ui()
 	elif event is InputEventMouseMotion:
 		var mm := event as InputEventMouseMotion
 		if mm.button_mask & MOUSE_BUTTON_MASK_MIDDLE:
@@ -578,8 +680,9 @@ func handle_app_key(k: InputEventKey) -> bool:
 	if k.keycode == KEY_ESCAPE:
 		if mode == Mode.SKETCH and tools.handle_cancel():
 			return true
-		if picking_plane:
+		if picking_plane or picking_profile:
 			picking_plane = false
+			picking_profile = false
 			world.set_plane_hover("")
 			_refresh_ui()
 			return true
@@ -724,6 +827,7 @@ func _on_stack_changed() -> void:
 func _refresh_ui() -> void:
 	var in_sketch := mode == Mode.SKETCH
 	_btn_create.visible = not in_sketch
+	_btn_extrude.visible = not in_sketch
 	_btn_finish.visible = in_sketch
 	_tool_bar.visible = in_sketch
 	_constraint_bar.visible = in_sketch
@@ -740,6 +844,8 @@ func _refresh_ui() -> void:
 	_status_mode.text = "Sketch" if in_sketch else "Model"
 	if picking_plane:
 		_status_hint.text = "Select a plane (Esc to cancel)"
+	elif picking_profile:
+		_status_hint.text = "Select a closed profile (Esc to cancel)"
 	elif in_sketch:
 		var f := doc.sketch_feature(active_sketch_id)
 		_status_hint.text = "%s on %s" % [f.name, f.plane] if f != null else ""

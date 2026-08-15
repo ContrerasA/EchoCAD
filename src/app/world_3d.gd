@@ -16,6 +16,17 @@ var _sketch_root: Node3D = null
 
 
 func _ready() -> void:
+	var light := DirectionalLight3D.new()
+	light.name = "Sun"
+	light.rotation = Vector3(-0.9, 0.6, 0)
+	add_child(light)
+	var env := WorldEnvironment.new()
+	var e := Environment.new()
+	e.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	e.ambient_light_color = Color(0.55, 0.57, 0.62)
+	e.ambient_light_energy = 0.6
+	env.environment = e
+	add_child(env)
 	_build_axes()
 	_build_planes()
 	_sketch_root = Node3D.new()
@@ -94,12 +105,25 @@ func pick_plane(origin: Vector3, dir: Vector3) -> String:
 	return best
 
 
-## Rebuild the 3D line meshes for every live sketch feature (model mode
-## display). Arcs/circles are polyline-tessellated — display only.
+## Rebuild the 3D display for every live feature: sketch line meshes plus
+## extruded solids. Arcs/circles are polyline-tessellated — display only.
 func rebuild_sketches(doc: CadDocument) -> void:
 	for c in _sketch_root.get_children():
 		c.queue_free()
 	for f in doc.live_features():
+		if f is ExtrudeFeature:
+			var mesh := (f as ExtrudeFeature).build_mesh(doc)
+			if mesh != null:
+				var smi := MeshInstance3D.new()
+				smi.name = f.name
+				smi.mesh = mesh
+				var mat := StandardMaterial3D.new()
+				mat.albedo_color = Color(0.62, 0.66, 0.72)
+				mat.metallic = 0.1
+				mat.roughness = 0.7
+				smi.material_override = mat
+				_sketch_root.add_child(smi)
+			continue
 		if not (f is SketchFeature):
 			continue
 		var sf := f as SketchFeature

@@ -275,3 +275,25 @@ Status: PENDING sign-off
 
 Fix log:
 - (none yet)
+
+## §M12 — Extrude
+
+Status: PENDING sign-off
+
+1. Sketch a closed rectangle on XY, Finish, click Extrude, then click
+   inside the rectangle in the 3D view. **Expect:** a distance dialog;
+   type `1in`, OK — a shaded solid appears; Extrude1 lands on the timeline
+   after Sketch1.
+2. Orbit around the solid: caps and walls shaded correctly, no missing
+   faces at any angle.
+3. Open profiles and empty space refuse the pick (status hint keeps
+   asking); Esc cancels picking.
+4. Edit Sketch1 (double-click its chip), drive the rectangle wider, Finish.
+   **Expect:** the solid updates to the new profile (replay).
+5. Drag the timeline marker before Extrude1 — the solid vanishes; back —
+   it returns. Ctrl+Z after creating an extrude removes it.
+6. A circle extrudes to a cylinder. Triangle to a prism.
+7. Save/reopen: solids rebuild identically.
+
+Fix log:
+- (none yet)
