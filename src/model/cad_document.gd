@@ -94,6 +94,8 @@ static func feature_from_dict(d: Dictionary) -> Feature:
 	match String(d.get("kind", "")):
 		"sketch":
 			return SketchFeature.from_dict(d)
+		"extrude":
+			return ExtrudeFeature.from_dict(d)
 	push_error("[CadDocument] unknown feature kind in file: %s"
 		% String(d.get("kind", "?")))
 	return null

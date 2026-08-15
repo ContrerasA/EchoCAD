@@ -413,6 +413,34 @@ func _cmd_action_activate_tool(a: Dictionary, p: StreamPeerTCP, id: Variant) -> 
 	return {"tool": app.tools.active_id()}
 
 
+func _cmd_query_profiles(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
+	var fid := String(a.get("sketch", app.active_sketch_id))
+	var sf := app.doc.sketch_feature(fid)
+	if sf == null:
+		_reply_err(p, id, "bad_args", "no such sketch")
+		return null
+	var out: Array = []
+	for prof: Dictionary in ProfileFinder.profiles(sf.sketch):
+		out.append({"area": prof["area"],
+			"entities": prof["entities"],
+			"vertex_count": (prof["polygon"] as PackedVector2Array).size()})
+	return {"profiles": out}
+
+
+func _cmd_action_extrude(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
+	var fid := String(a.get("sketch", ""))
+	var at := _vec2(a.get("at", [0, 0]))
+	var dist := float(a.get("distance", 10.0))
+	var eid := app.extrude(fid, at, dist)
+	if eid == "":
+		_reply_err(p, id, "invalid", "no closed profile at that point")
+		return null
+	var f := app.doc.feature_by_id(eid) as ExtrudeFeature
+	var mesh := f.build_mesh(app.doc)
+	return {"feature": eid, "name": f.name,
+		"volume": ExtrudeFeature.mesh_volume(mesh) if mesh != null else 0.0}
+
+
 func _cmd_action_set_marker(a: Dictionary, _p: StreamPeerTCP, _id: Variant) -> Dictionary:
 	var to := clampi(int(a.get("marker", app.doc.features.size())),
 		0, app.doc.features.size())
