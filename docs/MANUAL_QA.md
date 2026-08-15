@@ -226,3 +226,31 @@ Fix log:
 - Solver: damped Gauss-Seidel (RELAX 0.6) + arc rims ride rigidly with
   their center each round + arc tangency gets a radius pathway — the slot's
   stiff constraint loop exploded (or collapsed its width) without these.
+
+## §M10 — Modify tools
+
+Status: PENDING sign-off
+
+1. Trim (T): draw crossing geometry; hovering a piece highlights exactly
+   the doomed span (red, thick) between its nearest intersections; click
+   removes it. Lines split; a crossed circle becomes an arc; arcs shorten.
+   One Ctrl+Z per trim.
+2. Extend (X): hover a line near the endpoint that faces other geometry —
+   green preview shows the extension to the nearest hit; click applies.
+3. Offset (O): click a line/circle/arc, move the cursor to choose side and
+   distance (live preview), click or type `0.5` Enter for exact.
+4. Mirror (M): select entities with V (Ctrl-click for several), press M,
+   click the axis line. Mirrored copies appear with live Symmetry
+   constraints — drag an original point and the mirror follows.
+5. Fillet (F): type a radius (or accept 0.25 in), click a sharp corner
+   where exactly two lines meet: tangent arc replaces the corner, lines
+   shorten to the tangency points, corner point disappears. Undo restores
+   the sharp corner. Over-large radius refuses with a message.
+6. Tool rows wrap (flow) — every button stays reachable at any window
+   width.
+
+Fix log:
+- Tool/constraint bars are flow containers now; a single row overflowed
+  1280 px and made tail buttons unreachable (automation caught it — the
+  Python client now refuses clicks outside the window instead of silently
+  missing).
