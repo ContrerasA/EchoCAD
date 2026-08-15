@@ -145,3 +145,32 @@ Fix log:
   the gesture's self-exclusion, so a dragged point could snap back to its
   own origin and collapse the undo batch. Exclusions now persist until the
   gesture ends.
+
+## §M7 — Constraint palette + DOF UI
+
+Status: PENDING sign-off
+
+1. In a sketch, the constraint bar shows Coincident/H/V/Parallel/
+   Perpendicular/Collinear/Equal/Midpoint/Concentric/Tangent/PointOn/Fix/
+   Symmetry. With nothing (or the wrong things) selected, clicking one
+   prints a reason in the status bar ("Cannot apply: needs two lines").
+2. Ctrl-click two lines, click Parallel. **Expect:** lines rotate to
+   parallel; a ∥ badge appears near each... (badge sits by the operands'
+   midpoint); one Ctrl+Z undoes constraint + motion together.
+3. Constraint badges: green = satisfied, amber = redundant, red =
+   conflicting. Click a badge to select it (yellow outline); Delete removes
+   it; Esc deselects.
+4. Status bar shows "N DOF remaining"; it drops as you constrain. Fully
+   constrain a line (Fix an endpoint + Horizontal + a Distance via RPC for
+   now): the line and its points render GREEN and status reads "Fully
+   constrained".
+5. Create a conflict (two different distances on the same pair): badges go
+   red, status reads "Conflicting constraints"; geometry stays calm (no
+   vibration). Deleting one distance clears it.
+6. Delete key with entities selected deletes them plus their constraints in
+   one undo step; constraints referencing them vanish.
+
+Fix log:
+- Conflict detection now flags every violated constraint once redundancy
+  exists — the iterative solver satisfies whichever duplicate ran last, so
+  the violated one is often NOT the redundant one.

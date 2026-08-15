@@ -18,6 +18,12 @@ var snap: SnapEngine
 var prefs := {"inference": true}
 ## Selected entity ids in the active sketch.
 var selection: Array[String] = []
+## Selected constraint index in the active sketch (-1 = none).
+var selected_constraint := -1
+## Latest DOF analysis of the active sketch ({} when stale/unavailable).
+var dof := {}
+## Constraint badge hit rects from the last overlay draw: [{index, rect}].
+var badge_hits: Array = []
 var mode: Mode = Mode.MODEL
 ## Feature id of the sketch being edited ("" in model mode).
 var active_sketch_id := ""
@@ -33,6 +39,7 @@ var view_cube: ViewCube
 var _viewport_container: SubViewportContainer
 var _viewport: SubViewport
 var _tool_bar: HBoxContainer
+var _constraint_bar: HBoxContainer
 var _tool_buttons := {}
 var _btn_create: Button
 var _btn_finish: Button
@@ -40,6 +47,7 @@ var _btn_undo: Button
 var _btn_redo: Button
 var _status_mode: Label
 var _status_hint: Label
+var _status_dof: Label
 var _status_zoom: Label
 
 
@@ -71,7 +79,72 @@ func set_selection(ids: Array) -> void:
 	selection.clear()
 	for i in ids:
 		selection.append(String(i))
+	if not selection.is_empty():
+		selected_constraint = -1
 	overlay.queue_redraw()
+	_refresh_ui()
+
+
+## Apply a constraint to the CURRENT selection (validated). Constraint +
+## follower solve = one sealed undo step. Returns "" or the refusal reason.
+func apply_constraint(type: SketchConstraint.Type, value := NAN) -> String:
+	var sk := active_sketch()
+	if sk == null:
+		return "not in a sketch"
+	var sel: Array = []
+	for id in selection:
+		var e := sk.entity(id)
+		if e != null:
+			sel.append(e)
+	var why := ConstraintRules.validate(sk, type, sel)
+	if why != "":
+		_status_hint.text = "Cannot apply: " + why
+		return why
+	var ops := ConstraintRules.operands(type, sel)
+	var c := SketchConstraint.make(type, ops)
+	if c.is_dimensional():
+		c.value = value if not is_nan(value) \
+			else ConstraintRules.measured_value(sk, type, ops)
+	add_constraint(c)
+	return ""
+
+
+## Push a built constraint + its re-solve as one undo step.
+func add_constraint(c: SketchConstraint) -> void:
+	var sk := active_sketch()
+	var batch := CmdMergeBatch.new("Constrain", [])
+	stack.push_no_merge(batch)
+	var after: Array = sk.constraints.duplicate()
+	after.append(c)
+	stack.push(CmdSetConstraints.new(active_sketch_id, sk.constraints, after))
+	solve_followers()
+	batch.seal()
+
+
+func delete_constraint(index: int) -> void:
+	var sk := active_sketch()
+	if sk == null or index < 0 or index >= sk.constraints.size():
+		return
+	var after: Array = sk.constraints.duplicate()
+	after.remove_at(index)
+	var batch := CmdMergeBatch.new("Delete Constraint", [])
+	stack.push_no_merge(batch)
+	stack.push(CmdSetConstraints.new(active_sketch_id, sk.constraints, after))
+	solve_followers()
+	batch.seal()
+	selected_constraint = -1
+
+
+func _refresh_dof() -> void:
+	var sk := active_sketch()
+	dof = DofAnalyzer.analyze(sk) if sk != null else {}
+	var pts := {}
+	for id in dof.get("constrained_points", []):
+		pts[id] = true
+	var circles := {}
+	for id in dof.get("constrained_circles", []):
+		circles[id] = true
+	bridge.constrained = {"points": pts, "circles": circles}
 
 
 ## Exclusions persist across the mid-gesture rebuilds triggered by
@@ -174,6 +247,29 @@ func _build_ui() -> void:
 		_tool_bar.add_child(b)
 		_tool_buttons[tid] = b
 
+	_constraint_bar = HBoxContainer.new()
+	_constraint_bar.name = "ConstraintBar"
+	vbox.add_child(_constraint_bar)
+	var cons_defs := [
+		["Coincident", SketchConstraint.Type.COINCIDENT],
+		["Horizontal", SketchConstraint.Type.HORIZONTAL],
+		["Vertical", SketchConstraint.Type.VERTICAL],
+		["Parallel", SketchConstraint.Type.PARALLEL],
+		["Perpendicular", SketchConstraint.Type.PERPENDICULAR],
+		["Collinear", SketchConstraint.Type.COLLINEAR],
+		["Equal", SketchConstraint.Type.EQUAL],
+		["Midpoint", SketchConstraint.Type.MIDPOINT],
+		["Concentric", SketchConstraint.Type.CONCENTRIC],
+		["Tangent", SketchConstraint.Type.TANGENT],
+		["PointOn", SketchConstraint.Type.POINT_ON],
+		["Fix", SketchConstraint.Type.FIX],
+		["Symmetry", SketchConstraint.Type.SYMMETRY],
+	]
+	for def in cons_defs:
+		var cb := _button(_constraint_bar, def[0],
+			func() -> void: apply_constraint(def[1]))
+		cb.name = String(def[0]) + "ConBtn"
+
 	var stack_area := Control.new()
 	stack_area.name = "CanvasStack"
 	stack_area.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -229,6 +325,8 @@ func _build_ui() -> void:
 	_status_mode = _label(status, "Model")
 	_status_hint = _label(status, "")
 	_status_hint.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_status_dof = _label(status, "")
+	_status_dof.name = "StatusDof"
 	_status_zoom = _label(status, "")
 
 
@@ -276,8 +374,11 @@ func edit_sketch(feature_id: String) -> void:
 	sketch_view.visible = true
 	world.set_planes_visible(false)
 	set_selection([])
+	selected_constraint = -1
 	tools.set_active("select")
 	rebuild_snap_index()
+	_refresh_dof()
+	sketch_view.mark_dirty()
 	sketch_view.grab_focus()
 	mode_changed.emit(mode)
 	_refresh_ui()
@@ -372,6 +473,20 @@ func handle_app_key(k: InputEventKey) -> bool:
 		return false
 	if (k.keycode == KEY_ENTER or k.keycode == KEY_KP_ENTER) and mode == Mode.SKETCH:
 		return tools.handle_commit()
+	if k.keycode == KEY_DELETE and mode == Mode.SKETCH:
+		if selected_constraint >= 0:
+			delete_constraint(selected_constraint)
+			return true
+		if not selection.is_empty():
+			var doomed := selection.duplicate()
+			set_selection([])
+			var batch := CmdMergeBatch.new("Delete", [])
+			stack.push_no_merge(batch)
+			stack.push(CmdDeleteEntities.new(active_sketch_id, doomed))
+			solve_followers()
+			batch.seal()
+			return true
+		return false
 	if mode == Mode.SKETCH and not k.ctrl_pressed:
 		# Type-in fields get first claim on keys (digits, Tab, units...).
 		var active := tools.get_tool(tools.active_id())
@@ -416,17 +531,24 @@ func _on_overlay_draw() -> void:
 	if sk == null:
 		return
 	var v := sketch_view
+	var constrained_pts := {}
+	for id in dof.get("constrained_points", []):
+		constrained_pts[id] = true
 	for e in sk.entities():
 		if e.kind() == "point":
 			var p := v.world_to_screen((e as SketchPoint).pos)
-			var sel := selection.has(e.id)
-			var c := Color(1.0, 0.85, 0.3) if sel else Color(0.85, 0.88, 0.95)
+			var c := Color(0.85, 0.88, 0.95)
+			if selection.has(e.id):
+				c = Color(1.0, 0.85, 0.3)
+			elif constrained_pts.has(e.id):
+				c = RenderBridge.COLOR_CONSTRAINED
 			overlay.draw_rect(Rect2(p - Vector2(2.5, 2.5), Vector2(5, 5)), c)
 	for id in selection:
 		var e := sk.entity(id)
 		if e == null:
 			continue
 		_draw_selected_entity(sk, e)
+	badge_hits = ConstraintOverlay.draw(overlay, v, sk, dof, selected_constraint)
 	tools.draw_overlay(overlay)
 
 
@@ -472,7 +594,10 @@ func _on_stack_changed() -> void:
 				if sk.has(id):
 					live.append(id)
 			selection = live
+			if selected_constraint >= sk.constraints.size():
+				selected_constraint = -1
 			snap.build_index(sk, _snap_exclude)   # keep gesture exclusions
+			_refresh_dof()
 			sketch_view.mark_dirty()
 			overlay.queue_redraw()
 	else:
@@ -485,6 +610,12 @@ func _refresh_ui() -> void:
 	_btn_create.visible = not in_sketch
 	_btn_finish.visible = in_sketch
 	_tool_bar.visible = in_sketch
+	_constraint_bar.visible = in_sketch
+	if in_sketch and not dof.is_empty():
+		var sk := active_sketch()
+		_status_dof.text = DofAnalyzer.summary(sk) if sk != null else ""
+	else:
+		_status_dof.text = ""
 	for tid: String in _tool_buttons:
 		(_tool_buttons[tid] as Button).set_pressed_no_signal(
 			tid == tools.active_id())

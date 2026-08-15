@@ -31,6 +31,10 @@ func cancel() -> bool:
 	if _drag != Drag.NONE:
 		_drag = Drag.NONE
 		return true
+	if app.selected_constraint >= 0:
+		app.selected_constraint = -1
+		app.overlay.queue_redraw()
+		return true
 	if not app.selection.is_empty():
 		app.set_selection([])
 		return true
@@ -40,6 +44,13 @@ func cancel() -> bool:
 func pointer_down(world: Vector2, screen: Vector2, e: InputEventMouseButton) -> bool:
 	if e.button_index != MOUSE_BUTTON_LEFT:
 		return false
+	# Constraint badges sit above geometry.
+	for h: Dictionary in app.badge_hits:
+		if (h["rect"] as Rect2).has_point(screen):
+			app.set_selection([])
+			app.selected_constraint = int(h["index"])
+			app.overlay.queue_redraw()
+			return true
 	var sk := sketch()
 	var hit := SketchGeometry.entity_at(sk, world, HIT_PX / view().zoom())
 	if hit == "":
