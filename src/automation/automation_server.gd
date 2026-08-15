@@ -277,7 +277,36 @@ func _cmd_query_control(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant
 		"disabled": node.disabled if node is BaseButton else false}
 
 
+func _cmd_query_active_tool(_a: Dictionary, _p: StreamPeerTCP, _id: Variant) -> Dictionary:
+	return {"tool": app.tools.active_id(), "tools": app.tools.tool_ids()}
+
+
+func _cmd_query_selection(_a: Dictionary, _p: StreamPeerTCP, _id: Variant) -> Dictionary:
+	return {"selection": Array(app.selection)}
+
+
 ## --- action.* ----------------------------------------------------------------
+
+
+func _cmd_action_activate_tool(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
+	var tid := String(a.get("tool", ""))
+	if app.tools.get_tool(tid) == null:
+		_reply_err(p, id, "not_found", "no tool %s" % tid)
+		return null
+	app.tools.set_active(tid)
+	return {"tool": app.tools.active_id()}
+
+
+func _cmd_action_set_pref(a: Dictionary, _p: StreamPeerTCP, _id: Variant) -> Dictionary:
+	if a.has("inference"):
+		app.prefs["inference"] = bool(a["inference"])
+	if a.has("grid_snap"):
+		app.snap.grid_enabled = bool(a["grid_snap"])
+	if a.has("entity_snap"):
+		app.snap.entity_snap_enabled = bool(a["entity_snap"])
+	return {"inference": app.prefs["inference"],
+		"grid_snap": app.snap.grid_enabled,
+		"entity_snap": app.snap.entity_snap_enabled}
 
 func _cmd_action_enter_sketch(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
 	var plane := String(a.get("plane", "XY"))

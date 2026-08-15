@@ -12,6 +12,12 @@ signal mode_changed(mode: Mode)
 var doc: CadDocument
 var stack: CommandStack
 var bridge: RenderBridge
+var tools: ToolManager
+var snap: SnapEngine
+## User toggles read by tools. Mutate via RPC action.set_pref or UI.
+var prefs := {"inference": true}
+## Selected entity ids in the active sketch.
+var selection: Array[String] = []
 var mode: Mode = Mode.MODEL
 ## Feature id of the sketch being edited ("" in model mode).
 var active_sketch_id := ""
@@ -26,6 +32,8 @@ var view_cube: ViewCube
 
 var _viewport_container: SubViewportContainer
 var _viewport: SubViewport
+var _tool_bar: HBoxContainer
+var _tool_buttons := {}
 var _btn_create: Button
 var _btn_finish: Button
 var _btn_undo: Button
@@ -40,9 +48,27 @@ func _ready() -> void:
 	bridge = RenderBridge.new()
 	stack = CommandStack.new(doc)
 	stack.changed.connect(_on_stack_changed)
+	snap = SnapEngine.new()
+	tools = ToolManager.new(self)
+	tools.register(SelectTool.new())
+	tools.register(LineTool.new())
+	tools.register(PointTool.new())
+	tools.overlay_needs_redraw.connect(func() -> void: overlay.queue_redraw())
+	tools.active_changed.connect(func(_id: String) -> void: _refresh_ui())
 	_build_ui()
 	_refresh_ui()
 	_maybe_start_automation()
+
+
+func set_selection(ids: Array) -> void:
+	selection.clear()
+	for i in ids:
+		selection.append(String(i))
+	overlay.queue_redraw()
+
+
+func rebuild_snap_index(exclude = []) -> void:
+	snap.build_index(active_sketch(), exclude)
 
 
 ## Replace the whole document (open/new). History is cleared — a loaded file
@@ -98,6 +124,20 @@ func _build_ui() -> void:
 	_btn_undo.name = "UndoBtn"
 	_btn_redo = _button(top, "Redo", func() -> void: stack.redo())
 	_btn_redo.name = "RedoBtn"
+	_tool_bar = HBoxContainer.new()
+	_tool_bar.name = "ToolBar"
+	top.add_child(_tool_bar)
+	var group := ButtonGroup.new()
+	for tid: String in tools.tool_ids():
+		var t := tools.get_tool(tid)
+		var b := Button.new()
+		b.name = tid.capitalize() + "ToolBtn"
+		b.text = t.title
+		b.toggle_mode = true
+		b.button_group = group
+		b.pressed.connect(func() -> void: tools.set_active(tid))
+		_tool_bar.add_child(b)
+		_tool_buttons[tid] = b
 
 	var stack_area := Control.new()
 	stack_area.name = "CanvasStack"
@@ -129,13 +169,15 @@ func _build_ui() -> void:
 	sketch_view.set_anchors_preset(Control.PRESET_FULL_RECT)
 	sketch_view.bridge = bridge
 	sketch_view.visible = false
-	sketch_view.view_changed.connect(_refresh_ui)
+	sketch_view.view_changed.connect(_on_sketch_view_changed)
+	sketch_view.tool_input = _on_tool_input
 	stack_area.add_child(sketch_view)
 
 	overlay = Control.new()
 	overlay.name = "Overlay"
 	overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
 	overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	overlay.draw.connect(_on_overlay_draw)
 	stack_area.add_child(overlay)
 
 	view_cube = ViewCube.new()
@@ -196,6 +238,9 @@ func edit_sketch(feature_id: String) -> void:
 	sketch_view.show_sketch(feat.sketch)
 	sketch_view.visible = true
 	world.set_planes_visible(false)
+	set_selection([])
+	tools.set_active("select")
+	rebuild_snap_index()
 	mode_changed.emit(mode)
 	_refresh_ui()
 
@@ -203,6 +248,8 @@ func edit_sketch(feature_id: String) -> void:
 func finish_sketch() -> void:
 	if mode != Mode.SKETCH:
 		return
+	tools.set_active("")
+	set_selection([])
 	active_sketch_id = ""
 	mode = Mode.MODEL
 	sketch_view.visible = false
@@ -267,10 +314,95 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		stack.redo()
 	elif k.keycode == KEY_Z and k.ctrl_pressed:
 		stack.undo()
-	elif k.keycode == KEY_ESCAPE and picking_plane:
-		picking_plane = false
-		world.set_plane_hover("")
-		_refresh_ui()
+	elif k.keycode == KEY_ESCAPE:
+		if mode == Mode.SKETCH and tools.handle_cancel():
+			return
+		if picking_plane:
+			picking_plane = false
+			world.set_plane_hover("")
+			_refresh_ui()
+	elif k.keycode == KEY_ENTER and mode == Mode.SKETCH:
+		tools.handle_commit()
+	elif mode == Mode.SKETCH and not k.ctrl_pressed:
+		for tid: String in tools.tool_ids():
+			if tools.get_tool(tid).shortcut == k.keycode:
+				tools.set_active(tid)
+				return
+
+
+func _on_tool_input(world_pos: Vector2, screen: Vector2, event: InputEvent) -> bool:
+	if mode != Mode.SKETCH:
+		return false
+	if event is InputEventMouseButton:
+		var mb := event as InputEventMouseButton
+		if mb.pressed:
+			return tools.handle_pointer_down(world_pos, screen, mb)
+		return tools.handle_pointer_up(world_pos, screen, mb)
+	if event is InputEventMouseMotion:
+		_status_hint.text = "%s, %s" % [
+			UnitConverter.format(world_pos.x, doc.display_unit),
+			UnitConverter.format(world_pos.y, doc.display_unit)]
+		return tools.handle_pointer_move(world_pos, screen,
+			event as InputEventMouseMotion)
+	return false
+
+
+func _on_sketch_view_changed() -> void:
+	overlay.queue_redraw()
+	_refresh_ui()
+
+
+## Editor chrome: sketch points, selection highlights, then the active
+## tool's own overlay. Screen space; artwork itself is the ThorVG raster.
+func _on_overlay_draw() -> void:
+	if mode != Mode.SKETCH:
+		return
+	var sk := active_sketch()
+	if sk == null:
+		return
+	var v := sketch_view
+	for e in sk.entities():
+		if e.kind() == "point":
+			var p := v.world_to_screen((e as SketchPoint).pos)
+			var sel := selection.has(e.id)
+			var c := Color(1.0, 0.85, 0.3) if sel else Color(0.85, 0.88, 0.95)
+			overlay.draw_rect(Rect2(p - Vector2(2.5, 2.5), Vector2(5, 5)), c)
+	for id in selection:
+		var e := sk.entity(id)
+		if e == null:
+			continue
+		_draw_selected_entity(sk, e)
+	tools.draw_overlay(overlay)
+
+
+func _draw_selected_entity(sk: Sketch, e: SketchEntity) -> void:
+	var v := sketch_view
+	var c := Color(1.0, 0.85, 0.3)
+	match e.kind():
+		"line":
+			var l := e as SketchLine
+			var a := sk.point(l.p0)
+			var b := sk.point(l.p1)
+			if a != null and b != null:
+				overlay.draw_line(v.world_to_screen(a.pos),
+					v.world_to_screen(b.pos), c, 2.0)
+		"circle":
+			var ci := e as SketchCircle
+			var cp := sk.point(ci.center)
+			if cp != null:
+				overlay.draw_arc(v.world_to_screen(cp.pos),
+					ci.radius * v.zoom(), 0, TAU, 64, c, 2.0)
+		"arc":
+			var arc := e as SketchArc
+			var cp := sk.point(arc.center)
+			var sp := sk.point(arc.start)
+			if cp != null and sp != null:
+				var r := cp.pos.distance_to(sp.pos)
+				var a0 := (sp.pos - cp.pos).angle()
+				var sweep := SketchGeometry.arc_sweep(sk, arc)
+				# Screen space is Y-down: angles negate.
+				overlay.draw_arc(v.world_to_screen(cp.pos), r * v.zoom(),
+					-a0, -(a0 + sweep), 48, c, 2.0)
 
 
 func _on_stack_changed() -> void:
@@ -280,7 +412,14 @@ func _on_stack_changed() -> void:
 		if sk == null:
 			finish_sketch()
 		else:
+			var live: Array[String] = []
+			for id in selection:
+				if sk.has(id):
+					live.append(id)
+			selection = live
+			rebuild_snap_index()
 			sketch_view.mark_dirty()
+			overlay.queue_redraw()
 	else:
 		world.rebuild_sketches(doc)
 	_refresh_ui()
@@ -290,6 +429,10 @@ func _refresh_ui() -> void:
 	var in_sketch := mode == Mode.SKETCH
 	_btn_create.visible = not in_sketch
 	_btn_finish.visible = in_sketch
+	_tool_bar.visible = in_sketch
+	for tid: String in _tool_buttons:
+		(_tool_buttons[tid] as Button).set_pressed_no_signal(
+			tid == tools.active_id())
 	_btn_undo.disabled = not stack.can_undo()
 	_btn_redo.disabled = not stack.can_redo()
 	_status_mode.text = "Sketch" if in_sketch else "Model"

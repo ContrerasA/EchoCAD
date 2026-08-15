@@ -63,3 +63,33 @@ Status: PENDING sign-off
 
 Fix log:
 - (none yet)
+
+## §M4 — Line tool, snapping, inference
+
+Status: PENDING sign-off
+
+1. Enter a sketch. **Expect:** toolbar shows Select / Line / Point; Select
+   active; status bar shows cursor coordinates in inches as you move.
+2. Press L, click, move roughly horizontally. **Expect:** rubber-band line;
+   when within ~4° of horizontal it locks flat and a green "H" glyph shows.
+3. Click to commit, continue near-vertical, click. **Expect:** "V" glyph and
+   lock; chain continues from each committed point.
+4. Hover an existing endpoint. **Expect:** green square marker; clicking
+   there ends the segment exactly on that point (creates a Coincident
+   constraint — verify via `query.constraints` or later the badge UI).
+5. Press Esc. **Expect:** chain ends; further clicks start a new chain.
+   Esc after only one click leaves no debris (no lone point).
+6. Ctrl+Z repeatedly. **Expect:** one segment removed per undo.
+7. Toggle grid snap off (RPC action.set_pref for now), draw. **Expect:**
+   free placement; with it on, endpoints stick to grid intersections.
+8. Point tool (P): click places a point marker (cross preview, square dot).
+9. Select tool (V): click a line — it highlights yellow with its endpoints;
+   drag an endpoint — geometry follows, one undo step per drag; Esc clears
+   the selection.
+10. Draw a rough rectangle of 4 chained segments closing on the start
+    point. **Expect:** closing click snaps to the start point and ends the
+    chain automatically.
+
+Fix log:
+- Removed window stretch (canvas_items) — precise automation clicks and UI
+  now share one pixel space; desktop CAD UI should not scale anyway.
