@@ -75,6 +75,8 @@ static func draw(overlay: Control, view: SketchView, sk: Sketch,
 	var used_slots := {}      # screen cell -> count, to fan out stacked badges
 	for i in sk.constraints.size():
 		var c := sk.constraints[i]
+		if c.is_dimensional():
+			continue   # DimensionOverlay draws those as real annotations
 		var world := anchor_of(sk, c)
 		var screen := view.world_to_screen(world) + Vector2(10, -10)
 		var cell := Vector2i(screen / 24.0)
