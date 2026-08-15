@@ -1,0 +1,30 @@
+[configuration]
+
+entry_symbol = "geometry_library_init"
+compatibility_minimum = "4.6"
+reloadable = true
+
+[libraries]
+
+; godot-geometry: curve-aware path booleans (Skia pathops) + polygon offsetting
+; (Clipper2). Build per platform with:
+;   scons target=template_debug   and   scons target=template_release
+; Only the platforms you actually build need entries; a missing entry just means
+; the GeometryOps class won't load there (the editor degrades gracefully —
+; path-ops menu items disable). Linux x86_64 is built today; others are declared
+; for when their native binaries are cross-built (same status as godot-thorvg).
+
+; --- Linux x86_64 ---
+linux.debug.x86_64   = "res://addons/geometry/bin/libgeometry_gd.linux.template_debug.x86_64.so"
+linux.release.x86_64 = "res://addons/geometry/bin/libgeometry_gd.linux.template_release.x86_64.so"
+linux.editor.x86_64  = "res://addons/geometry/bin/libgeometry_gd.linux.template_debug.x86_64.so"
+
+; --- Windows x86_64 (binaries not yet cross-built) ---
+windows.debug.x86_64   = "res://addons/geometry/bin/libgeometry_gd.windows.template_debug.x86_64.dll"
+windows.release.x86_64 = "res://addons/geometry/bin/libgeometry_gd.windows.template_release.x86_64.dll"
+windows.editor.x86_64  = "res://addons/geometry/bin/libgeometry_gd.windows.template_debug.x86_64.dll"
+
+; --- macOS (binaries not yet cross-built) ---
+macos.debug   = "res://addons/geometry/bin/libgeometry_gd.macos.template_debug.framework"
+macos.release = "res://addons/geometry/bin/libgeometry_gd.macos.template_release.framework"
+macos.editor  = "res://addons/geometry/bin/libgeometry_gd.macos.template_debug.framework"

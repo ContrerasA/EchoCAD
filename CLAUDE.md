@@ -1,0 +1,43 @@
+# EchoCAD
+
+Fusion 360–style parametric CAD in Godot 4.7. Phase 1: constrained/dimensioned
+2D sketches on planes in a 3D viewport, feature timeline. Read `docs/PLAN.md`
+(architecture + locked decisions), `docs/MILESTONES.md` (M0–M12, one git branch
+each), `docs/TESTING.md` (test strategy + automation RPC spec) before working.
+
+## Commands
+
+```bash
+GODOT=/nix/store/9zi5r792h6gab0zw3z4xcmydgzjzdird-godot-4.7.1/bin/godot4.7.1
+
+tools/run_tests.sh              # all headless tests; FAIL <name> per failure
+tools/run_tests.sh m04          # filter by substring
+"$GODOT" --headless --path . --script res://tests/<t>.gd   # single test, see output
+"$GODOT" --path .               # run app windowed
+"$GODOT" --path . --editor --quit --headless   # REQUIRED once after adding any class_name
+```
+
+## Rules
+
+- Internal canonical unit is **mm**; default display unit is inch. Unit
+  conversion happens only at the UI boundary — model, solver, commands, and
+  RPC queries always speak mm.
+- Sketch geometry is typed entities (SketchPoint/Line/Arc/Circle), never
+  bezier paths. Bezier conversion only at the render boundary (RenderBridge).
+- Every model mutation goes through a Command on the CommandStack; continuous
+  gestures merge via CmdMergeBatch into one undo step (including their
+  constraint re-solve).
+- Only `src/render/render_bridge.gd` may touch `TVGCanvas`.
+- Tests: `extends SceneTree`, `quit(0 if ok else 1)`, failures via
+  `push_error`. Success prints `"<NAME> OK: <desc>"`.
+- Milestone work happens on its `mNN-*` branch; merge to `main` only with
+  tests green + manual QA section signed off in `docs/MANUAL_QA.md`.
+
+## Reference projects (read-only siblings)
+
+- `../echo_vector` — port source for solver (`src/model/ev_constraint_solver.gd`),
+  DOF (`ev_constraint_dof.gd`), geometry kernel, command stack, tool protocol,
+  snap engine. Its `docs/CAD.md` + `docs/HANDOFF.md` explain the designs.
+- `../godot-thorvg`, `../godot-geometry` — source of the vendored
+  `addons/thorvg` and `addons/geometry` GDExtensions (Linux/Windows x86_64
+  binaries; rebuild happens in those repos, then re-copy the addon folder).
