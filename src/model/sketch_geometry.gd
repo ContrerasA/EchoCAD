@@ -110,6 +110,130 @@ static func entity_at(sk: Sketch, p: Vector2, tol: float) -> String:
 	return best
 
 
+## Segment-segment intersection points (0 or 1).
+static func intersect_segments(a1: Vector2, a2: Vector2, b1: Vector2,
+		b2: Vector2) -> Array:
+	var d1 := a2 - a1
+	var d2 := b2 - b1
+	var denom := d1.cross(d2)
+	if absf(denom) < 1e-12:
+		return []
+	var t := (b1 - a1).cross(d2) / denom
+	var u := (b1 - a1).cross(d1) / denom
+	if t < -1e-9 or t > 1.0 + 1e-9 or u < -1e-9 or u > 1.0 + 1e-9:
+		return []
+	return [a1 + d1 * t]
+
+
+## Segment-circle intersection points (0..2), optionally clamped to an arc's
+## angular range via `arc` (SketchArc) + sketch.
+static func intersect_segment_circle(a: Vector2, b: Vector2, c: Vector2,
+		r: float) -> Array:
+	var d := b - a
+	var f := a - c
+	var qa := d.dot(d)
+	if qa < 1e-12:
+		return []
+	var qb := 2.0 * f.dot(d)
+	var qc := f.dot(f) - r * r
+	var disc := qb * qb - 4.0 * qa * qc
+	if disc < 0.0:
+		return []
+	var sq := sqrt(disc)
+	var out: Array = []
+	for t in [(-qb - sq) / (2.0 * qa), (-qb + sq) / (2.0 * qa)]:
+		if t >= -1e-9 and t <= 1.0 + 1e-9:
+			var p: Vector2 = a + d * t
+			if out.is_empty() or (out[0] as Vector2).distance_to(p) > 1e-9:
+				out.append(p)
+	return out
+
+
+## Circle-circle intersection points (0..2).
+static func intersect_circles(c1: Vector2, r1: float, c2: Vector2,
+		r2: float) -> Array:
+	var d := c1.distance_to(c2)
+	if d < 1e-12 or d > r1 + r2 + 1e-9 or d < absf(r1 - r2) - 1e-9:
+		return []
+	var a := (r1 * r1 - r2 * r2 + d * d) / (2.0 * d)
+	var h2 := r1 * r1 - a * a
+	var h := sqrt(maxf(0.0, h2))
+	var mid := c1 + (c2 - c1) * (a / d)
+	var n := ((c2 - c1) / d).orthogonal()
+	if h < 1e-9:
+		return [mid]
+	return [mid + n * h, mid - n * h]
+
+
+## Is world angle `ang` inside the arc's swept range?
+static func arc_contains_angle(sk: Sketch, arc: SketchArc, ang: float) -> bool:
+	var c := sk.point(arc.center)
+	var s := sk.point(arc.start)
+	if c == null or s == null:
+		return false
+	var a0 := (s.pos - c.pos).angle()
+	var sweep := arc_sweep(sk, arc)
+	var rel := fposmod(ang - a0, TAU) if sweep >= 0.0 else -fposmod(a0 - ang, TAU)
+	return absf(rel) <= absf(sweep) + 1e-9
+
+
+## Every intersection point between entity `id` and all OTHER curve entities.
+static func entity_intersections(sk: Sketch, id: String) -> Array:
+	var e := sk.entity(id)
+	if e == null:
+		return []
+	var out: Array = []
+	for other in sk.entities():
+		if other.id == id or other.kind() == "point":
+			continue
+		for p in _intersect_pair(sk, e, other):
+			out.append(p)
+	return out
+
+
+static func _curve_params(sk: Sketch, e: SketchEntity) -> Dictionary:
+	match e.kind():
+		"line":
+			var l := e as SketchLine
+			return {"kind": "line", "a": sk.point(l.p0).pos, "b": sk.point(l.p1).pos}
+		"circle":
+			var ci := e as SketchCircle
+			return {"kind": "circle", "c": sk.point(ci.center).pos, "r": ci.radius}
+		"arc":
+			var arc := e as SketchArc
+			var c := sk.point(arc.center).pos
+			return {"kind": "arc", "c": c,
+				"r": c.distance_to(sk.point(arc.start).pos), "arc": arc}
+	return {}
+
+
+static func _intersect_pair(sk: Sketch, e1: SketchEntity, e2: SketchEntity) -> Array:
+	var p1 := _curve_params(sk, e1)
+	var p2 := _curve_params(sk, e2)
+	if p1.is_empty() or p2.is_empty():
+		return []
+	var raw: Array = []
+	if p1["kind"] == "line" and p2["kind"] == "line":
+		raw = intersect_segments(p1["a"], p1["b"], p2["a"], p2["b"])
+	elif p1["kind"] == "line":
+		raw = intersect_segment_circle(p1["a"], p1["b"], p2["c"], p2["r"])
+	elif p2["kind"] == "line":
+		raw = intersect_segment_circle(p2["a"], p2["b"], p1["c"], p1["r"])
+	else:
+		raw = intersect_circles(p1["c"], p1["r"], p2["c"], p2["r"])
+	# Clamp to arc ranges where applicable.
+	var out: Array = []
+	for p: Vector2 in raw:
+		var ok := true
+		for spec in [p1, p2]:
+			if spec["kind"] == "arc" and not arc_contains_angle(sk,
+					spec["arc"], (p - (spec["c"] as Vector2)).angle()):
+				ok = false
+		if ok:
+			out.append(p)
+	return out
+
+
 ## Circumcenter of three points ({pos, radius, ok}; ok=false when collinear).
 static func circumcircle(a: Vector2, b: Vector2, c: Vector2) -> Dictionary:
 	var d := 2.0 * (a.x * (b.y - c.y) + b.x * (c.y - a.y) + c.x * (a.y - b.y))

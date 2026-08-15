@@ -98,7 +98,12 @@ class EchoCad:
         if not r["visible"]:
             raise RpcError("bad_state", f"control {name} not visible")
         x, y, w, h = r["rect"]
-        return self.call("input.click", {"at": [x + w / 2, y + h / 2]})
+        cx, cy = x + w / 2, y + h / 2
+        win = self.call("app.window")["size"]
+        if not (0 <= cx <= win[0] and 0 <= cy <= win[1]):
+            raise RpcError("off_window",
+                           f"{name} center ({cx:.0f},{cy:.0f}) outside window {win}")
+        return self.call("input.click", {"at": [cx, cy]})
 
     def entities(self, **kw):
         return self.call("query.entities", kw)["entities"]

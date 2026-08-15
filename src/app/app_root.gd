@@ -40,8 +40,8 @@ var view_cube: ViewCube
 
 var _viewport_container: SubViewportContainer
 var _viewport: SubViewport
-var _tool_bar: HBoxContainer
-var _constraint_bar: HBoxContainer
+var _tool_bar: HFlowContainer
+var _constraint_bar: HFlowContainer
 var _tool_buttons := {}
 var _btn_create: Button
 var _btn_finish: Button
@@ -73,6 +73,11 @@ func _ready() -> void:
 	tools.register(SlotTool.new("overall"))
 	tools.register(SlotTool.new("point"))
 	tools.register(PointTool.new())
+	tools.register(TrimTool.new())
+	tools.register(ExtendTool.new())
+	tools.register(OffsetTool.new())
+	tools.register(MirrorTool.new())
+	tools.register(FilletTool.new())
 	tools.register(SmartDimensionTool.new())
 	tools.overlay_needs_redraw.connect(func() -> void: overlay.queue_redraw())
 	tools.active_changed.connect(func(_id: String) -> void: _refresh_ui())
@@ -326,9 +331,11 @@ func _build_ui() -> void:
 	_btn_undo.name = "UndoBtn"
 	_btn_redo = _button(top, "Redo", func() -> void: stack.redo())
 	_btn_redo.name = "RedoBtn"
-	_tool_bar = HBoxContainer.new()
+	# Tools get their own row — one row would overflow the window and make
+	# the tail buttons unreachable (for users AND automation clicks).
+	_tool_bar = HFlowContainer.new()
 	_tool_bar.name = "ToolBar"
-	top.add_child(_tool_bar)
+	vbox.add_child(_tool_bar)
 	var group := ButtonGroup.new()
 	for tid: String in tools.tool_ids():
 		var t := tools.get_tool(tid)
@@ -346,7 +353,7 @@ func _build_ui() -> void:
 		_tool_bar.add_child(b)
 		_tool_buttons[tid] = b
 
-	_constraint_bar = HBoxContainer.new()
+	_constraint_bar = HFlowContainer.new()
 	_constraint_bar.name = "ConstraintBar"
 	vbox.add_child(_constraint_bar)
 	var cons_defs := [
