@@ -56,6 +56,9 @@ func _ready() -> void:
 	tools.register(CenterRectTool.new())
 	tools.register(CircleTool.new())
 	tools.register(ThreePointCircleTool.new())
+	tools.register(ThreePointArcTool.new())
+	tools.register(CenterArcTool.new())
+	tools.register(TangentArcTool.new())
 	tools.register(PointTool.new())
 	tools.overlay_needs_redraw.connect(func() -> void: overlay.queue_redraw())
 	tools.active_changed.connect(func(_id: String) -> void: _refresh_ui())
@@ -71,8 +74,31 @@ func set_selection(ids: Array) -> void:
 	overlay.queue_redraw()
 
 
+## Exclusions persist across the mid-gesture rebuilds triggered by
+## _on_stack_changed — otherwise the first command of a drag would clobber
+## the drag's self-exclusion and the dragged point would snap to itself.
+var _snap_exclude: Array = []
+
+
 func rebuild_snap_index(exclude = []) -> void:
-	snap.build_index(active_sketch(), exclude)
+	_snap_exclude = exclude if exclude is Array else Array(exclude.keys())
+	snap.build_index(active_sketch(), _snap_exclude)
+
+
+## Re-solve the active sketch with `pinned` point ids held fixed, pushing
+## follower moves onto the stack (they merge into an open CmdMergeBatch, so
+## a drag plus its re-solve stays ONE undo step).
+func solve_followers(pinned = []) -> void:
+	var sk := active_sketch()
+	if sk == null or sk.constraints.is_empty():
+		return
+	var res := ConstraintSolver.solve(sk, pinned)
+	var pts: Dictionary = res["points"]
+	var radii: Dictionary = res["radii"]
+	if not pts.is_empty():
+		stack.push(CmdMovePoints.new(active_sketch_id, pts))
+	if not radii.is_empty():
+		stack.push(CmdSetRadii.new(active_sketch_id, radii))
 
 
 ## Replace the whole document (open/new). History is cleared — a loaded file
@@ -446,7 +472,7 @@ func _on_stack_changed() -> void:
 				if sk.has(id):
 					live.append(id)
 			selection = live
-			rebuild_snap_index()
+			snap.build_index(sk, _snap_exclude)   # keep gesture exclusions
 			sketch_view.mark_dirty()
 			overlay.queue_redraw()
 	else:

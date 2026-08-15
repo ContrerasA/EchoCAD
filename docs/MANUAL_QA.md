@@ -117,3 +117,31 @@ Status: PENDING sign-off
 
 Fix log:
 - (none yet)
+
+## §M6 — Arcs + constraint solver
+
+Status: PENDING sign-off
+
+1. 3-Pt Arc (A): click start, end, then a bulge point — preview follows the
+   third pick, arc lands through all three. Winding matches the bulge side.
+2. Center Arc: click center, click start (radius locks), sweep the cursor —
+   the preview follows the direction you wind, past 180° if you keep going;
+   third click commits.
+3. Tangent Arc: first click must land on a line ENDPOINT (green square when
+   snapped); the preview arc always leaves tangent to the line; second
+   click commits. Result carries Tangent + Coincident constraints.
+4. Select tool: drag the free end of a line that has a tangent arc — the
+   arc's start follows (coincident) and tangency re-solves live during the
+   drag. Ctrl+Z once reverts the entire drag (drag + re-solve = one step).
+5. Drag an arc endpoint: the opposite endpoint keeps the same radius (arc
+   implicit coupling), no kinks or explosions.
+6. Over-constrain something (e.g. two different distances between the same
+   points via RPC): geometry stays bounded, no vibrating explosion.
+7. `query.dof` over RPC reports sensible numbers ("N DOF remaining" /
+   "Fully constrained") and lists conflicts when you create one.
+
+Fix log:
+- Snap-index rebuilds triggered mid-drag by command pushes were clobbering
+  the gesture's self-exclusion, so a dragged point could snap back to its
+  own origin and collapse the undo batch. Exclusions now persist until the
+  gesture ends.
