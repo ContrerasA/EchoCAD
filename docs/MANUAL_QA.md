@@ -254,3 +254,24 @@ Fix log:
   1280 px and made tail buttons unreachable (automation caught it — the
   Python client now refuses clicks outside the window instead of silently
   missing).
+
+## §M11 — Timeline
+
+Status: PENDING sign-off
+
+1. The timeline bar (above the status bar) shows one chip per feature in
+   order, with the ‖ rollback marker after the last.
+2. Create two sketches with content. Drag the marker left of Sketch2 —
+   Sketch2's geometry vanishes from the 3D view and its chip dims to
+   "(Sketch2)". Drag back — it returns. One Ctrl+Z per drag.
+3. With the marker rolled back, Create Sketch inserts the new feature AT
+   the marker; downstream features shift right and stay rolled back.
+4. Right-click a chip: Edit Sketch / Suppress / Delete. Suppress dims the
+   chip and hides the geometry without moving the marker; all three are
+   undoable.
+5. Double-click a sketch chip to edit it; Finish returns to model mode
+   with edits applied.
+6. Save, reopen: order, marker position, and suppressed flags survive.
+
+Fix log:
+- (none yet)

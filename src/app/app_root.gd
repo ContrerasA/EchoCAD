@@ -37,6 +37,7 @@ var rig: OrbitCamera
 var sketch_view: SketchView
 var overlay: Control
 var view_cube: ViewCube
+var timeline: TimelineBar
 
 var _viewport_container: SubViewportContainer
 var _viewport: SubViewport
@@ -290,6 +291,7 @@ func load_document(new_doc: CadDocument) -> void:
 	sketch_view.visible = false
 	world.set_planes_visible(true)
 	world.rebuild_sketches(doc)
+	timeline.refresh()
 	mode_changed.emit(mode)
 	_refresh_ui()
 
@@ -424,6 +426,11 @@ func _build_ui() -> void:
 	view_cube.position = Vector2(-ViewCube.SIZE_PX - 8, 8)
 	view_cube.face_picked.connect(_on_cube_face)
 	stack_area.add_child(view_cube)
+
+	timeline = TimelineBar.new()
+	timeline.app = self
+	vbox.add_child(timeline)
+	timeline.refresh()
 
 	var status := HBoxContainer.new()
 	status.name = "StatusBar"
@@ -710,6 +717,7 @@ func _on_stack_changed() -> void:
 			overlay.queue_redraw()
 	else:
 		world.rebuild_sketches(doc)
+	timeline.refresh()
 	_refresh_ui()
 
 
