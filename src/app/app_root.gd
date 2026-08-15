@@ -52,6 +52,10 @@ func _ready() -> void:
 	tools = ToolManager.new(self)
 	tools.register(SelectTool.new())
 	tools.register(LineTool.new())
+	tools.register(RectTool.new())
+	tools.register(CenterRectTool.new())
+	tools.register(CircleTool.new())
+	tools.register(ThreePointCircleTool.new())
 	tools.register(PointTool.new())
 	tools.overlay_needs_redraw.connect(func() -> void: overlay.queue_redraw())
 	tools.active_changed.connect(func(_id: String) -> void: _refresh_ui())
@@ -131,8 +135,13 @@ func _build_ui() -> void:
 	for tid: String in tools.tool_ids():
 		var t := tools.get_tool(tid)
 		var b := Button.new()
-		b.name = tid.capitalize() + "ToolBtn"
+		var parts := tid.split("_")
+		var pascal := ""
+		for part in parts:
+			pascal += part.substr(0, 1).to_upper() + part.substr(1)
+		b.name = pascal + "ToolBtn"
 		b.text = t.title
+		b.focus_mode = Control.FOCUS_NONE
 		b.toggle_mode = true
 		b.button_group = group
 		b.pressed.connect(func() -> void: tools.set_active(tid))
@@ -171,6 +180,7 @@ func _build_ui() -> void:
 	sketch_view.visible = false
 	sketch_view.view_changed.connect(_on_sketch_view_changed)
 	sketch_view.tool_input = _on_tool_input
+	sketch_view.key_handler = handle_app_key
 	stack_area.add_child(sketch_view)
 
 	overlay = Control.new()
@@ -199,6 +209,7 @@ func _build_ui() -> void:
 func _button(parent: Control, text: String, handler: Callable) -> Button:
 	var b := Button.new()
 	b.text = text
+	b.focus_mode = Control.FOCUS_NONE   # keys belong to the canvas, not buttons
 	b.pressed.connect(handler)
 	parent.add_child(b)
 	return b
@@ -241,6 +252,7 @@ func edit_sketch(feature_id: String) -> void:
 	set_selection([])
 	tools.set_active("select")
 	rebuild_snap_index()
+	sketch_view.grab_focus()
 	mode_changed.emit(mode)
 	_refresh_ui()
 
@@ -310,24 +322,41 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	var k := event as InputEventKey
 	if k == null or not k.pressed:
 		return
+	if handle_app_key(k):
+		get_viewport().set_input_as_handled()
+
+
+## One key-routing funnel used by both the focused SketchView (gets Tab and
+## Enter before focus traversal) and the unhandled fallback.
+func handle_app_key(k: InputEventKey) -> bool:
 	if k.keycode == KEY_Z and k.ctrl_pressed and k.shift_pressed:
 		stack.redo()
-	elif k.keycode == KEY_Z and k.ctrl_pressed:
+		return true
+	if k.keycode == KEY_Z and k.ctrl_pressed:
 		stack.undo()
-	elif k.keycode == KEY_ESCAPE:
+		return true
+	if k.keycode == KEY_ESCAPE:
 		if mode == Mode.SKETCH and tools.handle_cancel():
-			return
+			return true
 		if picking_plane:
 			picking_plane = false
 			world.set_plane_hover("")
 			_refresh_ui()
-	elif k.keycode == KEY_ENTER and mode == Mode.SKETCH:
-		tools.handle_commit()
-	elif mode == Mode.SKETCH and not k.ctrl_pressed:
+			return true
+		return false
+	if (k.keycode == KEY_ENTER or k.keycode == KEY_KP_ENTER) and mode == Mode.SKETCH:
+		return tools.handle_commit()
+	if mode == Mode.SKETCH and not k.ctrl_pressed:
+		# Type-in fields get first claim on keys (digits, Tab, units...).
+		var active := tools.get_tool(tools.active_id())
+		if active != null and active.key_input(k):
+			overlay.queue_redraw()
+			return true
 		for tid: String in tools.tool_ids():
 			if tools.get_tool(tid).shortcut == k.keycode:
 				tools.set_active(tid)
-				return
+				return true
+	return false
 
 
 func _on_tool_input(world_pos: Vector2, screen: Vector2, event: InputEvent) -> bool:

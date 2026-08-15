@@ -37,8 +37,14 @@ var _sketch: Sketch = null
 var _dirty := false
 
 
+## Key hook: Callable(event: InputEventKey) -> bool. Focused keys (Tab,
+## Enter, digits) route here BEFORE viewport focus traversal can eat them.
+var key_handler: Callable = Callable()
+
+
 func _ready() -> void:
 	clip_contents = true
+	focus_mode = Control.FOCUS_ALL
 	_raster = TextureRect.new()
 	_raster.name = "Raster"
 	_raster.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -92,6 +98,11 @@ func zoom_at(factor: float, at_screen: Vector2) -> void:
 
 
 func _gui_input(event: InputEvent) -> void:
+	if event is InputEventKey:
+		var k := event as InputEventKey
+		if k.pressed and key_handler.is_valid() and key_handler.call(k):
+			accept_event()
+		return
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
 		if mb.pressed and mb.button_index == MOUSE_BUTTON_WHEEL_UP:

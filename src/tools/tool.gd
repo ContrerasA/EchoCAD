@@ -39,6 +39,12 @@ func cancel() -> bool:
 	return false
 
 
+## Raw key event while the tool is active (numeric type-in fields). Return
+## true to consume BEFORE tool shortcuts run.
+func key_input(_e: InputEventKey) -> bool:
+	return false
+
+
 ## Enter pressed (finish a chain, commit a value).
 func commit() -> bool:
 	return false

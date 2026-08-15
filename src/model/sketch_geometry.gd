@@ -110,6 +110,20 @@ static func entity_at(sk: Sketch, p: Vector2, tol: float) -> String:
 	return best
 
 
+## Circumcenter of three points ({pos, radius, ok}; ok=false when collinear).
+static func circumcircle(a: Vector2, b: Vector2, c: Vector2) -> Dictionary:
+	var d := 2.0 * (a.x * (b.y - c.y) + b.x * (c.y - a.y) + c.x * (a.y - b.y))
+	if absf(d) < 1e-9:
+		return {"ok": false}
+	var a2 := a.length_squared()
+	var b2 := b.length_squared()
+	var c2 := c.length_squared()
+	var center := Vector2(
+		(a2 * (b.y - c.y) + b2 * (c.y - a.y) + c2 * (a.y - b.y)) / d,
+		(a2 * (c.x - b.x) + b2 * (a.x - c.x) + c2 * (b.x - a.x)) / d)
+	return {"ok": true, "pos": center, "radius": center.distance_to(a)}
+
+
 ## Midpoint of a line entity (Dictionary {pos, ok}).
 static func line_midpoint(sk: Sketch, l: SketchLine) -> Dictionary:
 	var a := sk.point(l.p0)

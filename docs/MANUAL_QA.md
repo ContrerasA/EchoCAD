@@ -93,3 +93,27 @@ Status: PENDING sign-off
 Fix log:
 - Removed window stretch (canvas_items) — precise automation clicks and UI
   now share one pixel space; desktop CAD UI should not scale anyway.
+
+## §M5 — Rectangle + circle
+
+Status: PENDING sign-off
+
+1. Rectangle (R): click two corners. **Expect:** live preview; result is 4
+   lines with shared corner points; top/bottom horizontal, sides vertical
+   (drag a corner later with Select — shape shears only as constraints
+   allow once the solver lands).
+2. While the second corner rubber-bands, W/H boxes follow the cursor
+   showing live sizes in inches; type `2`, Tab, `1`, Enter. **Expect:**
+   exact 2in x 1in rectangle; typed field highlights while active.
+3. Center Rect: first click is the center (cross marker), second a corner;
+   typed W/H are FULL sizes centered on the first click.
+4. Circle (C): click center, move (live R readout), type `0.5`, Enter.
+   **Expect:** exact 0.5in radius. Or click the rim to size by eye.
+5. 3-Pt Circle: click three points; after the second, the preview circle
+   passes through both picks and the cursor. Collinear third click is
+   refused (no commit).
+6. Esc mid-shape cancels with no debris; one undo step per finished shape.
+7. Unit suffixes work in fields: `10mm`, `1.5in`.
+
+Fix log:
+- (none yet)
