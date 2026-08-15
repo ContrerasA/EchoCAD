@@ -14,6 +14,7 @@ var _down_world := Vector2.ZERO
 var _down_screen := Vector2.ZERO
 var _move_points: Array[String] = []   # point entity ids being dragged
 var _start := {}                       # id -> Vector2 at drag start
+var _batch: CmdMergeBatch = null       # one undo step: drag + re-solve
 
 
 func _init() -> void:
@@ -79,6 +80,10 @@ func pointer_move(world: Vector2, screen: Vector2, _e: InputEventMouseMotion) ->
 			and screen.distance_to(_down_screen) > DEADZONE_PX:
 		_drag = Drag.MOVE
 		app.rebuild_snap_index(_moving_entity_ids())
+		# The whole gesture — every move + every constraint re-solve — is
+		# one sealed undo step.
+		_batch = CmdMergeBatch.new("Drag", [])
+		app.stack.push_no_merge(_batch)
 	if _drag != Drag.MOVE:
 		return false
 	var delta := world - _down_world
@@ -93,6 +98,7 @@ func pointer_move(world: Vector2, screen: Vector2, _e: InputEventMouseMotion) ->
 	for pid in _move_points:
 		targets[pid] = (_start[pid] as Vector2) + delta
 	app.stack.push(CmdMovePoints.new(app.active_sketch_id, targets))
+	app.solve_followers(_move_points)
 	return true
 
 
@@ -100,6 +106,9 @@ func pointer_up(_world: Vector2, _screen: Vector2, e: InputEventMouseButton) -> 
 	if e.button_index != MOUSE_BUTTON_LEFT:
 		return false
 	if _drag == Drag.MOVE:
+		if _batch != null:
+			_batch.seal()
+			_batch = null
 		app.rebuild_snap_index()
 	_drag = Drag.NONE
 	return true

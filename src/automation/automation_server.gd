@@ -277,6 +277,23 @@ func _cmd_query_control(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant
 		"disabled": node.disabled if node is BaseButton else false}
 
 
+func _cmd_query_dof(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
+	var sk := _sketch_for(a)
+	if sk == null:
+		_reply_err(p, id, "bad_args", "no such sketch")
+		return null
+	var r := DofAnalyzer.analyze(sk)
+	r["summary"] = DofAnalyzer.summary(sk)
+	return r
+
+
+func _cmd_query_undo_stack(_a: Dictionary, _p: StreamPeerTCP, _id: Variant) -> Dictionary:
+	var undo_names: Array = []
+	for c: Command in app.stack._undo:
+		undo_names.append(c.name)
+	return {"undo": undo_names, "can_redo": app.stack.can_redo()}
+
+
 func _cmd_query_active_tool(_a: Dictionary, _p: StreamPeerTCP, _id: Variant) -> Dictionary:
 	return {"tool": app.tools.active_id(), "tools": app.tools.tool_ids()}
 
