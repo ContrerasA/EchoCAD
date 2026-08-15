@@ -11,12 +11,15 @@ extends RefCounted
 ## cost visible.
 
 const COLOR_FREE := Color(0.30, 0.62, 0.96)          # under-constrained (Fusion blue)
+const COLOR_CONSTRAINED := Color(0.42, 0.82, 0.55)   # fully constrained: green
 const COLOR_CONSTRUCTION := Color(0.72, 0.55, 0.95)  # construction: violet dashed
 const STROKE_PX := 2.0                               # on-screen stroke width
 
 var _canvas: TVGCanvas = null
 ## Stroke width in document mm for the CURRENT render (screen px / zoom).
 var _stroke_mm := 0.5
+## DOF result consumed by full_sync: {points: {id: true}, circles: {id: true}}.
+var constrained := {"points": {}, "circles": {}}
 
 
 func _init() -> void:
@@ -78,8 +81,21 @@ func _add_entity(sketch: Sketch, e: SketchEntity) -> void:
 		_canvas.set_stroke_dash(handle, PackedFloat32Array(
 			[_stroke_mm * 4.0, _stroke_mm * 3.0]), 0.0)
 	else:
-		_canvas.set_stroke(handle, _stroke_mm, COLOR_FREE,
+		var color := COLOR_CONSTRAINED if _is_constrained(e) else COLOR_FREE
+		_canvas.set_stroke(handle, _stroke_mm, color,
 			TVGCanvas.CAP_ROUND, TVGCanvas.JOIN_ROUND)
+
+
+## Fully constrained = every point the entity depends on is determined
+## (plus the radius variable for circles).
+func _is_constrained(e: SketchEntity) -> bool:
+	var pts: Dictionary = constrained["points"]
+	for pid in e.point_refs():
+		if not pts.has(pid):
+			return false
+	if e.kind() == "circle" and not (constrained["circles"] as Dictionary).has(e.id):
+		return false
+	return not e.point_refs().is_empty()
 
 
 ## Render the sketch rect `view_mm` (sketch coords, Y-up) to an Image at

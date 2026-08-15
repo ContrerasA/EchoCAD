@@ -221,9 +221,52 @@ func _cmd_query_constraints(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Var
 		_reply_err(p, id, "bad_args", "no such sketch")
 		return null
 	var out: Array = []
-	for c in sk.constraints:
-		out.append(c.to_dict())
+	for i in sk.constraints.size():
+		var c := sk.constraints[i]
+		var d := c.to_dict()
+		d["index"] = i
+		d["satisfied"] = ConstraintSolver.error_of(sk, c) <= 0.01
+		out.append(d)
 	return {"constraints": out}
+
+
+func _cmd_action_select(a: Dictionary, _p: StreamPeerTCP, _id: Variant) -> Dictionary:
+	app.set_selection(a.get("ids", []))
+	return {"selection": Array(app.selection)}
+
+
+func _cmd_action_add_constraint(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
+	var sk := app.active_sketch()
+	if sk == null:
+		_reply_err(p, id, "bad_state", "not in a sketch")
+		return null
+	var tname := String(a.get("type", ""))
+	var tidx := (SketchConstraint.Type.keys() as Array).find(tname)
+	if tidx < 0:
+		_reply_err(p, id, "bad_args", "unknown constraint type %s" % tname)
+		return null
+	if a.has("operands"):
+		app.set_selection(a["operands"])
+	var value := float(a["value"]) if a.has("value") else NAN
+	var why := app.apply_constraint(tidx as SketchConstraint.Type, value)
+	if why != "":
+		_reply_err(p, id, "invalid", why)
+		return null
+	return {"index": sk.constraints.size() - 1,
+		"dof": DofAnalyzer.summary(sk)}
+
+
+func _cmd_action_delete_constraint(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
+	var sk := app.active_sketch()
+	if sk == null:
+		_reply_err(p, id, "bad_state", "not in a sketch")
+		return null
+	var index := int(a.get("index", -1))
+	if index < 0 or index >= sk.constraints.size():
+		_reply_err(p, id, "bad_args", "no constraint %d" % index)
+		return null
+	app.delete_constraint(index)
+	return {"count": sk.constraints.size()}
 
 
 func _cmd_query_timeline(_a: Dictionary, _p: StreamPeerTCP, _id: Variant) -> Dictionary:

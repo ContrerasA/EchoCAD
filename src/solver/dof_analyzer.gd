@@ -93,13 +93,55 @@ static func analyze(sk: Sketch) -> Dictionary:
 			var src: int = row_sources[i]
 			if not redundant.has(src):
 				redundant.append(src)
-			if violations.get(src, false) and not conflicts.has(src):
+
+	# Conflicts: an over-determined system (some row redundant) where any
+	# constraint is left violated is unsatisfiable. The solver satisfies
+	# whichever duplicate it visited last, so the VIOLATED one may not be
+	# the redundant one — flag every violated constraint in that case.
+	if not redundant.is_empty():
+		for src: int in violations:
+			if violations[src] and not conflicts.has(src):
 				conflicts.append(src)
+
+	# Per-variable constrained-ness: a variable is determined when its basis
+	# vector lies in the row space (pivots are orthonormal — residual test).
+	var determined := {}
+	for col in nvars:
+		var e_col := PackedFloat64Array()
+		e_col.resize(nvars)
+		e_col[col] = 1.0
+		for p: PackedFloat64Array in pivots:
+			e_col = _eliminate(e_col, p)
+		if _norm(e_col) < 1e-6:
+			determined[col] = true
+	var constrained_points: Array = []
+	var constrained_circles: Array = []
+	var seen := {}
+	for col in nvars:
+		var spec: Dictionary = columns[col]
+		var id: String = spec["id"]
+		if seen.has(id):
+			continue
+		match String(spec["kind"]):
+			"px":
+				seen[id] = true
+				if determined.has(col) and determined.has(col + 1):
+					constrained_points.append(id)
+			"r":
+				seen[id] = true
+				if determined.has(col):
+					constrained_circles.append(id)
+	# FIXed entities are constrained by definition (their vars were removed).
+	for id: String in fixed:
+		if not constrained_points.has(id):
+			constrained_points.append(id)
 
 	var dof := nvars - rank
 	return {"analyzed": true, "vars": nvars, "rank": rank, "dof": dof,
-		"fully_constrained": dof == 0 and nvars > 0,
-		"redundant": redundant, "conflicts": conflicts}
+		"fully_constrained": dof == 0 and (nvars > 0 or not fixed.is_empty()),
+		"redundant": redundant, "conflicts": conflicts,
+		"constrained_points": constrained_points,
+		"constrained_circles": constrained_circles}
 
 
 static func summary(sk: Sketch) -> String:
