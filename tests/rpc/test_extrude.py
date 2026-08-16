@@ -54,7 +54,7 @@ def main():
 
     # Edit the sketch (drive width to 2in) -> extrude replays.
     app.call("action.edit_sketch", {"feature": sketch_id})
-    ents = {e["id"]: e for e in app.entities()}
+    ents = app.entity_map()
     lines = [e for e in app.entities() if e["kind"] == "line"]
     bottom = lines[0]
     app.call("action.add_constraint",

@@ -13,6 +13,9 @@ extends RefCounted
 const COLOR_FREE := Color(0.30, 0.62, 0.96)          # under-constrained (Fusion blue)
 const COLOR_CONSTRAINED := Color(0.42, 0.82, 0.55)   # fully constrained: green
 const COLOR_CONSTRUCTION := Color(0.72, 0.55, 0.95)  # construction: violet dashed
+## Geometry from OTHER sketches, drawn dim so it reads as context rather than
+## as something the active sketch owns.
+const COLOR_REFERENCE := Color(0.45, 0.50, 0.58, 0.55)
 const STROKE_PX := 2.0                               # on-screen stroke width
 
 var _canvas: TVGCanvas = null
@@ -33,16 +36,27 @@ func available() -> bool:
 
 ## Rebuild the whole canvas from a sketch. `zoom` = screen px per mm, used to
 ## keep stroke width constant on screen.
-func full_sync(sketch: Sketch, zoom: float) -> void:
+##
+## `references` are OTHER sketches on the same plane, drawn first and dimmed:
+## working on a sketch with the rest of the drawing invisible makes it
+## impossible to place geometry in relation to what is already there. They are
+## context only — not snappable, not hit-testable (that is M15).
+func full_sync(sketch: Sketch, zoom: float, references: Array = []) -> void:
 	if _canvas == null:
 		return
 	_canvas.clear()
 	_stroke_mm = STROKE_PX / maxf(zoom, 0.001)
+	for ref in references:
+		var rs := ref as Sketch
+		if rs == null or rs == sketch:
+			continue
+		for e in rs.entities():
+			_add_entity(rs, e, true)
 	for e in sketch.entities():
 		_add_entity(sketch, e)
 
 
-func _add_entity(sketch: Sketch, e: SketchEntity) -> void:
+func _add_entity(sketch: Sketch, e: SketchEntity, reference := false) -> void:
 	var path: Array = []
 	match e.kind():
 		"line":
@@ -75,6 +89,12 @@ func _add_entity(sketch: Sketch, e: SketchEntity) -> void:
 		_:
 			return   # points are editor chrome, drawn by the overlay
 	var handle := _canvas.add_path(path[0], path[1])
+	if reference:
+		# One flat dim stroke: reference geometry must not advertise its own
+		# construction/constrained state and compete with the active sketch.
+		_canvas.set_stroke(handle, _stroke_mm * 0.75, COLOR_REFERENCE,
+			TVGCanvas.CAP_ROUND, TVGCanvas.JOIN_ROUND)
+		return
 	if e.construction:
 		_canvas.set_stroke(handle, _stroke_mm * 0.75, COLOR_CONSTRUCTION,
 			TVGCanvas.CAP_ROUND, TVGCanvas.JOIN_ROUND)

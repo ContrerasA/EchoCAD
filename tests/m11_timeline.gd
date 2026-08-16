@@ -113,7 +113,8 @@ func _run() -> bool:
 		return _fail("edit_sketch did not enter")
 	_add_line(f3, Vector2(5, 5), Vector2(25, 5))
 	_root.finish_sketch()
-	if _root.doc.sketch_feature(f3).sketch.size() != 3:
+	# 2 points + 1 line, plus the sketch's own origin point.
+	if _root.doc.sketch_feature(f3).sketch.size() != 4:
 		return _fail("edit did not persist")
 
 	print("M11_TIMELINE OK: rollback, suppress, insert-at-marker, "

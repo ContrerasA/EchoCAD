@@ -177,6 +177,96 @@ as timeline feature. Opens phase 2.
   sketch → extrude replays with new profile.
 - **Manual**: profile hover highlight; extrude preview drag; orbit the solid.
 
+## M14 — Orbitable sketch view  (branch: `m14-sketch-orbit`)
+
+Deferred out of the M2 QA pass. Today sketch mode is a locked 2D raster: the
+camera is pinned normal to the plane and orbit is unavailable, so there is no
+way to glance at the sketch in context and come back.
+
+Target behaviour (Fusion's): Shift+MMB inside a sketch orbits away from the
+plane, the sketch rendering in 3D on its plane while off-axis; clicking that
+plane's view-cube face animates back to the locked, editable 2D view at the
+pan/zoom the user left. Editing tools stay disabled while off-axis.
+
+The work is a mode sub-state (locked-2D vs free-3D within `Mode.SKETCH`) plus
+a 3D render path for the active sketch — `CadWorld.rebuild_sketches` already
+draws live sketches as line meshes, so the in-edit sketch needs the same
+treatment, and `SketchView` needs to yield the canvas while off-axis.
+`OrbitCamera.capture_view`/`restore_view` (added in the M2 QA pass) already
+provide the return-trip animation.
+
+- **Automated**: entering sketch mode captures the plane view; orbiting sets
+  the off-axis sub-state and disables tool input; the plane's cube face
+  restores the exact pan/zoom captured on leaving; undo/redo unaffected.
+- **Manual**: orbit feel inside a sketch; the return animation reads as a
+  fly-back, not a snap; grid/axes stay legible at grazing angles.
+
+## M15 — Project / reference geometry  (branch: `m15-project`)
+
+Deferred out of the M2 QA pass. Sketch mode now DRAWS the other coplanar
+sketches dimmed behind the one being edited (M2 fix 9), so you can see what is
+already there — but that geometry is display-only: it is not in the snap index
+and not hit-testable, so you cannot snap to it, constrain to it, or trim
+against it.
+
+Target behaviour (Fusion's "Project / Include"): explicitly project an edge,
+face boundary, or another sketch's geometry into the active sketch, producing
+real projected entities that are constrained to follow their source and update
+when it changes. That is a model-level link, not a render trick, which is why
+it is its own milestone rather than an extension of the dim rendering.
+
+- **Automated**: projecting an entity creates a linked entity in the active
+  sketch; moving the source re-solves the projection; deleting the source
+  breaks the link with a reported message rather than a crash; projections
+  survive save/load.
+- **Manual**: projected geometry is visually distinct from drawn geometry;
+  snapping to it works; it participates in profile detection for extrude.
+
+## M16 — Threaded solver  (branch: `m16-threaded-solver`)
+
+Deferred out of the M6 QA pass. The M6 fix coalesced drag updates to one solve
+per frame, which removed the wasted work that was pegging a core — but the
+solve itself still runs synchronously on the main thread, so a large, heavily
+constrained sketch will still stutter under a drag.
+
+Port `echo_vector`'s approach: run `ConstraintSolver.solve` on a worker thread
+against a snapshot, apply the result on the main thread when it lands, and drop
+stale results if the gesture has moved on. The solver is already static and
+pure (reads a Sketch, returns proposed moves), which is exactly the shape this
+needs — no shared mutable state to guard.
+
+- **Automated**: solve results are identical threaded vs synchronous for the
+  fixture sketches; a gesture that outruns the solver applies only the newest
+  result; undo still collapses a whole drag to one step.
+- **Manual**: drag a 100+ entity constrained sketch — interactive, no stutter,
+  CPU spread across cores rather than one pegged.
+
+## M17 — Per-DOF drag refusal  (branch: `m17-dof-drag`)
+
+Deferred out of the M7 QA pass (step 2). Dragging one of two PARALLEL lines
+currently rotates and translates the other, including endpoints the user never
+touched. Fusion does not allow this: once a constraint fixes a degree of
+freedom, a drag cannot change it — the geometry slides only along the freedoms
+that remain.
+
+M6 fix 7 added a refusal, but it is whole-point: a drag is blocked only when
+EVERY point it would move is fully determined. That cannot express "this point
+may translate but its line's rotation is fixed", which is exactly the parallel
+case — the points are under-constrained while the angle between them is not.
+
+The work is to read the DOF analysis per degree rather than per point:
+`DofAnalyzer` already builds the Jacobian and knows the row space, so the
+free directions at a point are recoverable from it. The drag then projects
+the requested motion onto those directions instead of being allowed or refused
+outright, which also gives the softer Fusion behaviour of geometry sliding
+where it can rather than simply not moving.
+
+- **Automated**: dragging a point of a parallel pair leaves the other line's
+  angle unchanged; a point on a Horizontal line moves in x but never y; an
+  unconstrained point still moves freely; undo still collapses to one step.
+- **Manual**: dragging constrained geometry feels like it is sliding on rails
+  rather than refusing or lurching; the status bar explains what is holding it.
+
 ---
 
 ## Milestone order rationale

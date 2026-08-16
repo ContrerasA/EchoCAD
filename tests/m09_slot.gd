@@ -45,9 +45,13 @@ func _type_commit(text: String) -> void:
 	tool.key_input(enter)
 
 
+## Counts AUTHORED geometry: the sketch's own origin point is scaffolding
+## every sketch has, not something a tool produced, so it is excluded here.
 func _census(sk: Sketch, from_index: int) -> Dictionary:
 	var out := {}
 	for e in sk.entities():
+		if sk.is_origin(e.id):
+			continue
 		if sk.index_of(e.id) >= from_index:
 			out[e.kind()] = out.get(e.kind(), 0) + 1
 	return out
@@ -98,7 +102,8 @@ func _run() -> bool:
 		return _fail("slot radius wrong: %f" % float(m["r"]))
 	# One undo step.
 	_root.stack.undo()
-	if sk.size() != 0:
+	# Back to a bare sketch: only its origin point remains.
+	if sk.size() != 1:
 		return _fail("slot not one undo step")
 	_root.stack.redo()
 	var n0 := sk.size()

@@ -91,8 +91,10 @@ func _run() -> bool:
 	if _root.doc.features.size() != 1:
 		return _fail("redo did not restore the sketch feature")
 
-	# Plane pick math: a ray straight down hits XZ; one along -X hits YZ.
-	if _root.world.pick_plane(Vector3(10, 200, -10), Vector3(0, -1, 0)) != "XZ":
+	# Plane pick math. The quads are Fusion-style quadrants running from the
+	# origin out along +u/+v, so every probe aims INSIDE that quadrant:
+	# XZ spans +X/+Z, YZ spans +Y/+Z.
+	if _root.world.pick_plane(Vector3(10, 200, 10), Vector3(0, -1, 0)) != "XZ":
 		return _fail("down-ray should pick XZ")
 	if _root.world.pick_plane(Vector3(200, 10, 10), Vector3(-1, 0, 0)) != "YZ":
 		return _fail("x-ray should pick YZ")
@@ -101,6 +103,9 @@ func _run() -> bool:
 	# A ray through a corner region picks the NEAREST plane.
 	if _root.world.pick_plane(Vector3(1000, 3, 5), Vector3(-1, 0, 0)) != "YZ":
 		return _fail("near-axis ray should still pick YZ")
+	# The mirrored quadrant is empty now: same ray, negative u/v, no hit.
+	if _root.world.pick_plane(Vector3(-10, 200, -10), Vector3(0, -1, 0)) != "":
+		return _fail("XZ should not extend into its -u/-v quadrant")
 
 	# Second sketch auto-names Sketch2 and lands after Sketch1 (marker insert).
 	var fid2 := _root.create_sketch("XY")

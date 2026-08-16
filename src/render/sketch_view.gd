@@ -15,9 +15,25 @@ signal view_changed
 const ZOOM_MIN := 0.05      # px per mm  (~fit 8m)
 const ZOOM_MAX := 400.0
 const GRID_TARGET_PX := 48.0   # aim one minor line every ~this many px
-const COLOR_BG := Color(0.13, 0.14, 0.16)
-const COLOR_GRID_MINOR := Color(1, 1, 1, 0.05)
-const COLOR_GRID_MAJOR := Color(1, 1, 1, 0.11)
+## Shared with model mode so the background does not shift when switching.
+const COLOR_BG := CadWorld.COLOR_BG
+## Opacity of the veil drawn over the 3D viewport while sketching. High enough
+## that the sketch reads as the foreground, low enough that solids behind it
+## stay legible so you can place geometry against the part you are drawing on.
+const MODEL_VEIL_ALPHA := 0.82
+## Grid colours for the 2D canvas. Deliberately NOT shared with the 3D grid.
+##
+## They were aliased to `CadWorld`'s for a while, on the reasoning that the two
+## surfaces should not drift apart — but they are not solving the same problem.
+## The 3D grid is a shaded quad seen at a raking angle, where its own fade and
+## coverage maths do the work and low alphas suffice. This one is drawn flat and
+## face-on, one screen pixel wide, over the model veil, with nothing attenuating
+## it: at the 3D grid's 0.085 the minor lines are invisible here, which is
+## exactly how "only the majors are drawn" looked in the sketch view. The STEP
+## ladder stays shared (that is a units question, the same in both places); the
+## colours answer a rendering question and each surface answers it for itself.
+const COLOR_GRID_MINOR := Color(1, 1, 1, 0.14)
+const COLOR_GRID_MAJOR := Color(1, 1, 1, 0.26)
 const COLOR_AXIS_X := Color(0.85, 0.30, 0.30, 0.8)
 const COLOR_AXIS_Y := Color(0.35, 0.80, 0.35, 0.8)
 
@@ -34,6 +50,13 @@ var _pan := Vector2.ZERO
 var _raster: TextureRect = null
 var _texture: ImageTexture = null
 var _sketch: Sketch = null
+## Other sketches on the same plane, drawn dimmed underneath the active one so
+## you can place geometry relative to what the model already has.
+var _references: Array = []
+## Let the 3D model show through behind the sketch (see `_draw`). A plain
+## opaque canvas is still available for tests and screenshots that want the
+## sketch on its own.
+var show_model_behind := true
 var _dirty := false
 
 
@@ -112,6 +135,14 @@ func _gui_input(event: InputEvent) -> void:
 			zoom_at(1.0 / 1.1, mb.position)
 			accept_event()
 		elif mb.button_index == MOUSE_BUTTON_LEFT and tool_input.is_valid():
+			# Clicking the canvas takes keyboard focus back. Focus was grabbed
+			# only once, when the sketch opened, so anything that moved it
+			# afterwards — clicking a toolbar button, for instance — left the
+			# canvas deaf: you could select a dimension label and type at it
+			# with nothing whatsoever happening, because the keys were going
+			# somewhere else entirely.
+			if mb.pressed and not has_focus():
+				grab_focus()
 			if tool_input.call(screen_to_world(mb.position), mb.position, mb):
 				accept_event()
 	elif event is InputEventMouseMotion:
@@ -127,9 +158,11 @@ func _gui_input(event: InputEvent) -> void:
 
 ## --- rendering ---------------------------------------------------------------
 
-## Point the view at a sketch and (re)build the raster.
-func show_sketch(sketch: Sketch) -> void:
+## Point the view at a sketch and (re)build the raster. `references` are other
+## sketches to draw dimmed underneath it as context.
+func show_sketch(sketch: Sketch, references: Array = []) -> void:
 	_sketch = sketch
+	_references = references
 	mark_dirty()
 
 
@@ -155,7 +188,7 @@ func _refresh() -> void:
 	if w <= 0 or h <= 0:
 		return
 	if _dirty:
-		bridge.full_sync(_sketch, _zoom)
+		bridge.full_sync(_sketch, _zoom, _references)
 		_dirty = false
 	if _texture == null:
 		_texture = ImageTexture.new()
@@ -168,24 +201,139 @@ func _refresh() -> void:
 ## Minor grid spacing in mm: 1/10/100... of the grid unit, times 1, 2, or 5,
 ## chosen so lines land ~GRID_TARGET_PX apart on screen.
 func grid_step_mm() -> float:
-	var unit_mm := UnitConverter.to_mm(1.0, grid_unit)
-	var target_mm := GRID_TARGET_PX / _zoom
-	var step := unit_mm
-	while step < target_mm:
-		step *= 10.0
-	while step * 0.1 >= target_mm:
-		step *= 0.1
-	for mult in [1.0, 2.0, 5.0]:
-		if step * mult >= target_mm:
-			return step * mult
-	return step * 10.0
+	return step_for(grid_unit, GRID_TARGET_PX / _zoom)
+
+
+## The ladder rung at or just above `target_mm`, the rung BELOW it, and how far
+## between them the target sits — everything needed to cross-fade two levels.
+##
+## -> {"step": float, "finer": float, "ratio": float, "blend": float}
+##
+## `blend` runs 0 at the moment this rung is chosen to 1 as the target reaches
+## the next rung down. A grid that only ever asks for `step` snaps between rungs
+## and every intermediate line pops in on one frame; drawing `finer` at `blend`
+## opacity alongside it is what makes the transition continuous, Blender-style.
+static func step_levels(unit: UnitConverter.Unit, target_mm: float) -> Dictionary:
+	var step := step_for(unit, target_mm)
+	# The fine level MUST divide the coarse one EXACTLY, or the two families
+	# interleave instead of overlaying and the grid draws visible close pairs.
+	# Walking the 1/2/5 ladder does not give that: the 5 -> 2 rung has a ratio
+	# of 2.5, so a 127 mm coarse level against a 50.8 mm fine level puts lines
+	# at 127/254/381 and 50.8/101.6/152.4 — 101.6 and 127 sit 25.4 mm apart,
+	# which is exactly the doubling seen on screen. Subdividing the coarse level
+	# by a whole number instead keeps every fine line either ON a coarse line or
+	# evenly spaced between them, whichever rung is active.
+	var ratio := 5.0 if _is_five_rung(unit, step) else 2.0
+	var finer := step / ratio
+	# Where the target sits within the range this RUNG is active for, on a LOG
+	# scale (spacing is multiplicative, so a linear position fades unevenly).
+	#
+	# The interval is the gap to the rung BELOW — which is 2 or 2.5 — and NOT
+	# the subdivision ratio above, which is 2 or 5. Conflating the two is a real
+	# bug: measuring a 2.5-wide interval against a base of 5 leaves the fade
+	# only ~56% done when the rung hands over, so the remaining 44% still pops.
+	var span := step / maxf(step_below(unit, step), 1e-9)
+	var blend := 0.0
+	if target_mm > 0.0 and span > 1.0001:
+		blend = clampf(log(step / target_mm) / log(span), 0.0, 1.0)
+	return {"step": step, "finer": finer, "ratio": ratio, "blend": blend}
+
+
+## Is `step_mm` the "5" rung of its decade? That one subdivides by 5 (5 -> 1),
+## every other rung by 2 (1 -> 0.5, 2 -> 1). Both land on real ladder values, so
+## the fading level is always a spacing a user would recognise.
+static func _is_five_rung(unit: UnitConverter.Unit, step_mm: float) -> bool:
+	var unit_mm := UnitConverter.to_mm(1.0, unit)
+	if unit_mm <= 0.0 or step_mm <= 0.0:
+		return false
+	var units := step_mm / unit_mm
+	var decade := pow(10.0, floorf(log(units) / log(10.0) + 1e-9))
+	return units / decade > 4.99
+
+
+## The ladder rung immediately BELOW `step_mm` (1 -> 5 -> 2 -> 1 of the decade
+## under it). Exact by construction rather than by dividing, so repeated calls
+## cannot drift off the ladder.
+static func step_below(unit: UnitConverter.Unit, step_mm: float) -> float:
+	var unit_mm := UnitConverter.to_mm(1.0, unit)
+	if unit_mm <= 0.0 or step_mm <= 0.0:
+		return step_mm
+	var units := step_mm / unit_mm
+	var decade := pow(10.0, floorf(log(units) / log(10.0) + 1e-9))
+	var mult := units / decade
+	if mult > 4.99:                       # 5 -> 2
+		return decade * 2.0 * unit_mm
+	if mult > 1.99:                       # 2 -> 1
+		return decade * unit_mm
+	return decade * 0.5 * unit_mm         # 1 -> 5 of the decade below
+
+
+## The 1/2/5-times-a-power-of-ten step at or just above `target_mm`, in the
+## given unit's terms. Shared with the 3D ground grid so both surfaces step
+## through the same ladder of spacings.
+static func step_for(unit: UnitConverter.Unit, target_mm: float) -> float:
+	var unit_mm := UnitConverter.to_mm(1.0, unit)
+	if target_mm <= 0.0 or unit_mm <= 0.0:
+		return unit_mm
+	# Work in UNITS, not mm. The decade has to be found below the target and
+	# then stepped up through the 1/2/5 ladder; the previous version scaled a
+	# running value up until it EXCEEDED the target and only then consulted the
+	# ladder, so `mult = 1.0` always won, 2 and 5 were unreachable dead code,
+	# and the result overshot by as much as 8.5x. With an inch unit and a 48 mm
+	# target that produced a 254 mm (10 inch) step — minor lines spaced wider
+	# than the whole viewport, so only the majors were ever visible near the
+	# origin and the grid looked like it was dropping lines.
+	var target_units := target_mm / unit_mm
+	# Largest power of ten at or below the target, so the ladder starts under it.
+	var decade := pow(10.0, floorf(log(target_units) / log(10.0)))
+	for mult in [1.0, 2.0, 5.0, 10.0]:
+		if decade * mult >= target_units:
+			return decade * mult * unit_mm
+	return decade * 10.0 * unit_mm
 
 
 func _draw() -> void:
-	draw_rect(Rect2(Vector2.ZERO, size), COLOR_BG)
-	var step := grid_step_mm()
+	# A VEIL, not a solid fill. The 3D viewport sits directly behind this
+	# canvas, so painting COLOR_BG opaquely hid every solid in the model the
+	# moment a sketch was opened — you could not see the part you were drawing
+	# on. Fusion keeps the model visible and knocked back behind the sketch;
+	# this is the same idea, and because the veil colour IS the 3D background
+	# an empty model still looks exactly as it did before.
+	if not show_model_behind:
+		draw_rect(Rect2(Vector2.ZERO, size), COLOR_BG)
+	else:
+		draw_rect(Rect2(Vector2.ZERO, size),
+			Color(COLOR_BG.r, COLOR_BG.g, COLOR_BG.b, MODEL_VEIL_ALPHA))
+	# TWO LEVELS, cross-faded, exactly as the 3D grid does it — see
+	# `step_levels`. The spacing snaps between rungs of the 1/2/5 ladder, so
+	# drawing only the chosen rung makes every intermediate line appear or
+	# vanish on a single frame as you zoom. Drawing the next FINER rung
+	# underneath at `blend` opacity turns that pop into a fade: the
+	# subdivisions arrive gradually and are at full strength precisely when the
+	# ladder clicks over to them.
+	var levels := step_levels(grid_unit, GRID_TARGET_PX / _zoom)
+	var step: float = levels["step"]
+	var blend: float = levels["blend"]
 	var major_every := 5
 	var view := view_rect()
+	# The fading level first, so the settled lines draw over it.
+	# Skipped once the fine level would be denser than roughly one line per two
+	# pixels: past that it is a grey wash rather than a grid, and it costs a
+	# draw call per line to say so.
+	if blend > 0.002 and float(levels["finer"]) * _zoom >= 2.0:
+		var fine: float = levels["finer"]
+		var fc := Color(COLOR_GRID_MINOR.r, COLOR_GRID_MINOR.g,
+			COLOR_GRID_MINOR.b, COLOR_GRID_MINOR.a * blend)
+		var fx := floorf(view.position.x / fine) * fine
+		while fx <= view.end.x:
+			var sfx := world_to_screen(Vector2(fx, 0)).x
+			draw_line(Vector2(sfx, 0), Vector2(sfx, size.y), fc, 1.0)
+			fx += fine
+		var fy := floorf(view.position.y / fine) * fine
+		while fy <= view.end.y:
+			var sfy := world_to_screen(Vector2(0, fy)).y
+			draw_line(Vector2(0, sfy), Vector2(size.x, sfy), fc, 1.0)
+			fy += fine
 	var x0 := floorf(view.position.x / step) * step
 	var y0 := floorf(view.position.y / step) * step
 	var x := x0

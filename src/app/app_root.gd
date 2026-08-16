@@ -7,6 +7,15 @@ extends Control
 
 enum Mode { MODEL, SKETCH }
 
+## Editor chrome colours.
+const COLOR_SELECTED := Color(1.0, 0.85, 0.3)
+## Hover pre-highlight: the same amber, dimmer, so hovering reads as "this is
+## what a click would take" without competing with an actual selection.
+const COLOR_HOVER := Color(1.0, 0.85, 0.3, 0.5)
+## Ceiling on an arc's on-screen radius when drawing chrome. Guards against a
+## diverged solve producing a radius whose arc path costs whole frames to walk.
+const ARC_DRAW_MAX_PX := 20000.0
+
 signal mode_changed(mode: Mode)
 
 var doc: CadDocument
@@ -35,6 +44,9 @@ var picking_plane := false
 var picking_profile := false
 ## Pending extrude target set by the profile click: {sketch_id, at}.
 var _pending_extrude := {}
+## Camera state captured on entering sketch mode, so Finish Sketch animates
+## back to the model view the user left rather than to a canned angle.
+var _model_view_before_sketch := {}
 
 var world: CadWorld
 var rig: OrbitCamera
@@ -42,10 +54,14 @@ var sketch_view: SketchView
 var overlay: Control
 var view_cube: ViewCube
 var timeline: TimelineBar
+var browser: BrowserTree
 
 var _viewport_container: SubViewportContainer
 var _viewport: SubViewport
 var _tool_bar: HFlowContainer
+## Snap/inference toggles — kept so RPC-driven pref changes can refresh them.
+var _snap_check: CheckBox = null
+var _infer_check: CheckBox = null
 var _constraint_bar: HFlowContainer
 var _tool_buttons := {}
 var _btn_create: Button
@@ -58,6 +74,8 @@ var _btn_redo: Button
 var _pivot_pick: OptionButton
 var _status_mode: Label
 var _status_hint: Label
+## Wall-clock ms until which a posted hint outranks the cursor readout.
+var _hint_hold_until_ms := 0
 var _status_dof: Label
 var _status_zoom: Label
 
@@ -95,6 +113,41 @@ func _ready() -> void:
 	_maybe_start_automation()
 
 
+## Drives the active tool's per-frame tick. Tools are RefCounted and have no
+## _process of their own, and gestures that must not run faster than the
+## display (drag re-solves) rely on this — see `SketchTool.tick`.
+func _process(_dt: float) -> void:
+	if mode == Mode.SKETCH:
+		tools.handle_tick()
+
+
+## How long a posted hint holds the status bar against the live cursor readout.
+const HINT_HOLD_MS := 4000
+
+## Put a message in the status bar's hint slot. Tools use this to explain why
+## they refused a gesture — a refusal the user cannot see reads as a bug.
+func set_status_hint(text: String) -> void:
+	if _status_hint != null:
+		_status_hint.text = text
+		_hint_hold_until_ms = Time.get_ticks_msec() + HINT_HOLD_MS
+
+
+## Window-pixel rect of the 3D viewport. Automation projects world points
+## through the camera (viewport pixels) and needs this offset to turn the
+## result into a position it can click.
+func viewport_rect() -> Rect2:
+	return _viewport_container.get_global_rect()
+
+
+## Push `prefs`/snap state back onto the toolbar checkboxes, for callers that
+## change it behind the UI's back (the automation server).
+func sync_pref_checks() -> void:
+	if _snap_check != null:
+		_snap_check.set_pressed_no_signal(snap.grid_enabled)
+	if _infer_check != null:
+		_infer_check.set_pressed_no_signal(bool(prefs.get("inference", true)))
+
+
 func set_selection(ids: Array) -> void:
 	selection.clear()
 	for i in ids:
@@ -102,6 +155,16 @@ func set_selection(ids: Array) -> void:
 	if not selection.is_empty():
 		selected_constraint = -1
 	overlay.queue_redraw()
+	_refresh_ui()
+
+
+## Select a solid body in model mode ("" clears). View state, not model
+## state — no command, no undo entry, matching Fusion.
+func select_body(fid: String) -> void:
+	if world.selected_body() == fid:
+		return
+	world.set_selected_body(fid)
+	browser.refresh()
 	_refresh_ui()
 
 
@@ -130,6 +193,13 @@ func apply_constraint(type: SketchConstraint.Type, value := NAN) -> String:
 
 
 ## Push a built constraint + its re-solve as one undo step.
+##
+## A DIMENSION added to an already-determined system is redundant: it cannot
+## drive anything, and left driving it just fights the constraints that got
+## there first. Fusion's answer is to accept it as a DRIVEN (reference)
+## dimension — it measures and displays instead. We do the same, inside the
+## same undo step, and say so, because silently accepting a dimension that has
+## no effect is the confusing outcome.
 func add_constraint(c: SketchConstraint) -> void:
 	var sk := active_sketch()
 	var batch := CmdMergeBatch.new("Constrain", [])
@@ -137,8 +207,25 @@ func add_constraint(c: SketchConstraint) -> void:
 	var after: Array = sk.constraints.duplicate()
 	after.append(c)
 	stack.push(CmdSetConstraints.new(active_sketch_id, sk.constraints, after))
+	var demoted := ""
+	if c.is_dimensional() and not c.driven:
+		var a := DofAnalyzer.analyze(sk)
+		var idx := sk.constraints.size() - 1
+		if bool(a.get("analyzed", false)) \
+				and (a["redundant"] as Array).has(idx):
+			var driven_after: Array = sk.constraints.duplicate()
+			var dc := c.duplicate_constraint()
+			dc.driven = true
+			driven_after[idx] = dc
+			stack.push(CmdSetConstraints.new(active_sketch_id,
+				sk.constraints, driven_after))
+			demoted = SketchConstraint.Type.keys()[c.type]
 	solve_followers()
 	batch.seal()
+	if demoted != "":
+		_status_hint.text = ("%s is redundant here — kept as a DRIVEN "
+			+ "reference dimension (it measures, it does not drive). Remove "
+			+ "another dimension to make it driving.") % demoted.capitalize()
 
 
 func delete_constraint(index: int) -> void:
@@ -297,9 +384,12 @@ func load_document(new_doc: CadDocument) -> void:
 	picking_plane = false
 	mode = Mode.MODEL
 	sketch_view.visible = false
-	world.set_planes_visible(true)
+	world.set_planes_visible(false)
+	world.set_grid_plane("XY")
+	world.set_grid_unit(doc.display_unit)
 	world.rebuild_sketches(doc)
 	timeline.refresh()
+	browser.refresh()
 	mode_changed.emit(mode)
 	_refresh_ui()
 
@@ -376,6 +466,27 @@ func _build_ui() -> void:
 		_tool_bar.add_child(b)
 		_tool_buttons[tid] = b
 
+	# Snap + inference toggles. These already existed as `prefs` entries that
+	# only `action.set_pref` could reach, which made them unusable by hand and
+	# unverifiable in manual QA. Both paths now drive the same state.
+	var snap_box := CheckBox.new()
+	snap_box.name = "GridSnapChk"
+	snap_box.text = "Snap"
+	snap_box.focus_mode = Control.FOCUS_NONE
+	snap_box.button_pressed = snap.grid_enabled
+	snap_box.toggled.connect(func(on: bool) -> void: snap.grid_enabled = on)
+	_tool_bar.add_child(snap_box)
+	_snap_check = snap_box
+
+	var infer_box := CheckBox.new()
+	infer_box.name = "InferenceChk"
+	infer_box.text = "Infer"
+	infer_box.focus_mode = Control.FOCUS_NONE
+	infer_box.button_pressed = bool(prefs.get("inference", true))
+	infer_box.toggled.connect(func(on: bool) -> void: prefs["inference"] = on)
+	_tool_bar.add_child(infer_box)
+	_infer_check = infer_box
+
 	_constraint_bar = HFlowContainer.new()
 	_constraint_bar.name = "ConstraintBar"
 	vbox.add_child(_constraint_bar)
@@ -399,11 +510,25 @@ func _build_ui() -> void:
 			func() -> void: apply_constraint(def[1]))
 		cb.name = String(def[0]) + "ConBtn"
 
+	# Browser on the left, canvas on the right — the browser is a sibling of
+	# the canvas, not an overlay on it, so it never eats viewport clicks.
+	var body_row := HBoxContainer.new()
+	body_row.name = "BodyRow"
+	body_row.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	body_row.add_theme_constant_override("separation", 0)
+	vbox.add_child(body_row)
+
+	browser = BrowserTree.new()
+	browser.app = self
+	browser.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	body_row.add_child(browser)
+
 	var stack_area := Control.new()
 	stack_area.name = "CanvasStack"
 	stack_area.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	stack_area.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	stack_area.clip_contents = true
-	vbox.add_child(stack_area)
+	body_row.add_child(stack_area)
 
 	_viewport_container = SubViewportContainer.new()
 	_viewport_container.name = "ViewportContainer"
@@ -422,7 +547,9 @@ func _build_ui() -> void:
 	_viewport.add_child(rig)
 	rig.moved.connect(func() -> void:
 		if view_cube != null:
-			view_cube.sync_orientation(rig.rotation))
+			view_cube.sync_orientation(rig.rotation)
+		# Grid density follows the camera, like the sketch canvas's follows zoom.
+		world.update_grid(rig.view_height_mm()))
 	# Pivot sources: Fusion's body-center default and Blender's under-cursor
 	# orbit point. VIEW_CENTER needs neither.
 	rig.bounds_provider = func() -> AABB: return world.model_bounds()
@@ -452,12 +579,20 @@ func _build_ui() -> void:
 	view_cube.set_anchors_preset(Control.PRESET_TOP_RIGHT)
 	view_cube.position = Vector2(-ViewCube.SIZE_PX - 8, 8)
 	view_cube.face_picked.connect(_on_cube_face)
+	# The rig already emitted `moved` from its own _ready, before this widget
+	# existed — hand it the current orientation so it starts in agreement with
+	# the 3/4 home view instead of facing front until the first orbit.
+	view_cube.rotation_hint = rig.rotation
 	stack_area.add_child(view_cube)
 
 	timeline = TimelineBar.new()
 	timeline.app = self
 	vbox.add_child(timeline)
 	timeline.refresh()
+	browser.refresh()
+	# The rig emitted `moved` from its own _ready, before the connect above.
+	world.set_grid_unit(doc.display_unit)
+	world.update_grid(rig.view_height_mm())
 
 	var status := HBoxContainer.new()
 	status.name = "StatusBar"
@@ -503,15 +638,32 @@ func edit_sketch(feature_id: String) -> void:
 	if feat == null:
 		push_error("[AppRoot] no sketch feature %s" % feature_id)
 		return
+	if mode == Mode.MODEL:
+		_model_view_before_sketch = rig.capture_view()
 	active_sketch_id = feature_id
 	picking_plane = false
 	mode = Mode.SKETCH
-	var basis := SketchFeature.plane_basis(feat.plane)
-	rig.frame_view(basis.z, basis.y, Vector3.ZERO, 500.0)
 	sketch_view.grid_unit = doc.display_unit
 	sketch_view.set_view(Vector2.ZERO, 4.0)
-	sketch_view.show_sketch(feat.sketch)
-	sketch_view.visible = true
+	sketch_view.show_sketch(feat.sketch, reference_sketches())
+	# Fly the 3D camera square onto the plane FIRST, then swap in the 2D
+	# canvas. Showing it up front would paint over the animation, which is
+	# what made the transition read as an instant snap.
+	# The grid moves onto the plane being drawn on, so the 3D scene behind the
+	# canvas agrees with it — and so it is already right for the fly-in.
+	world.set_grid_plane(feat.plane)
+	world.set_grid_unit(doc.display_unit)
+	var basis := SketchFeature.plane_basis(feat.plane)
+	rig.frame_view(basis.z, basis.y, Vector3.ZERO, 500.0)
+	_after_camera_move(func() -> void:
+		if mode == Mode.SKETCH:
+			sketch_view.visible = true
+			sketch_view.grab_focus()
+			# Match the 3D camera to the canvas now the fly-in has landed:
+			# the sync is driven by `view_changed`, which does not fire on
+			# entry, so without this the model behind the canvas keeps the
+			# framing the tween chose rather than the sketch's own.
+			_sync_camera_to_sketch_view())
 	world.set_planes_visible(false)
 	set_selection([])
 	selected_constraint = -1
@@ -519,9 +671,18 @@ func edit_sketch(feature_id: String) -> void:
 	rebuild_snap_index()
 	_refresh_dof()
 	sketch_view.mark_dirty()
-	sketch_view.grab_focus()
 	mode_changed.emit(mode)
 	_refresh_ui()
+
+
+## Run `done` when the rig's current move finishes — right away when there is
+## no tween to wait on (headless tests, animation disabled).
+func _after_camera_move(done: Callable) -> void:
+	var tw := rig.active_tween()
+	if tw == null:
+		done.call()
+		return
+	tw.finished.connect(done, CONNECT_ONE_SHOT)
 
 
 func finish_sketch() -> void:
@@ -531,9 +692,21 @@ func finish_sketch() -> void:
 	set_selection([])
 	active_sketch_id = ""
 	mode = Mode.MODEL
+	# Drop the 2D canvas immediately so the 3D scene is what animates: the
+	# camera pulls back from the plane to the previous model view.
 	sketch_view.visible = false
-	world.set_planes_visible(true)
+	world.set_planes_visible(false)
+	# Model mode is a 3D space again: perspective back on, so solids read with
+	# depth. (Sketch mode runs orthographic — see `_sync_camera_to_sketch_view`.)
+	rig.set_perspective()
+	# Back to the ground plane: the grid is XY whenever no sketch is open.
+	world.set_grid_plane("XY")
 	world.rebuild_sketches(doc)
+	if _model_view_before_sketch.is_empty():
+		rig.frame_view(Vector3(0.5, -0.7, 0.5), Vector3(0, 0, 1))
+	else:
+		rig.restore_view(_model_view_before_sketch)
+	_model_view_before_sketch = {}
 	mode_changed.emit(mode)
 	_refresh_ui()
 
@@ -543,11 +716,45 @@ func active_sketch() -> Sketch:
 	return f.sketch if f != null else null
 
 
+## Sketches drawn dimmed behind the one being edited: every other LIVE sketch
+## sharing its plane. Coplanar only — geometry on a different plane projects
+## onto the canvas as a meaningless smear, and it is the coplanar case
+## (tracing over, lining up with what is already drawn) that the user needs.
+## Suppressed and rolled-back sketches are excluded by `live_features`, so
+## reference geometry always matches what the 3D view shows.
+func reference_sketches() -> Array:
+	var out: Array = []
+	var feat := doc.sketch_feature(active_sketch_id)
+	if feat == null:
+		return out
+	for f in doc.live_features():
+		var sf := f as SketchFeature
+		if sf == null or sf.id == feat.id or sf.plane != feat.plane:
+			continue
+		# A sketch unticked in the browser stays hidden here too — one tick,
+		# one meaning, whichever mode you are in.
+		if not world.sketch_shown(sf.id):
+			continue
+		out.append(sf.sketch)
+	return out
+
+
+## Browser-tree visibility toggle for a sketch. View state, never undoable —
+## same contract as body visibility. Refreshes the 2D canvas as well as the 3D
+## view, since reference geometry obeys the same flag.
+func set_sketch_shown(fid: String, shown: bool) -> void:
+	world.set_sketch_shown(fid, shown)
+	if mode == Mode.SKETCH:
+		sketch_view.show_sketch(active_sketch(), reference_sketches())
+
+
 ## --- input & handlers --------------------------------------------------------
 
 func _on_create_sketch() -> void:
 	picking_plane = true
 	picking_profile = false
+	# Planes stay out of sight until there is a reason to aim at one.
+	world.set_planes_visible(true)
 	_refresh_ui()
 
 
@@ -682,6 +889,10 @@ func _on_viewport_input(event: InputEvent) -> void:
 				_pending_extrude = hit
 				_open_extrude_dialog()
 				_refresh_ui()
+		elif mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT:
+			# Plain click in model mode: pick a body, or clear on a miss.
+			var ray3 := rig.pixel_ray(mb.position)
+			select_body(world.pick_body(ray3[0], ray3[1]))
 	elif event is InputEventMouseMotion:
 		var mm := event as InputEventMouseMotion
 		if mm.button_mask & MOUSE_BUTTON_MASK_MIDDLE:
@@ -715,24 +926,55 @@ func handle_app_key(k: InputEventKey) -> bool:
 		stack.undo()
 		return true
 	if k.keycode == KEY_ESCAPE:
-		if mode == Mode.SKETCH and tools.handle_cancel():
-			return true
+		if mode == Mode.SKETCH:
+			# Esc ends the gesture AND drops back to Select, Fusion-style —
+			# a cancelled draw should not leave the tool armed for another
+			# shape. Select is exempt: its own Esc clears the selection, and
+			# falling through there would make repeated Esc cycle pointlessly.
+			var was := tools.active_id()
+			var consumed := tools.handle_cancel()
+			if was != "select" and was != "":
+				tools.set_active("select")
+				return true
+			if consumed:
+				return true
 		if picking_plane or picking_profile:
 			picking_plane = false
 			picking_profile = false
 			world.set_plane_hover("")
+			world.set_planes_visible(false)
 			_refresh_ui()
 			return true
 		return false
 	if (k.keycode == KEY_ENTER or k.keycode == KEY_KP_ENTER) and mode == Mode.SKETCH:
+		# Enter goes to the tool's TYPE-IN handler first, and only then counts
+		# as "finish the gesture". Routing it straight to handle_commit meant
+		# the tool's key_input never saw it, so a value typed into a selected
+		# dimension was silently discarded: the digits arrived, the field held
+		# them, and Enter went somewhere else entirely — which is exactly what
+		# made editing an existing dimension look completely broken.
+		var active_kt := tools.get_tool(tools.active_id())
+		if active_kt != null and active_kt.key_input(k):
+			overlay.queue_redraw()
+			return true
 		return tools.handle_commit()
 	if k.keycode == KEY_DELETE and mode == Mode.SKETCH:
 		if selected_constraint >= 0:
 			delete_constraint(selected_constraint)
 			return true
 		if not selection.is_empty():
-			var doomed := selection.duplicate()
+			var sk_del := active_sketch()
+			var doomed: Array[String] = []
+			for id in selection:
+				# The origin is a datum: selectable and dimensionable, but not
+				# deletable — losing it would strand every dimension drawn from it.
+				if sk_del != null and sk_del.is_origin(id):
+					continue
+				doomed.append(id)
 			set_selection([])
+			if doomed.is_empty():
+				return true
+			doomed = _with_orphaned_points(sk_del, doomed)
 			var batch := CmdMergeBatch.new("Delete", [])
 			stack.push_no_merge(batch)
 			stack.push(CmdDeleteEntities.new(active_sketch_id, doomed))
@@ -753,6 +995,46 @@ func handle_app_key(k: InputEventKey) -> bool:
 	return false
 
 
+## `doomed` plus every point that would be left with nothing referencing it.
+##
+## Deleting a line used to leave its two endpoints behind as loose dots, and —
+## worse — any DIMENSION on that line survived too, because a distance
+## dimension references the POINTS, not the line, so pruning by the line's id
+## never touched it. The user was left cleaning up debris by hand, and a
+## dimension measuring geometry that no longer exists.
+##
+## A point is kept if any surviving entity still refers to it, so shared corners
+## and welded joints are never dragged out from under the geometry that uses
+## them. The origin is never removed.
+func _with_orphaned_points(sk: Sketch, doomed: Array[String]) -> Array[String]:
+	if sk == null:
+		return doomed
+	var dying := {}
+	for id in doomed:
+		dying[id] = true
+	# Points the doomed entities reference, as candidates for removal.
+	var candidates := {}
+	for id in doomed:
+		var e := sk.entity(id)
+		if e == null or e.kind() == "point":
+			continue
+		for pid in e.point_refs():
+			if not dying.has(pid) and not sk.is_origin(pid):
+				candidates[pid] = true
+	if candidates.is_empty():
+		return doomed
+	# Anything still referenced by a SURVIVING entity stays.
+	for e in sk.entities():
+		if dying.has(e.id) or e.kind() == "point":
+			continue
+		for pid in e.point_refs():
+			candidates.erase(pid)
+	var out := doomed.duplicate()
+	for pid: String in candidates:
+		out.append(pid)
+	return out
+
+
 func _on_tool_input(world_pos: Vector2, screen: Vector2, event: InputEvent) -> bool:
 	if mode != Mode.SKETCH:
 		return false
@@ -762,9 +1044,13 @@ func _on_tool_input(world_pos: Vector2, screen: Vector2, event: InputEvent) -> b
 			return tools.handle_pointer_down(world_pos, screen, mb)
 		return tools.handle_pointer_up(world_pos, screen, mb)
 	if event is InputEventMouseMotion:
-		_status_hint.text = "%s, %s" % [
-			UnitConverter.format(world_pos.x, doc.display_unit),
-			UnitConverter.format(world_pos.y, doc.display_unit)]
+		# The live cursor readout must not wipe a message a tool just posted —
+		# the very next mouse move would erase it, so a refused gesture would
+		# look like nothing happened at all. Sticky hints win for a few seconds.
+		if Time.get_ticks_msec() >= _hint_hold_until_ms:
+			_status_hint.text = "%s, %s" % [
+				UnitConverter.format(world_pos.x, doc.display_unit),
+				UnitConverter.format(world_pos.y, doc.display_unit)]
 		return tools.handle_pointer_move(world_pos, screen,
 			event as InputEventMouseMotion)
 	return false
@@ -772,7 +1058,52 @@ func _on_tool_input(world_pos: Vector2, screen: Vector2, event: InputEvent) -> b
 
 func _on_sketch_view_changed() -> void:
 	overlay.queue_redraw()
+	_sync_camera_to_sketch_view()
 	_refresh_ui()
+
+
+## Keep the 3D camera aimed at whatever the 2D canvas is showing.
+##
+## The model renders BEHIND the sketch canvas (see `SketchView._draw`), but the
+## two had entirely independent cameras: panning or zooming the sketch moved
+## the 2D geometry while the solid behind it stayed put, so the model read as a
+## ghost image stuck to the screen rather than as part of the drawing. Pointing
+## the 3D camera at the sketch's pan centre, from a distance that makes its
+## on-screen scale match the 2D zoom, makes the two move as one.
+func _sync_camera_to_sketch_view() -> void:
+	if mode != Mode.SKETCH or rig == null:
+		return
+	var feat := doc.sketch_feature(active_sketch_id)
+	if feat == null:
+		return
+	# Do not fight the fly-in: while the entry tween is running it owns the
+	# camera, and this would snap it to the destination mid-animation.
+	if rig.active_tween() != null:
+		return
+	var basis := SketchFeature.plane_basis(feat.plane)
+	# Square onto the plane. The fly-in leaves the camera here, but a
+	# view-cube click or a stray orbit can leave it off-axis, and then the
+	# model behind the canvas is a skewed projection that no longer lines up
+	# with the 2D geometry drawn over it.
+	var yp := OrbitCamera.yaw_pitch_for(basis.z, basis.y)
+	rig.yaw = yp.x
+	rig.pitch = yp.y
+	# The sketch point at the panel centre, in world space.
+	var pan := sketch_view.pan()
+	rig.target = basis * Vector3(pan.x, pan.y, 0.0)
+	# ORTHOGRAPHIC, sized so one world mm covers exactly `zoom` pixels — the
+	# same mapping `SketchView.world_to_screen` uses. Under perspective the two
+	# could only ever agree at the centre of the screen: everything else was
+	# foreshortened, so the model behind the canvas drifted out of register
+	# with the 2D geometry drawn over it the further out you looked. With a
+	# parallel projection the agreement is exact everywhere.
+	var vh := float(_viewport.size.y)
+	if vh > 0.0 and sketch_view.zoom() > 0.0:
+		rig.set_orthographic(vh / sketch_view.zoom())
+		# `camera.size` does not fire the rig's `moved` signal, so the grid
+		# would otherwise never hear about a sketch zoom — leaving its
+		# level cross-fade frozen and the popping back.
+		world.update_grid(rig.view_height_mm())
 
 
 ## Editor chrome: sketch points, selection highlights, then the active
@@ -787,6 +1118,24 @@ func _on_overlay_draw() -> void:
 	var constrained_pts := {}
 	for id in dof.get("constrained_points", []):
 		constrained_pts[id] = true
+	# Hover pre-highlight. Any tool that picks reports one — Select, Dimension,
+	# and whatever picking tools come later — so this reads from the ACTIVE
+	# tool rather than naming one; a tool that does not pick leaves hover_id
+	# empty. An entity that is both hovered and selected is skipped here, so it
+	# reads as selected rather than as two overlapping cues.
+	var active_tool := tools.get_tool(tools.active_id())
+	var hov := ""
+	if active_tool != null and not selection.has(active_tool.hover_id):
+		hov = active_tool.hover_id
+	if hov != "":
+		var he := sk.entity(hov)
+		if he != null:
+			_draw_entity_outline(sk, he, COLOR_HOVER, 3.0)
+	# Point markers go ON TOP of the hover highlight: the highlight for a point
+	# is a larger filled square behind it, so drawing the marker afterwards
+	# leaves the point itself crisp with a halo around it. Drawing them the
+	# other way round hid the halo completely under the 5 px marker, which is
+	# why hovering a point appeared to do nothing at all.
 	for e in sk.entities():
 		if e.kind() == "point":
 			var p := v.world_to_screen((e as SketchPoint).pos)
@@ -800,30 +1149,42 @@ func _on_overlay_draw() -> void:
 		var e := sk.entity(id)
 		if e == null:
 			continue
-		_draw_selected_entity(sk, e)
+		_draw_entity_outline(sk, e, COLOR_SELECTED, 2.0)
 	badge_hits = ConstraintOverlay.draw(overlay, v, sk, dof, selected_constraint)
 	dim_hits = DimensionOverlay.draw(overlay, v, sk, dof, selected_constraint,
 		doc.display_unit)
 	tools.draw_overlay(overlay)
 
 
-func _draw_selected_entity(sk: Sketch, e: SketchEntity) -> void:
+## Trace an entity's outline in `c` at `w` px — the shared shape used for both
+## the selection highlight and the hover pre-highlight, so the two can never
+## disagree about where an entity is.
+func _draw_entity_outline(sk: Sketch, e: SketchEntity, c: Color, w: float) -> void:
 	var v := sketch_view
-	var c := Color(1.0, 0.85, 0.3)
 	match e.kind():
+		"point":
+			# Points are drawn as small 5 px squares in the pass above, so an
+			# outline traced ON one is lost against it. Draw a FILLED, larger
+			# square instead: at hover's half-alpha a thin ring around a small
+			# square reads as noise, whereas the point plainly growing and
+			# brightening is unmistakable — which is the whole job here.
+			var pp := v.world_to_screen((e as SketchPoint).pos)
+			var half := 4.0 + w
+			overlay.draw_rect(Rect2(pp - Vector2(half, half),
+				Vector2(half * 2.0, half * 2.0)), c)
 		"line":
 			var l := e as SketchLine
 			var a := sk.point(l.p0)
 			var b := sk.point(l.p1)
 			if a != null and b != null:
 				overlay.draw_line(v.world_to_screen(a.pos),
-					v.world_to_screen(b.pos), c, 2.0)
+					v.world_to_screen(b.pos), c, w)
 		"circle":
 			var ci := e as SketchCircle
 			var cp := sk.point(ci.center)
 			if cp != null:
 				overlay.draw_arc(v.world_to_screen(cp.pos),
-					ci.radius * v.zoom(), 0, TAU, 64, c, 2.0)
+					ci.radius * v.zoom(), 0, TAU, 64, c, w)
 		"arc":
 			var arc := e as SketchArc
 			var cp := sk.point(arc.center)
@@ -832,9 +1193,16 @@ func _draw_selected_entity(sk: Sketch, e: SketchEntity) -> void:
 				var r := cp.pos.distance_to(sp.pos)
 				var a0 := (sp.pos - cp.pos).angle()
 				var sweep := SketchGeometry.arc_sweep(sk, arc)
+				# A runaway solve can hand us an astronomically large radius.
+				# draw_arc's cost scales with the path it walks, so an
+				# unclamped screen radius pins the CPU on every later frame —
+				# and kept doing so even after the offending arc was deleted,
+				# because the redraw itself was what was slow. Clamped: the
+				# arc leaves the window either way, so nothing is lost.
+				var rs := minf(r * v.zoom(), ARC_DRAW_MAX_PX)
 				# Screen space is Y-down: angles negate.
-				overlay.draw_arc(v.world_to_screen(cp.pos), r * v.zoom(),
-					-a0, -(a0 + sweep), 48, c, 2.0)
+				overlay.draw_arc(v.world_to_screen(cp.pos), rs,
+					-a0, -(a0 + sweep), 48, c, w)
 
 
 func _on_stack_changed() -> void:
@@ -858,6 +1226,7 @@ func _on_stack_changed() -> void:
 	else:
 		world.rebuild_sketches(doc)
 	timeline.refresh()
+	browser.refresh()
 	_refresh_ui()
 
 

@@ -35,7 +35,8 @@ func _run() -> bool:
 	var line := SketchLine.make(a.id, b.id); line.id = sk.next_id()
 	var h := SketchConstraint.make(SketchConstraint.Type.HORIZONTAL, [line.id])
 	stack.push_no_merge(CmdAddEntities.new(feat.id, [a, b, line], [h]))
-	if sk.size() != 3 or sk.constraints.size() != 1:
+	# 3 added + the sketch's own origin point.
+	if sk.size() != 4 or sk.constraints.size() != 1:
 		return _fail("add entities state wrong")
 
 	# Continuous drag: three merged pushes = ONE undo step.

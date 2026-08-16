@@ -91,6 +91,12 @@ func handle_commit() -> bool:
 	return used
 
 
+## Per-frame tick for the active tool — see `SketchTool.tick`.
+func handle_tick() -> void:
+	if _active != null:
+		_active.tick()
+
+
 func draw_overlay(overlay: Control) -> void:
 	if _active != null:
 		_active.draw_overlay(overlay)

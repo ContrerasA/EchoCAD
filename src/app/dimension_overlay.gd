@@ -207,12 +207,28 @@ static func _angle(overlay: Control, view: SketchView, sk: Sketch,
 	if absf(denom) > 1e-9:
 		var t := (a2 - a1).cross(d2) / denom
 		apex = a1 + d1 * t
+	# Arms measured OUTWARD FROM THE APEX, not from the lines' stored
+	# directions. A line's p0->p1 direction is an authoring detail: it may well
+	# point back through the apex, and using it drew the arc on the opposite
+	# side from the angle the user was actually dimensioning. The arm is the
+	# direction of whichever endpoint is further from the apex — that is the
+	# side the line visibly occupies.
+	var arm1 := (b1 - apex) if apex.distance_to(b1) >= apex.distance_to(a1) \
+		else (a1 - apex)
+	var arm2 := (b2 - apex) if apex.distance_to(b2) >= apex.distance_to(a2) \
+		else (a2 - apex)
+	if arm1.length() < 1e-9 or arm2.length() < 1e-9:
+		return Rect2()
+	arm1 = arm1.normalized()
+	arm2 = arm2.normalized()
 	var label_world := apex + (c.label_offset if c.label_offset != Vector2.ZERO
-		else (d1.normalized() + d2.normalized()) * 8.0)
+		else (arm1 + arm2) * 8.0)
 	var r_screen := view.world_to_screen(label_world).distance_to(
 		view.world_to_screen(apex))
-	var ang1 := -(d1.angle())    # screen angles are Y-down
-	var ang2 := -(d2.angle())
+	var ang1 := -(arm1.angle())    # screen angles are Y-down
+	var ang2 := -(arm2.angle())
+	# Sweep the SHORT way, so the arc spans the angle being measured rather
+	# than its reflex counterpart.
 	var sweep := wrapf(ang2 - ang1, -PI, PI)
 	overlay.draw_arc(view.world_to_screen(apex), maxf(r_screen, 12.0),
 		ang1, ang1 + sweep, 32, color, 1.0)

@@ -6,6 +6,17 @@ extends RefCounted
 ## Tab cycles fields; typing replaces the live measurement for that field;
 ## Enter (handled by the tool) commits using value_mm() where typed.
 
+## Characters a dimension field accepts.
+##
+## Digits and unit letters are not enough: dimensions take EXPRESSIONS
+## ("width / 2", "2*1.25"), and the operators were missing from this list, so
+## they were silently swallowed as you typed — "2*1.25" arrived as "21.25".
+## Letters are all accepted rather than just the unit ones, because parameter
+## names are arbitrary; whether the result means anything is the expression
+## evaluator's judgement to make, not this filter's.
+const ACCEPTED := "0123456789.,-+*/()^_ abcdefghijklmnopqrstuvwxyz" \
+	+ "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
 var labels: Array[String] = []
 var texts: Array[String] = []
 var active := 0
@@ -46,7 +57,7 @@ func key_input(e: InputEventKey) -> bool:
 			texts[active] = texts[active].left(texts[active].length() - 1)
 		return true
 	var ch := char(e.unicode) if e.unicode > 0 else ""
-	if ch != "" and "0123456789.-inmfct ".contains(ch):
+	if ch != "" and ACCEPTED.contains(ch):
 		texts[active] += ch
 		return true
 	return false

@@ -52,9 +52,13 @@ func _press_enter() -> void:
 	tool.key_input(e)
 
 
+## Counts AUTHORED geometry: the sketch's own origin point is scaffolding
+## every sketch has, not something a tool produced, so it is excluded here.
 func _census(sk: Sketch) -> Dictionary:
 	var out := {}
 	for e in sk.entities():
+		if sk.is_origin(e.id):
+			continue
 		out[e.kind()] = out.get(e.kind(), 0) + 1
 	return out
 
@@ -90,11 +94,16 @@ func _run() -> bool:
 			return _fail("corner sharing wrong: %s" % str(refcount))
 	# One undo step removes the whole rect.
 	_root.stack.undo()
-	if sk.size() != 0:
+	# Back to a bare sketch: only its origin point remains.
+	if sk.size() != 1:
 		return _fail("rect not one undo step")
 	_root.stack.redo()
 
 	# --- typed rect: 2in x 1in exactly (Fusion type-in, Tab between).
+	# Index taken live rather than hardcoded: the sketch's origin point shifts
+	# every absolute index by one, and a magic number here would silently
+	# select the wrong entities rather than fail loudly.
+	var after_first_rect := sk.size()
 	_root.tools.set_active("rect")
 	_click(Vector2(100, 100))
 	_root.tools.handle_pointer_move(Vector2(120, 115),
@@ -106,7 +115,7 @@ func _run() -> bool:
 	_press_enter()
 	var lines: Array = []
 	for e in sk.entities():
-		if e.kind() == "line" and sk.index_of(e.id) >= 8:
+		if e.kind() == "line" and sk.index_of(e.id) >= after_first_rect:
 			lines.append(e)
 	if lines.size() != 4:
 		return _fail("typed rect missing")
@@ -118,13 +127,14 @@ func _run() -> bool:
 		return _fail("typed rect size wrong: %f x %f" % [w, h])
 
 	# --- center rect: 30 wide, 20 tall around (0, -50) by clicks.
+	var after_typed_rect := sk.size()
 	_root.tools.set_active("center_rect")
 	_click(Vector2(0, -50))
 	_click(Vector2(15, -40))
 	var xs: Array = []
 	var ys: Array = []
 	for e in sk.entities():
-		if e.kind() == "point" and sk.index_of(e.id) >= 16:
+		if e.kind() == "point" and sk.index_of(e.id) >= after_typed_rect:
 			xs.append((e as SketchPoint).pos.x)
 			ys.append((e as SketchPoint).pos.y)
 	xs.sort()

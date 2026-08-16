@@ -30,6 +30,9 @@ def main():
     app.click_world([-40, 0], steps=5)
     app.click_world([40, 0], steps=5)
     app.call("input.key", {"key": "escape"})
+    # Esc ends the chain AND drops back to Select (Fusion behaviour), so the
+    # Line tool has to be picked up again for the second stroke.
+    app.click_control("LineToolBtn")
     app.click_world([0, -40], steps=5)
     app.click_world([0, 40], steps=5)
     app.call("input.key", {"key": "escape"})
@@ -37,7 +40,7 @@ def main():
     app.click_world([20, 0.4], steps=6)
     lines = app.entities_of_kind("line")
     check(len(lines) == 2, "trim split the cross")
-    ents = {e["id"]: e for e in app.entities()}
+    ents = app.entity_map()
     h_spans = []
     for l in lines:
         a, b = ents[l["p0"]]["pos"], ents[l["p1"]]["pos"]
@@ -59,7 +62,7 @@ def main():
     app.click_world([100, -40], steps=6)
     arcs = app.entities_of_kind("arc")
     check(len(arcs) == 1, "fillet arc created")
-    ents = {e["id"]: e for e in app.entities()}
+    ents = app.entity_map()
     fc = ents[arcs[0]["center"]]["pos"]
     check(vec_near(fc, [100 - 6.35, -40 + 6.35], 0.01),
           f"fillet center exact (got {fc})")

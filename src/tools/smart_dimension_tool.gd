@@ -74,6 +74,15 @@ func key_input(e: InputEventKey) -> bool:
 func pointer_move(world: Vector2, _screen: Vector2, _e: InputEventMouseMotion) -> bool:
 	_preview = world
 	_hover = true
+	# Pre-highlight what the next pick would take. Dimensioning is a picking
+	# tool, so it needs the same feedback Select gives — without it you click to
+	# find out what you hit, which is the wrong order for a measuring tool.
+	# Suppressed once the label is parked: at that point clicks type a value
+	# rather than pick geometry, so highlighting would promise the wrong thing.
+	if _parked_index >= 0:
+		clear_hover()
+	else:
+		update_hover(world, HIT_PX)
 	return true
 
 

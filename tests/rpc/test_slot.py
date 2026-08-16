@@ -19,7 +19,7 @@ def check(cond, label):
 
 
 def slot_measures(app):
-    ents = {e["id"]: e for e in app.entities()}
+    ents = app.entity_map()
     arcs = app.entities_of_kind("arc")[-2:]
     ca = ents[arcs[0]["center"]]["pos"]
     cb = ents[arcs[1]["center"]]["pos"]
@@ -62,7 +62,7 @@ def main():
     app.call("action.redo")
 
     # Drive the slot: dimension the center distance to 3in via smart dim.
-    ents = {e["id"]: e for e in app.entities()}
+    ents = app.entity_map()
     arcs = app.entities_of_kind("arc")
     app.call("action.add_constraint",
              {"type": "DISTANCE",

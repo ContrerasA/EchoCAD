@@ -43,8 +43,18 @@ static func identifiers(text: String) -> Array[String]:
 
 ## A plain number (no references, no math). Such a dimension keeps NO
 ## expression: what the user typed is exactly its value.
+## Is this a plain measurement rather than something to evaluate?
+##
+## A UNIT SUFFIX still counts as a literal: "10mm" and "1.5in" are values, not
+## expressions. Accepting only a bare float sent them to the expression
+## evaluator, which read the suffix as a variable name and refused the whole
+## entry with "unknown name: mm" — so typed units simply did not work anywhere
+## a dimension is entered.
 static func is_literal(text: String) -> bool:
-	return text.strip_edges().is_valid_float()
+	var t := text.strip_edges()
+	if t.is_valid_float():
+		return true
+	return UnitConverter.parse(t, UnitConverter.Unit.MM)["ok"]
 
 
 ## Can `n` be a parameter name?

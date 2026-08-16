@@ -24,19 +24,31 @@ def main():
     app.call("action.set_view", {"pan": [0, 0], "zoom": 4.0})
     app.call("action.set_pref", {"grid_snap": False})
 
-    # Line, then a tangent arc off its right end.
+    # Line, then a tangent arc off its right end. Deliberately clear of (0,0):
+    # the sketch origin is a real point there and is PINNED, so a line welded
+    # onto it could not move under the drag this test performs later. Kept
+    # close to the origin all the same -- the sketch view is shorter than the
+    # window, so points far up the Y axis fall outside it and cannot be clicked.
     app.click_control("LineToolBtn")
-    app.click_world([-40, 0], steps=6)
-    app.click_world([0, 0], steps=6)
+    app.click_world([-40, 20], steps=6)
+    app.click_world([0, 20], steps=6)
     app.call("input.key", {"key": "escape"})
     app.click_control("TangentArcToolBtn")
-    app.click_world([0, 0], steps=6)
-    app.click_world([20, 20], steps=8)
+    app.click_world([0, 20], steps=6)
+    app.click_world([20, 40], steps=8)
     arcs = app.entities_of_kind("arc")
     check(len(arcs) == 1, "tangent arc committed")
     types = sorted(c["type"] for c in app.constraints())
-    check("TANGENT" in types and "COINCIDENT" in types,
-          f"tangent + coincident constraints (got {types})")
+    check("TANGENT" in types, f"tangent constraint present (got {types})")
+    # The arc's start is WELDED to the line's endpoint — one shared point, not
+    # a twin held by a Coincident. The twin made this case unstable: the rigid
+    # ride-along, the tangency projection and the Coincident each undid the
+    # others, so the solve never converged and a few mm of drag threw the arc's
+    # centre metres away.
+    ents = app.entity_map()
+    line = app.entities_of_kind("line")[0]
+    check(arcs[0]["start"] in (line["p0"], line["p1"]),
+          "arc start welded to the line endpoint")
 
     # DOF query works and reports a positive DOF count.
     dof = app.call("query.dof")
@@ -47,9 +59,9 @@ def main():
     # Drag the line's free end down with a human-like drag; tangency and
     # coincidence must survive the re-solve.
     app.click_control("SelectToolBtn")
-    app.call("input.drag", {"from": app.world_to_screen([-40, 0]),
-                            "to": app.world_to_screen([-40, -20]), "steps": 16})
-    ents = {e["id"]: e for e in app.entities()}
+    app.call("input.drag", {"from": app.world_to_screen([-40, 20]),
+                            "to": app.world_to_screen([-40, 0]), "steps": 16})
+    ents = app.entity_map()
     arc = app.entities_of_kind("arc")[0]
     lines = app.entities_of_kind("line")
     line = lines[0]
@@ -69,9 +81,9 @@ def main():
 
     # One undo removes the whole drag (drag + re-solve merged).
     app.call("action.undo")
-    ents = {e["id"]: e for e in app.entities()}
+    ents = app.entity_map()
     la = ents[line["p0"]]["pos"]
-    check(near(la[0], -40, 1e-3) and near(la[1], 0, 1e-3),
+    check(near(la[0], -40, 1e-3) and near(la[1], 20, 1e-3),
           "one undo reverts the whole drag")
 
     app.call("app.quit")

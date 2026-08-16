@@ -69,7 +69,10 @@ func _ready() -> void:
 	camera = Camera3D.new()
 	camera.name = "Camera"
 	camera.far = 1000000.0
-	camera.near = 1.0
+	# An orthographic camera projects from -size/2, so anything nearer than
+	# `near` in front of the eye is clipped. Keeping `near` at 1 mm would slice
+	# through geometry when the eye sits close to the sketch plane.
+	camera.near = 0.05
 	add_child(camera)
 	# Home view: Fusion-like 3/4 view onto the XY ground plane, from above.
 	yaw = -PI / 6.0
@@ -210,6 +213,27 @@ func _animate_to(to_yaw: float, to_pitch: float, at_target: Vector3,
 	_tween.chain().tween_callback(func() -> void: yaw = wrapf(yaw, -PI, PI))
 
 
+## The running frame_view tween, or null when the last move was instant or has
+## already landed. Callers chain on it to sequence work after a fly-to.
+func active_tween() -> Tween:
+	if _tween != null and _tween.is_valid() and _tween.is_running():
+		return _tween
+	return null
+
+
+## Snapshot of the whole camera state, for restoring a view later.
+func capture_view() -> Dictionary:
+	return {"yaw": yaw, "pitch": pitch, "target": target, "distance": distance}
+
+
+## Animate back to a `capture_view` snapshot.
+func restore_view(v: Dictionary, animate := true) -> void:
+	if v.is_empty():
+		return
+	_animate_to(float(v["yaw"]), float(v["pitch"]), v["target"] as Vector3,
+		float(v["distance"]), animate)
+
+
 func _set_yaw_pitch(v: Vector2) -> void:
 	yaw = v.x
 	pitch = v.y
@@ -238,3 +262,43 @@ static func yaw_pitch_for(normal: Vector3, up_hint := Vector3(0, 0, 1)) -> Vecto
 ## The camera ray through viewport pixel `screen` (origin + direction).
 func pixel_ray(screen: Vector2) -> Array:
 	return [camera.project_ray_origin(screen), camera.project_ray_normal(screen)]
+
+
+## Switch to an ORTHOGRAPHIC projection showing `height_mm` of world vertically.
+##
+## Sketching is a 2D activity on a plane, and perspective actively fights it:
+## parallel lines converge, a square drawn away from the view centre renders as
+## a trapezoid, and the grid appears to change spacing across the screen. That
+## is why a plain 3D camera flown onto a plane only ever *approximates* a
+## sketch view. Orthographic is the real thing — equal spacing everywhere,
+## right angles that stay right — so the 2D canvas and the model behind it
+## finally agree at every pixel rather than only at the centre.
+func set_orthographic(height_mm: float) -> void:
+	camera.projection = Camera3D.PROJECTION_ORTHOGONAL
+	camera.size = maxf(height_mm, 0.001)
+
+
+## Back to the perspective projection model mode uses, where depth cues matter.
+func set_perspective() -> void:
+	camera.projection = Camera3D.PROJECTION_PERSPECTIVE
+
+
+func is_orthographic() -> bool:
+	return camera != null \
+		and camera.projection == Camera3D.PROJECTION_ORTHOGONAL
+
+
+## How much world the view spans vertically, in mm.
+##
+## Grid density has to key off THIS rather than off `distance`. Under a
+## perspective camera the two are proportional, so distance was a fine stand-in;
+## under an orthographic one distance no longer affects apparent size at all,
+## and a grid still reading `distance` picks a spacing with no relation to what
+## is on screen — which is how the 3D grid ended up four times coarser than the
+## 2D canvas it is meant to sit under.
+func view_height_mm() -> float:
+	if camera == null:
+		return distance
+	if camera.projection == Camera3D.PROJECTION_ORTHOGONAL:
+		return camera.size
+	return 2.0 * distance * tan(deg_to_rad(camera.fov) * 0.5)
