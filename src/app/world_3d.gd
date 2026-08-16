@@ -18,7 +18,9 @@ var _sketch_root: Node3D = null
 func _ready() -> void:
 	var light := DirectionalLight3D.new()
 	light.name = "Sun"
-	light.rotation = Vector3(-0.9, 0.6, 0)
+	# Z-up world: aim the key light down from above (-Z) and slightly to the
+	# side, so the ground plane and solid tops are the lit surfaces.
+	light.basis = Basis.looking_at(Vector3(-0.4, 0.6, -1.0), Vector3(0, 0, 1))
 	add_child(light)
 	var env := WorldEnvironment.new()
 	var e := Environment.new()
@@ -145,6 +147,105 @@ func rebuild_sketches(doc: CadDocument) -> void:
 		mi.mesh = im
 		mi.material_override = _line_material(COLOR_SKETCH)
 		_sketch_root.add_child(mi)
+
+
+## World-space bounds of everything the model shows — solids and sketch
+## lines. Returns a zero-size AABB when there is nothing to frame, which the
+## camera reads as "no bodies".
+func model_bounds() -> AABB:
+	var out := AABB()
+	var any := false
+	if _sketch_root == null:
+		return out
+	for c in _sketch_root.get_children():
+		var mi := c as MeshInstance3D
+		if mi == null or mi.mesh == null:
+			continue
+		var box := mi.transform * mi.mesh.get_aabb()
+		if not any:
+			out = box
+			any = true
+		else:
+			out = out.merge(box)
+	return out
+
+
+## Nearest surface point under a ray, across solids and the origin planes.
+## Returns {"ok": bool, "pos": Vector3}.
+func pick_point(origin: Vector3, dir: Vector3) -> Dictionary:
+	var best_t := INF
+	var best := Vector3.ZERO
+	# Solid meshes: triangle-exact so the pivot lands on the surface the user
+	# is actually looking at, not on its bounding box.
+	if _sketch_root != null:
+		for c in _sketch_root.get_children():
+			var mi := c as MeshInstance3D
+			if mi == null or mi.mesh == null:
+				continue
+			var t := _ray_mesh(mi, origin, dir)
+			if t >= 0.0 and t < best_t:
+				best_t = t
+				best = origin + dir * t
+	# Origin planes, only where they are visible.
+	for k: String in _plane_meshes:
+		if not (_plane_meshes[k] as MeshInstance3D).visible:
+			continue
+		var basis := SketchFeature.plane_basis(k)
+		var n := basis.z
+		var denom := dir.dot(n)
+		if absf(denom) < 1e-6:
+			continue
+		var t2 := -origin.dot(n) / denom
+		if t2 <= 0.0 or t2 >= best_t:
+			continue
+		var hit := origin + dir * t2
+		if absf(hit.dot(basis.x)) <= PLANE_HALF and absf(hit.dot(basis.y)) <= PLANE_HALF:
+			best_t = t2
+			best = hit
+	if best_t == INF:
+		return {"ok": false, "pos": Vector3.ZERO}
+	return {"ok": true, "pos": best}
+
+
+## Ray vs a mesh instance's triangles; nearest positive t or -1. Only solids
+## (ArrayMesh) are pickable — sketches render as ImmediateMesh line strips,
+## which have no surface to land a pivot on.
+func _ray_mesh(mi: MeshInstance3D, origin: Vector3, dir: Vector3) -> float:
+	var mesh := mi.mesh as ArrayMesh
+	if mesh == null:
+		return -1.0
+	var xform := mi.transform
+	# Cheap reject before touching triangles.
+	if not (xform * mesh.get_aabb()).intersects_ray(origin, dir):
+		return -1.0
+	var best := -1.0
+	for s in mesh.get_surface_count():
+		if mesh.surface_get_primitive_type(s) != Mesh.PRIMITIVE_TRIANGLES:
+			continue
+		var arrays := mesh.surface_get_arrays(s)
+		var verts := arrays[Mesh.ARRAY_VERTEX] as PackedVector3Array
+		if verts.is_empty():
+			continue
+		# Index array is null for non-indexed surfaces (the extrude builder
+		# emits those), so fall back to reading vertices in triples.
+		var idx := PackedInt32Array()
+		if arrays[Mesh.ARRAY_INDEX] != null:
+			idx = arrays[Mesh.ARRAY_INDEX] as PackedInt32Array
+		var indexed := idx.size() > 0
+		var count := idx.size() if indexed else verts.size()
+		var i := 0
+		while i + 2 < count:
+			var a: Vector3 = verts[idx[i]] if indexed else verts[i]
+			var b: Vector3 = verts[idx[i + 1]] if indexed else verts[i + 1]
+			var c: Vector3 = verts[idx[i + 2]] if indexed else verts[i + 2]
+			var hit = Geometry3D.ray_intersects_triangle(
+				origin, dir, xform * a, xform * b, xform * c)
+			if hit != null:
+				var t := origin.distance_to(hit as Vector3)
+				if best < 0.0 or t < best:
+					best = t
+			i += 3
+	return best
 
 
 func _entity_polyline(sk: Sketch, e: SketchEntity) -> PackedVector2Array:

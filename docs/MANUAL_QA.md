@@ -14,11 +14,26 @@ Status: PENDING sign-off
 
 1. Launch the app. **Expect:** window opens; 3D view with red/green/blue
    origin axes and three faint origin planes; view cube top-right; status bar
-   reads "Model".
+   reads "Model". The world is **Z-up** (Blender/Fusion): blue Z points
+   straight up, red X and green Y lie flat in the ground plane.
 2. Drag with middle mouse button. **Expect:** view pans; the view cube does
    not move (it only rotates).
-3. Hold Shift + drag middle mouse. **Expect:** orbit around the origin; view
-   cube rotates in lockstep.
+3. Hold Shift + drag middle mouse. **Expect:** orbit; view cube rotates in
+   lockstep; the horizon stays level (no roll) at every angle.
+3a. Start a Shift+MMB orbit, then **release Shift while still dragging**.
+   **Expect:** it keeps orbiting — it must not switch to panning mid-drag.
+   The gesture only ends when the middle button is released.
+3a2. On a freshly opened (empty) document: pan so the origin axes sit well
+   off to one side, then Shift+MMB orbit. **Expect:** the axes and origin
+   planes stay put where you panned them while the camera swings around
+   them. They must NOT orbit about the middle of the window, and must not
+   snap back to the centre when the drag starts.
+3b. With a solid in view, check the "Orbit:" dropdown in the top bar.
+   **Expect:** "Body Center" is the default (Fusion style) — orbiting keeps
+   the body pinned in place even when it is off-center. Switch to
+   "Under Cursor" (Blender style): orbit pivots about the surface point under
+   the pointer where the drag began. Switch to "View Center": orbit pivots
+   about the view's center, as before.
 4. Scroll wheel up/down. **Expect:** zoom in/out toward the model.
 5. Click a face of the view cube (e.g. the one facing you). **Expect:**
    camera animates (~0.25 s) to that axis-aligned view.

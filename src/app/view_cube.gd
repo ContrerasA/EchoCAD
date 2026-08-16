@@ -62,9 +62,11 @@ func _gui_input(event: InputEvent) -> void:
 	if n == Vector3.ZERO:
 		return
 	accept_event()
-	var up := Vector3(0, 1, 0)
-	if absf(n.y) > 0.9:                       # top/bottom: north = -Z
-		up = Vector3(0, 0, -1) * signf(n.y)
+	# World is Z-up: +Z is the top face, so a side face's up is +Z and the
+	# top/bottom faces fall back to +Y / -Y as their on-screen north.
+	var up := Vector3(0, 0, 1)
+	if absf(n.z) > 0.9:
+		up = Vector3(0, 1, 0) * signf(n.z)
 	face_picked.emit(n, up)
 
 

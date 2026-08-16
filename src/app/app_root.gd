@@ -55,6 +55,7 @@ var _extrude_dialog: Window
 var _extrude_dist: LineEdit
 var _btn_undo: Button
 var _btn_redo: Button
+var _pivot_pick: OptionButton
 var _status_mode: Label
 var _status_hint: Label
 var _status_dof: Label
@@ -342,6 +343,17 @@ func _build_ui() -> void:
 	_btn_undo.name = "UndoBtn"
 	_btn_redo = _button(top, "Redo", func() -> void: stack.redo())
 	_btn_redo.name = "RedoBtn"
+	# Orbit pivot: Fusion's body-center is the default, Blender-style
+	# under-cursor and plain view-center are the alternatives.
+	_pivot_pick = OptionButton.new()
+	_pivot_pick.name = "PivotModeBtn"
+	_pivot_pick.focus_mode = Control.FOCUS_NONE
+	_pivot_pick.add_item("Orbit: Body Center", OrbitCamera.PivotMode.BODY_CENTER)
+	_pivot_pick.add_item("Orbit: Under Cursor", OrbitCamera.PivotMode.ORBIT_POINT)
+	_pivot_pick.add_item("Orbit: View Center", OrbitCamera.PivotMode.VIEW_CENTER)
+	_pivot_pick.item_selected.connect(func(i: int) -> void:
+		set_pivot_mode(_pivot_pick.get_item_id(i) as OrbitCamera.PivotMode))
+	top.add_child(_pivot_pick)
 	# Tools get their own row — one row would overflow the window and make
 	# the tail buttons unreachable (for users AND automation clicks).
 	_tool_bar = HFlowContainer.new()
@@ -411,6 +423,12 @@ func _build_ui() -> void:
 	rig.moved.connect(func() -> void:
 		if view_cube != null:
 			view_cube.sync_orientation(rig.rotation))
+	# Pivot sources: Fusion's body-center default and Blender's under-cursor
+	# orbit point. VIEW_CENTER needs neither.
+	rig.bounds_provider = func() -> AABB: return world.model_bounds()
+	rig.orbit_point_provider = func(screen: Vector2) -> Dictionary:
+		var r := rig.pixel_ray(screen)
+		return world.pick_point(r[0], r[1])
 
 	sketch_view = SketchView.new()
 	sketch_view.name = "SketchView"
@@ -621,6 +639,15 @@ func _on_finish_sketch() -> void:
 	finish_sketch()
 
 
+## Set the orbit pivot mode (view preference, not model state — not undoable).
+func set_pivot_mode(m: OrbitCamera.PivotMode) -> void:
+	rig.pivot_mode = m
+	if _pivot_pick != null:
+		var idx := _pivot_pick.get_item_index(m)
+		if idx >= 0:
+			_pivot_pick.selected = idx
+
+
 func _on_cube_face(normal: Vector3, up: Vector3) -> void:
 	if mode == Mode.MODEL:
 		rig.frame_view(normal, up)
@@ -631,7 +658,14 @@ func _on_viewport_input(event: InputEvent) -> void:
 		return
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
-		if mb.pressed and mb.button_index == MOUSE_BUTTON_WHEEL_UP:
+		if mb.button_index == MOUSE_BUTTON_MIDDLE:
+			# Shift at press time selects orbit; the choice sticks until the
+			# button is released, even if Shift is let go mid-drag.
+			if mb.pressed and mb.shift_pressed:
+				rig.begin_orbit(mb.position)
+			elif not mb.pressed:
+				rig.end_orbit()
+		elif mb.pressed and mb.button_index == MOUSE_BUTTON_WHEEL_UP:
 			rig.zoom(1.0 / 1.1)
 		elif mb.pressed and mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 			rig.zoom(1.1)
@@ -651,7 +685,10 @@ func _on_viewport_input(event: InputEvent) -> void:
 	elif event is InputEventMouseMotion:
 		var mm := event as InputEventMouseMotion
 		if mm.button_mask & MOUSE_BUTTON_MASK_MIDDLE:
-			if mm.shift_pressed:
+			# The gesture's kind is decided by Shift at MMB-press time and
+			# stays put for the whole drag: releasing Shift mid-orbit keeps
+			# orbiting rather than flipping to pan.
+			if rig.is_orbiting():
 				rig.orbit(mm.relative.x, mm.relative.y)
 			else:
 				rig.pan(mm.relative.x, mm.relative.y)
