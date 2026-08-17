@@ -487,7 +487,8 @@ func _cmd_query_profiles(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Varian
 	for prof: Dictionary in ProfileFinder.profiles(sf.sketch):
 		out.append({"area": prof["area"],
 			"entities": prof["entities"],
-			"vertex_count": (prof["polygon"] as PackedVector2Array).size()})
+			"vertex_count": (prof["polygon"] as PackedVector2Array).size(),
+			"holes": (prof.get("holes", []) as Array).size()})
 	return {"profiles": out}
 
 
@@ -495,14 +496,44 @@ func _cmd_action_extrude(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Varian
 	var fid := String(a.get("sketch", ""))
 	var at := _vec2(a.get("at", [0, 0]))
 	var dist := float(a.get("distance", 10.0))
-	var eid := app.extrude(fid, at, dist)
+	var op := String(a.get("operation", ExtrudeFeature.OP_NEW_BODY))
+	if not op in [ExtrudeFeature.OP_NEW_BODY, ExtrudeFeature.OP_JOIN,
+			ExtrudeFeature.OP_CUT]:
+		_reply_err(p, id, "bad_args", "unknown operation %s" % op)
+		return null
+	var eid := app.extrude(fid, at, dist, op)
 	if eid == "":
 		_reply_err(p, id, "invalid", "no closed profile at that point")
 		return null
 	var f := app.doc.feature_by_id(eid) as ExtrudeFeature
 	var mesh := f.build_mesh(app.doc)
-	return {"feature": eid, "name": f.name,
-		"volume": ExtrudeFeature.mesh_volume(mesh) if mesh != null else 0.0}
+	# `volume` is the feature's own prism (pre-boolean, compatible with the
+	# M12 contract); `body_volume` is the boolean result of the body this
+	# feature landed in ({} of a cut that touched nothing -> 0).
+	var body_volume := 0.0
+	for b: Dictionary in await BodyBuilder.build(app.doc, app):
+		if (b["feature_ids"] as Array).has(eid):
+			body_volume = BodyBuilder.mesh_volume(b["mesh"])
+			break
+	_reply(p, id, {"feature": eid, "name": f.name, "operation": op,
+		"volume": ExtrudeFeature.mesh_volume(mesh) if mesh != null else 0.0,
+		"body_volume": body_volume})
+	return null
+
+
+## Boolean-resolved solid bodies (M18): id/name/features/volume/aabb each.
+func _cmd_query_bodies(_a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
+	var out: Array = []
+	for b: Dictionary in await BodyBuilder.build(app.doc, app):
+		var mesh: ArrayMesh = b["mesh"]
+		var box := mesh.get_aabb()
+		out.append({"id": b["id"], "name": b["name"],
+			"features": b["feature_ids"],
+			"volume": BodyBuilder.mesh_volume(mesh),
+			"aabb": [box.position.x, box.position.y, box.position.z,
+				box.size.x, box.size.y, box.size.z]})
+	_reply(p, id, {"bodies": out})
+	return null
 
 
 func _cmd_action_set_marker(a: Dictionary, _p: StreamPeerTCP, _id: Variant) -> Dictionary:

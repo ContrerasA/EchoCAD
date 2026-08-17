@@ -12,7 +12,14 @@ const ARC_SEGS := 32         # tessellation for arcs/circles
 
 
 ## -> Array of {polygon: PackedVector2Array (ccw), area: float,
-##              entities: Array[String]}
+##              entities: Array[String],
+##              holes: Array[PackedVector2Array] (ccw),
+##              hole_entities: Array[String]}
+## Faces are REGIONS, Fusion-style (M18): a loop lying wholly inside another
+## with no connecting geometry is that face's HOLE — the containing face's
+## `holes` lists it and `area` is net (outer minus holes). The inner loop is
+## STILL its own face too, so clicking inside a hole picks the inner region
+## and clicking the ring between them picks the outer-with-hole region.
 static func profiles(sk: Sketch) -> Array:
 	var out: Array = []
 
@@ -165,7 +172,49 @@ static func profiles(sk: Sketch) -> Array:
 			if area > MERGE_EPS:
 				out.append({"polygon": loop_poly, "area": area,
 					"entities": loop_entities})
+	_attach_holes(out)
 	return out
+
+
+## Region pass: mark every face DIRECTLY contained in another as that face's
+## hole. Containment only ever holds between DISCONNECTED loops (the half-edge
+## walk already returns minimal faces within one component, and a hole bridged
+## by real geometry traces as a single self-touching loop), so a vertex-inside
+## test is exact here. "Directly": a loop inside a hole's island chain belongs
+## to the island, not to the outermost face — standard even-odd nesting.
+static func _attach_holes(faces: Array) -> void:
+	var n := faces.size()
+	var gross: Array = []
+	for f: Dictionary in faces:
+		gross.append(float(f["area"]))
+		f["holes"] = []
+		f["hole_entities"] = []
+	var inside := {}      # "i:j" -> face j is inside face i
+	for i in n:
+		for j in n:
+			if i == j or gross[j] >= gross[i]:
+				continue
+			var probe: Vector2 = (faces[j]["polygon"] as PackedVector2Array)[0]
+			if Geometry2D.is_point_in_polygon(probe, faces[i]["polygon"]):
+				inside["%d:%d" % [i, j]] = true
+	for i in n:
+		var net: float = gross[i]
+		for j in n:
+			if not inside.has("%d:%d" % [i, j]):
+				continue
+			var direct := true
+			for k in n:
+				if k != i and k != j and inside.has("%d:%d" % [i, k]) \
+						and inside.has("%d:%d" % [k, j]):
+					direct = false
+					break
+			if not direct:
+				continue
+			(faces[i]["holes"] as Array).append(faces[j]["polygon"])
+			for eid in faces[j]["entities"]:
+				(faces[i]["hole_entities"] as Array).append(eid)
+			net -= gross[j]
+		faces[i]["area"] = net
 
 
 static func _has_other_out(edges: Array, node: String, not_edge: int) -> bool:
@@ -204,13 +253,117 @@ static func _area(poly: PackedVector2Array) -> float:
 	return a * 0.5
 
 
-## The profile containing `at` (smallest containing area wins). {} if none.
+## Triangulate a region with holes by BRIDGING: each hole is spliced into the
+## outer boundary through a doubled bridge edge (earcut's hole elimination),
+## then the merged simple-but-self-touching polygon goes through the standard
+## triangulator, which accepts it. -> {points: PackedVector2Array,
+## indices: PackedInt32Array} (empty indices when triangulation fails).
+static func triangulate_with_holes(outer: PackedVector2Array,
+		holes: Array) -> Dictionary:
+	var merged := outer.duplicate()
+	if _area(merged) < 0.0:
+		merged.reverse()
+	var hs: Array = []
+	for h in holes:
+		var hp := (h as PackedVector2Array).duplicate()
+		if _area(hp) > 0.0:
+			hp.reverse()   # holes walk CW inside a CCW outer
+		hs.append(hp)
+	# Rightmost hole first: after each splice the bridge becomes part of the
+	# outer boundary, so later (more-leftward) holes may bridge through it.
+	hs.sort_custom(func(a: PackedVector2Array, b: PackedVector2Array) -> bool:
+		return _max_x_of(a) > _max_x_of(b))
+	for hp: PackedVector2Array in hs:
+		merged = _splice_hole(merged, hp)
+	return {"points": merged,
+		"indices": Geometry2D.triangulate_polygon(merged)}
+
+
+static func _max_x_of(poly: PackedVector2Array) -> float:
+	var mx := -INF
+	for p in poly:
+		mx = maxf(mx, p.x)
+	return mx
+
+
+## Join `hole` (cw) into `outer` (ccw) with a doubled bridge edge from the
+## hole's rightmost vertex to a mutually visible outer vertex (Eberly's
+## ray-cast + reflex-in-triangle refinement).
+static func _splice_hole(outer: PackedVector2Array,
+		hole: PackedVector2Array) -> PackedVector2Array:
+	var mi := 0
+	for i in hole.size():
+		if hole[i].x > hole[mi].x:
+			mi = i
+	var m := hole[mi]
+	# Closest +x ray hit on the outer boundary (half-open y test so a ray
+	# through a shared vertex counts one edge, not two).
+	var best_t := INF
+	var best_edge := -1
+	var n := outer.size()
+	for i in n:
+		var a := outer[i]
+		var b := outer[(i + 1) % n]
+		if not ((a.y <= m.y and b.y > m.y) or (b.y <= m.y and a.y > m.y)):
+			continue
+		var x := a.x + (b.x - a.x) * (m.y - a.y) / (b.y - a.y)
+		if x >= m.x - 1e-9 and x - m.x < best_t:
+			best_t = x - m.x
+			best_edge = i
+	if best_edge < 0:
+		return outer   # hole not actually inside — leave it out
+	var hit := Vector2(m.x + best_t, m.y)
+	# Candidate bridge vertex: the intersected edge's endpoint with max x.
+	var e0 := outer[best_edge]
+	var e1 := outer[(best_edge + 1) % n]
+	var pi := best_edge if e0.x > e1.x else (best_edge + 1) % n
+	# A reflex outer vertex inside triangle (m, hit, candidate) would block
+	# the bridge; take the blocker closest in angle (then distance) to +x.
+	var best_pi := pi
+	var best_key := Vector2(INF, INF)
+	for i in n:
+		var prev := outer[(i - 1 + n) % n]
+		var v := outer[i]
+		var next := outer[(i + 1) % n]
+		if (v - prev).cross(next - v) >= 0.0:
+			continue   # convex
+		if not Geometry2D.point_is_inside_triangle(v, m, hit, outer[pi]):
+			continue
+		var d := v - m
+		var key := Vector2(absf(d.angle()), d.length())
+		if key.x < best_key.x or (key.x == best_key.x and key.y < best_key.y):
+			best_key = key
+			best_pi = i
+	pi = best_pi
+	var out := PackedVector2Array()
+	for i in pi + 1:
+		out.append(outer[i])
+	for k in hole.size() + 1:
+		out.append(hole[(mi + k) % hole.size()])
+	out.append(outer[pi])
+	for i in range(pi + 1, n):
+		out.append(outer[i])
+	return out
+
+
+## The REGION containing `at` (smallest containing outer wins). {} if none.
+## A point inside one of a face's holes is not in that region — it falls
+## through to the inner face, so clicking inside a drilled circle picks the
+## circle, not the plate around it.
 static func profile_at(sk: Sketch, at: Vector2) -> Dictionary:
 	var best := {}
 	var best_area := INF
 	for prof: Dictionary in profiles(sk):
-		if Geometry2D.is_point_in_polygon(at, prof["polygon"]) \
-				and float(prof["area"]) < best_area:
+		if not Geometry2D.is_point_in_polygon(at, prof["polygon"]):
+			continue
+		var in_hole := false
+		for h: PackedVector2Array in (prof["holes"] as Array):
+			if Geometry2D.is_point_in_polygon(at, h):
+				in_hole = true
+				break
+		if in_hole:
+			continue
+		if float(prof["area"]) < best_area:
 			best = prof
 			best_area = prof["area"]
 	return best

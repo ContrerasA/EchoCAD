@@ -283,6 +283,30 @@ where it can rather than simply not moving.
 - **Manual**: dragging constrained geometry feels like it is sliding on rails
   rather than refusing or lurching; the status bar explains what is holding it.
 
+## M18 — Extrude holes + booleans  (branch: `m18-extrude-booleans`)
+
+Phase-2 backlog. Profile detection becomes REGION detection, Fusion-style: a
+loop wholly inside another with no connecting geometry is the outer face's
+hole — clicking the ring between a rect and an inner circle picks
+rect-minus-circle, clicking inside the circle picks the disc. Extruding a
+holed region meshes the ring (caps triangulated around the holes via
+bridge-splicing, hole walls wound outward).
+
+Extrude gains Fusion's operation dropdown: **New Body** stands alone,
+**Join** unions into every body its prism touches, **Cut** carves its prism
+out of them (touching nothing: join starts a new body, cut is a no-op).
+Booleans evaluate through the engine's CSG (`bake_static_mesh`), which bakes
+a frame after the model change; documents without booleans keep the exact
+synchronous mesher, edge overlay included. Bodies are derived state rebuilt
+on every settled change — undo/redo and rollback need no special handling.
+
+- **Automated**: `tests/m18_extrude_booleans.gd` — hole regions, net areas,
+  ring extrusion volume, cut/join/no-target-cut volumes, undo/redo through a
+  boolean, operation serialization. RPC `tests/rpc/test_booleans.py` — the
+  same through real input plus `query.bodies` and the dialog's op dropdown.
+- **Manual**: §M18 — hover/click regions with holes, cut and join by hand,
+  orbit the carved solid.
+
 ---
 
 ## Milestone order rationale

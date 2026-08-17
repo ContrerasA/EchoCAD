@@ -1251,3 +1251,31 @@ Fix log:
   (a driving Radius dimension). `tests/m17_apply_prefer_points.gd`.
   Retest 5: apply Point-On — the circle must NOT grow; drag the point
   around and off — the badge stays green throughout.
+
+## §M18 — Extrude holes + booleans
+
+Status: PENDING sign-off
+
+- [ ] 1. Sketch on XY: rectangle, then a circle inside it. Finish. Extrude,
+   hover/click the RING between rect and circle. **Expect:** the extrude
+   lands as a plate with a real hole — orbit it and look through the hole.
+- [ ] 2. Same sketch: extrude again, this time clicking INSIDE the circle.
+   **Expect:** a solid disc body appears in the hole (it is its own
+   region, not part of the ring).
+- [ ] 3. New sketch on the plate's plane, small rectangle over the solid.
+   Extrude → in the dialog pick **Cut**, distance deeper than the plate.
+   **Expect:** a rectangular pocket is carved out of the plate; orbit to
+   confirm the cut walls are closed (no see-through faces).
+- [ ] 4. Another sketch, a rectangle overlapping the plate's footprint.
+   Extrude → **Join**, same height. **Expect:** plate and boss become ONE
+   body (click one — both highlight together as a single selection).
+- [ ] 5. Extrude a far-away rectangle as **New Body**. **Expect:** it stays
+   a separate body; the browser lists it on its own; clicking it does not
+   highlight the plate.
+- [ ] 6. Ctrl+Z through the above one step at a time. **Expect:** each
+   boolean unwinds cleanly — the pocket refills, the boss detaches — with
+   no ghost geometry left behind.
+- [ ] 7. Save, reopen. **Expect:** holes, cuts, and joins all rebuild
+   identically (operations persist in the file).
+- [ ] 8. A **Cut** whose profile touches no body. **Expect:** nothing is
+   removed; the status bar explains what Cut does.
