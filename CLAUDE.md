@@ -12,10 +12,17 @@ GODOT=/nix/store/9zi5r792h6gab0zw3z4xcmydgzjzdird-godot-4.7.1/bin/godot4.7.1
 
 tools/run_tests.sh              # all headless tests; FAIL <name> per failure
 tools/run_tests.sh m04          # filter by substring
+HEADLESS=1 tools/run_rpc_tests.sh   # RPC suites (HEADLESS=1 when unattended)
 "$GODOT" --headless --path . --script res://tests/<t>.gd   # single test, see output
 "$GODOT" --path .               # run app windowed
 "$GODOT" --path . --editor --quit --headless   # REQUIRED once after adding any class_name
 ```
+
+Windows: the repo is self-contained — the vendored addons ship Linux AND
+Windows x86_64 binaries, so clone + open in Godot 4.7 just works. Runners:
+`tools\run_tests.ps1` / `tools\run_rpc_tests.ps1` (set `$env:GODOT` to the
+Godot 4.7 exe if it is not on PATH; RPC tests need Python 3).
+macOS/web still require binaries built in the sibling repos first.
 
 ## Rules
 

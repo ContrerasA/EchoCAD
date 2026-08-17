@@ -8,7 +8,15 @@ per-DOF drag). Automated coverage: 33 headless tests (`tools/run_tests.sh`)
 HEADLESS=1 when unattended — windowed runs on a live desktop flake from
 real mouse interference). Manual QA sections in `docs/MANUAL_QA.md`:
 §M2–§M12 hand signed off 2026-08-15/16; §M13 folded into §M2; §M14–§M17
-written, PENDING hand sign-off.
+hand-tested 2026-08-16 with three findings, all fixed (off-axis sketching
+now works Fusion-style — §M14 item 8; drag no longer pegs a core — §M16
+fix 1; point-on rails stay on the manifold — §M17 fix 5) and awaiting
+retest of just those items.
+
+Windows: the repo is self-contained — vendored addons carry Linux and
+Windows x86_64 binaries; `tools/run_tests.ps1` + `tools/run_rpc_tests.ps1`
+mirror the bash runners, and `.gitattributes` keeps line endings sane
+across platforms. macOS/web binaries still pending in the sibling repos.
 
 | Milestone | State | Notes |
 |---|---|---|

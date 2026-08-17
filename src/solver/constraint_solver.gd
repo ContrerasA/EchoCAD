@@ -51,9 +51,16 @@ const SANITY_FLOOR_MM := 10000.0
 
 ## Solve the sketch. `pinned` — Dictionary set OR Array of point entity ids
 ## that must not move (dragged points, FIX operands are added internally).
+## `pin_radii` — circle entity ids whose radius must not change (the drag
+## polish pins radii of circles the gesture is not touching, so a POINT_ON
+## correction cannot be absorbed by quietly growing the circle).
 ## Returns {"points": {id: Vector2}, "radii": {id: float}, "rounds": int}
 ## containing ONLY handles that moved.
-static func solve(sk: Sketch, pinned = []) -> Dictionary:
+## `converged` — stop once a round's largest correction falls below this (mm).
+## The default suits interactive solves; the drag polish passes a tighter
+## value so the residual it leaves is far below the DOF violation tolerance.
+static func solve(sk: Sketch, pinned = [], pin_radii = [],
+		converged := CONVERGED) -> Dictionary:
 	var pin := {}
 	if pinned is Dictionary:
 		pin = (pinned as Dictionary).duplicate()
@@ -75,6 +82,10 @@ static func solve(sk: Sketch, pinned = []) -> Dictionary:
 			pin[e.id] = true
 		elif e.kind() == "circle":
 			pin_r[e.id] = (e as SketchCircle).radius
+	for id in pin_radii:
+		var ce := sk.entity(String(id)) as SketchCircle
+		if ce != null:
+			pin_r[ce.id] = ce.radius
 	# FIX constraints pin every point of their operand.
 	for c in sk.constraints:
 		if c.type == SketchConstraint.Type.FIX:
@@ -237,7 +248,7 @@ static func solve(sk: Sketch, pinned = []) -> Dictionary:
 		_clamp_arc_radii(arcs, arc_ceiling, pos, pin)
 		for id: String in pin_r:
 			rad[id] = pin_r[id]
-		if worst < CONVERGED:
+		if worst < converged:
 			break
 
 	# ...and once more after the loop. Running it only inside is not enough:

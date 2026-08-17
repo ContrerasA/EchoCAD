@@ -33,6 +33,12 @@ var prefs := {"inference": true}
 var selection: Array[String] = []
 ## Selected constraint index in the active sketch (-1 = none).
 var selected_constraint := -1
+## True while a continuous gesture (drag) is feeding the stack every frame.
+## Per-change derived work that is O(sketch) or worse — the DOF analysis and
+## the projection refresh — is deferred until the gesture ends: running an
+## O(n^3) Jacobian rank pass per pointer frame is what pegged a core and
+## heated the CPU 20 °C on a large sketch (§M16 QA finding).
+var live_gesture := false
 ## Latest DOF analysis of the active sketch ({} when stale/unavailable).
 var dof := {}
 ## Constraint badge hit rects from the last overlay draw: [{index, rect}].
@@ -139,7 +145,7 @@ func _ready() -> void:
 ## _process of their own, and gestures that must not run faster than the
 ## display (drag re-solves) rely on this — see `SketchTool.tick`.
 func _process(_dt: float) -> void:
-	if mode == Mode.SKETCH and not sketch_orbit:
+	if mode == Mode.SKETCH:
 		tools.handle_tick()
 	_poll_threaded_solver()
 
@@ -444,6 +450,7 @@ func load_document(new_doc: CadDocument) -> void:
 	picking_plane = false
 	mode = Mode.MODEL
 	sketch_orbit = false
+	sketch_view.clear_projection_3d()
 	sketch_view.visible = false
 	world.set_planes_visible(false)
 	world.set_grid_plane("XY")
@@ -760,6 +767,7 @@ func finish_sketch() -> void:
 	active_sketch_id = ""
 	mode = Mode.MODEL
 	sketch_orbit = false
+	sketch_view.clear_projection_3d()
 	rig.end_orbit()
 	# Drop the 2D canvas immediately so the 3D scene is what animates: the
 	# camera pulls back from the plane to the previous model view.
@@ -1008,6 +1016,13 @@ func _on_sketch_orbit_request(screen: Vector2) -> void:
 		return
 	sketch_orbit = true
 	sketch_view.visible = false
+	# The canvas hides but stays the ONE mapping: it projects through the 3D
+	# camera, so tools keep working off-axis and geometry lands on the
+	# ORIGINAL sketch plane (Fusion's workflow — M14 QA).
+	var feat := doc.sketch_feature(active_sketch_id)
+	if feat != null:
+		sketch_view.set_projection_3d(rig.camera,
+			SketchFeature.plane_basis(feat.plane))
 	# The in-edit sketch gets the same 3D line-mesh treatment as every other
 	# live sketch — the world's meshes may be stale mid-edit, so rebuild now.
 	world.rebuild_sketches(doc)
@@ -1033,6 +1048,7 @@ func return_to_sketch_plane() -> void:
 		if mode != Mode.SKETCH:
 			return
 		sketch_orbit = false
+		sketch_view.clear_projection_3d()
 		sketch_view.visible = true
 		sketch_view.grab_focus()
 		# Ortho + exact registration with the canvas, as on sketch entry.
@@ -1075,7 +1091,11 @@ func _on_viewport_input(event: InputEvent) -> void:
 		elif mb.pressed and mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 			rig.zoom(1.1)
 		elif nav_only:
-			pass
+			# Off-axis sketching: clicks ray-cast onto the sketch plane and
+			# feed the active tool exactly as locked-2D clicks do.
+			if mb.button_index == MOUSE_BUTTON_LEFT:
+				_on_tool_input(sketch_view.screen_to_world(mb.position),
+					mb.position, mb)
 		elif mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT and picking_plane:
 			var ray := rig.pixel_ray(mb.position)
 			var plane := world.pick_plane(ray[0], ray[1])
@@ -1103,6 +1123,10 @@ func _on_viewport_input(event: InputEvent) -> void:
 				rig.orbit(mm.relative.x, mm.relative.y)
 			else:
 				rig.pan(mm.relative.x, mm.relative.y)
+		elif nav_only:
+			# Off-axis sketching: hover/preview motion reaches the tool too.
+			_on_tool_input(sketch_view.screen_to_world(mm.position),
+				mm.position, mm)
 		elif picking_plane:
 			var ray := rig.pixel_ray(mm.position)
 			world.set_plane_hover(world.pick_plane(ray[0], ray[1]))
@@ -1132,10 +1156,6 @@ func handle_app_key(k: InputEventKey) -> bool:
 		open_interactive()
 		return true
 	if k.keycode == KEY_ESCAPE:
-		if sketch_orbit:
-			# Same way home as the plane's view-cube face.
-			return_to_sketch_plane()
-			return true
 		if mode == Mode.SKETCH:
 			# Esc ends the gesture AND drops back to Select, Fusion-style —
 			# a cancelled draw should not leave the tool armed for another
@@ -1148,6 +1168,11 @@ func handle_app_key(k: InputEventKey) -> bool:
 				return true
 			if consumed:
 				return true
+			# Nothing left for the tool to cancel: off-axis, Esc is the
+			# other way home (same as the plane's view-cube face).
+			if sketch_orbit:
+				return_to_sketch_plane()
+				return true
 		if picking_plane or picking_profile:
 			picking_plane = false
 			picking_profile = false
@@ -1156,8 +1181,7 @@ func handle_app_key(k: InputEventKey) -> bool:
 			_refresh_ui()
 			return true
 		return false
-	if (k.keycode == KEY_ENTER or k.keycode == KEY_KP_ENTER) \
-			and mode == Mode.SKETCH and not sketch_orbit:
+	if (k.keycode == KEY_ENTER or k.keycode == KEY_KP_ENTER) and mode == Mode.SKETCH:
 		# Enter goes to the tool's TYPE-IN handler first, and only then counts
 		# as "finish the gesture". Routing it straight to handle_commit meant
 		# the tool's key_input never saw it, so a value typed into a selected
@@ -1169,7 +1193,7 @@ func handle_app_key(k: InputEventKey) -> bool:
 			overlay.queue_redraw()
 			return true
 		return tools.handle_commit()
-	if k.keycode == KEY_DELETE and mode == Mode.SKETCH and not sketch_orbit:
+	if k.keycode == KEY_DELETE and mode == Mode.SKETCH:
 		if selected_constraint >= 0:
 			delete_constraint(selected_constraint)
 			return true
@@ -1193,7 +1217,7 @@ func handle_app_key(k: InputEventKey) -> bool:
 			batch.seal()
 			return true
 		return false
-	if mode == Mode.SKETCH and not k.ctrl_pressed and not sketch_orbit:
+	if mode == Mode.SKETCH and not k.ctrl_pressed:
 		# Type-in fields get first claim on keys (digits, Tab, units...).
 		var active := tools.get_tool(tools.active_id())
 		if active != null and active.key_input(k):
@@ -1320,7 +1344,7 @@ func _sync_camera_to_sketch_view() -> void:
 ## Editor chrome: sketch points, selection highlights, then the active
 ## tool's own overlay. Screen space; artwork itself is the ThorVG raster.
 func _on_overlay_draw() -> void:
-	if mode != Mode.SKETCH or sketch_orbit:
+	if mode != Mode.SKETCH:
 		return
 	var sk := active_sketch()
 	if sk == null:
@@ -1416,13 +1440,32 @@ func _draw_entity_outline(sk: Sketch, e: SketchEntity, c: Color, w: float) -> vo
 					-a0, -(a0 + sweep), 48, c, w)
 
 
+## A gesture started/ended. Ending one runs the derived work its frames
+## skipped (see `live_gesture`).
+func set_live_gesture(on: bool) -> void:
+	if live_gesture == on:
+		return
+	live_gesture = on
+	if not on:
+		var proj_msgs := Projector.refresh(doc)
+		if not proj_msgs.is_empty():
+			set_status_hint(proj_msgs[0])
+		_refresh_dof()
+		if mode == Mode.SKETCH:
+			sketch_view.mark_dirty()
+		overlay.queue_redraw()
+		_refresh_ui()
+
+
 func _on_stack_changed() -> void:
 	# Projections are derived state: recompute them from their sources on
-	# EVERY model change (edits, undo, redo, parameter changes), so linked
-	# geometry follows its source and dead links break with a message.
-	var proj_msgs := Projector.refresh(doc)
-	if not proj_msgs.is_empty():
-		set_status_hint(proj_msgs[0])
+	# every SETTLED model change (edits, undo, redo, parameter changes), so
+	# linked geometry follows its source and dead links break with a
+	# message. Deferred while a drag streams changes — see `live_gesture`.
+	if not live_gesture:
+		var proj_msgs := Projector.refresh(doc)
+		if not proj_msgs.is_empty():
+			set_status_hint(proj_msgs[0])
 	if mode == Mode.SKETCH:
 		var sk := active_sketch()
 		# The active sketch may have been undone out of existence.
@@ -1437,7 +1480,8 @@ func _on_stack_changed() -> void:
 			if selected_constraint >= sk.constraints.size():
 				selected_constraint = -1
 			snap.build_index(sk, _snap_exclude)   # keep gesture exclusions
-			_refresh_dof()
+			if not live_gesture:
+				_refresh_dof()
 			sketch_view.mark_dirty()
 			overlay.queue_redraw()
 			# Off-axis the 3D line meshes ARE the sketch display, so undo/redo
@@ -1456,10 +1500,8 @@ func _refresh_ui() -> void:
 	_btn_create.visible = not in_sketch
 	_btn_extrude.visible = not in_sketch
 	_btn_finish.visible = in_sketch
-	# Off-axis the sketch is view-only: the editing bars go away with the
-	# canvas, so a disabled tool cannot even be aimed at.
-	_tool_bar.visible = in_sketch and not sketch_orbit
-	_constraint_bar.visible = in_sketch and not sketch_orbit
+	_tool_bar.visible = in_sketch
+	_constraint_bar.visible = in_sketch
 	if in_sketch and not dof.is_empty():
 		var sk := active_sketch()
 		_status_dof.text = DofAnalyzer.summary(sk) if sk != null else ""
@@ -1477,9 +1519,9 @@ func _refresh_ui() -> void:
 		_status_hint.text = "Select a closed profile (Esc to cancel)"
 	elif in_sketch and sketch_orbit:
 		var fo := doc.sketch_feature(active_sketch_id)
-		_status_hint.text = ("Orbiting — click the %s face on the view cube "
-			+ "(or press Esc) to return to the sketch") \
-			% (fo.plane if fo != null else "plane")
+		_status_hint.text = ("Off-axis — sketching continues on %s; click its "
+			+ "view-cube face (or press Esc) to square up") \
+			% (fo.plane if fo != null else "the plane")
 	elif in_sketch:
 		var f := doc.sketch_feature(active_sketch_id)
 		_status_hint.text = "%s on %s" % [f.name, f.plane] if f != null else ""

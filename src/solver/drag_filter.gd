@@ -59,7 +59,7 @@ static func plan(sk: Sketch, drag_pids: Array, desired: Dictionary) -> Dictionar
 	for ring in EXPAND_MAX:
 		var out := _project(sk, cols, desired, live)
 		if bool(out["point_freedom"]):
-			var moves := _substepped(sk, cols, desired, live)
+			var moves := _polish(sk, cols, _substepped(sk, cols, desired, live))
 			var moved_len := 0.0
 			for pid: String in moves:
 				moved_len += (moves[pid] as Vector2).length_squared()
@@ -278,6 +278,39 @@ static func _project(sk: Sketch, cols: Dictionary, desired: Dictionary,
 		if v.length() > 1e-9:
 			moves[order[i]] = v
 	return {"moves": moves, "point_freedom": point_freedom}
+
+
+## Newton-polish of the walked motion. Each substep is first-order, so a
+## long slide on a CURVED rail (a point riding a circle under POINT_ON)
+## lands a hair off the constraint manifold — enough to trip the conflict
+## badge's violation tolerance and read as "invalid constraint" mid-drag.
+## Solving a CLONE with everything except the walkers pinned lets the damped
+## solver pull exactly the walked points back onto their constraints; with
+## the state already near-satisfied this converges in a round or two.
+static func _polish(sk: Sketch, cols: Dictionary, moves: Dictionary) -> Dictionary:
+	if moves.is_empty():
+		return moves
+	var clone := Sketch.from_dict(sk.to_dict())
+	for pid: String in moves:
+		clone.point(pid).pos += moves[pid] as Vector2
+	var pinned: Array = []
+	var pin_radii: Array = []
+	for e in clone.entities():
+		if e.kind() == "point" and not cols.has(e.id):
+			pinned.append(e.id)
+		elif e.kind() == "circle" and not cols.has((e as SketchCircle).center):
+			# An untouched circle's radius is not the correction's to spend:
+			# without this a POINT_ON polish "fixes" the rider by growing
+			# the circle instead of projecting the rider onto it.
+			pin_radii.append(e.id)
+	var res := ConstraintSolver.solve(clone, pinned, pin_radii, 1e-5)
+	if bool(res.get("diverged", false)):
+		return moves
+	var out := moves.duplicate()
+	for pid: String in res["points"]:
+		if cols.has(pid):
+			out[pid] = (res["points"][pid] as Vector2) - sk.point(pid).pos
+	return out
 
 
 ## Central-difference Jacobian row over `columns` — DofAnalyzer's shape with

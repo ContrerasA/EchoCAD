@@ -1137,7 +1137,20 @@ Status: PENDING sign-off
 - [X] 6. Grid/axes stay legible at grazing angles while off-axis.
 - [X] 7. Finish Sketch while off-axis returns to model mode cleanly.
 
-    This worls as indented, but one difference i want to add is that we should be able to use the tools when off axis, but if we draw lines / geometry, add features / dimensions, etc, they should work against the original axis the sketch is on. same workflow as in fusion
+Fix log:
+- **note ("tools should work off-axis")** Implemented — Fusion's workflow.
+  Off-axis, the toolbar and constraint bar stay up, tool shortcuts work, and
+  clicks ray-cast onto the ORIGINAL sketch plane, so geometry, dimensions and
+  constraints all land in the sketch exactly as they would square-on. The
+  canvas stays hidden (the sketch renders as 3D lines, chrome via the
+  overlay); Esc first cancels the active tool gesture, and only returns to
+  the locked view when there is nothing left to cancel. Item 2's "tools do
+  nothing" behaviour is obsolete — retest with item 8.
+- [ ] 8. While off-axis: press L, click twice on the plane — a line lands at
+   those plane points; D + two picks places a dimension; Delete removes a
+   selected entity; Esc mid-gesture cancels the tool (staying off-axis),
+   Esc again flies home. Geometry drawn off-axis is exactly where the
+   locked 2D view shows it after returning.
 
 ## §M15 — Project / reference geometry
 
@@ -1178,6 +1191,16 @@ Status: PENDING sign-off
 - [X] 4. Drag a tangent-arc construction and a slot: tangency and
    slot-shape survive fast dragging, same as before the threading.
 
+Fix log:
+- **1** ("one core still pegged, +20 °C moving one line") The heat was not
+  the solver — that already ran on the worker thread — but the per-frame
+  DERIVED work each stack change triggered: a full DOF analysis (an O(n^3)
+  Jacobian rank pass over every constraint) plus the projection refresh, on
+  every pointer frame of the drag. Both are now deferred while a gesture is
+  streaming (`AppRoot.live_gesture`) and run once when the drag ends, so a
+  drag costs the solve + raster only. Retest with the same 100+ entity
+  sketch: the DOF readout freezes during the drag and updates on release.
+
 ## §M17 — Per-DOF drag (rails)
 
 Status: PENDING sign-off
@@ -1199,3 +1222,14 @@ Status: PENDING sign-off
     When drgging point off circle most of the time the badge shows invalid constrain, sometimes its green valid. even with snap disabled
 - [X] 6. Drags feel like rails, not lurches: no geometry the cursor never
    touched jumps during any of the above.
+
+Fix log:
+- **5** The substep walk along a CURVED rail is first-order per step, so a
+  long slide around a circle drifted a few microns off it — past the DOF
+  analyzer's 0.001 mm violation tolerance, which is exactly the flickering
+  "invalid constraint" badge. Every drag update is now Newton-polished: a
+  clone of the sketch is solved with everything except the walked points
+  pinned (and untouched circles' RADII pinned too, so the correction cannot
+  be absorbed by quietly growing the circle) at a tightened convergence
+  threshold. Residual after a quarter-turn drag is < 0.0005 mm — covered by
+  `tests/m17_dof_drag.gd`. Retest: badge stays green for the whole slide.

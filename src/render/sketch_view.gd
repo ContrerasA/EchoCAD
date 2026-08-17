@@ -47,6 +47,14 @@ var tool_input: Callable = Callable()
 
 var _zoom := 4.0
 var _pan := Vector2.ZERO
+## Off-axis sketching (M14 QA): while the camera is orbited off the plane the
+## canvas is hidden, but this class stays the ONE world<->screen mapping —
+## it delegates to the 3D camera, so every tool, overlay and hit test keeps
+## working and geometry lands on the ORIGINAL sketch plane (Fusion's
+## workflow). Set via `set_projection_3d` / `clear_projection_3d`.
+var _project_3d := false
+var _cam_3d: Camera3D = null
+var _plane_basis := Basis.IDENTITY
 var _raster: TextureRect = null
 var _texture: ImageTexture = null
 var _sketch: Sketch = null
@@ -83,7 +91,31 @@ func _ready() -> void:
 
 ## --- camera ------------------------------------------------------------------
 
+## Route the mapping through the 3D camera: sketch (u,v) projects along the
+## plane transform and the camera; clicks ray-cast back onto the plane.
+func set_projection_3d(cam: Camera3D, plane_basis: Basis) -> void:
+	_project_3d = true
+	_cam_3d = cam
+	_plane_basis = plane_basis
+
+
+func clear_projection_3d() -> void:
+	_project_3d = false
+	_cam_3d = null
+
+
+func is_projection_3d() -> bool:
+	return _project_3d
+
+
 func zoom() -> float:
+	if _project_3d and _cam_3d != null:
+		# Effective px-per-mm at the pan point, so snap/hit tolerances stay
+		# meaningful off-axis. Measured, not derived: correct under both
+		# projections without caring which one the camera is in.
+		var s := world_to_screen(_pan + Vector2(1, 0)) \
+			.distance_to(world_to_screen(_pan))
+		return maxf(s, 0.01)
 	return _zoom
 
 
@@ -98,12 +130,24 @@ func set_view(p_pan: Vector2, p_zoom: float) -> void:
 
 
 func world_to_screen(p: Vector2) -> Vector2:
+	if _project_3d and _cam_3d != null:
+		return _cam_3d.unproject_position(
+			_plane_basis * Vector3(p.x, p.y, 0.0))
 	var c := size * 0.5
 	var d := p - _pan
 	return c + Vector2(d.x, -d.y) * _zoom
 
 
 func screen_to_world(s: Vector2) -> Vector2:
+	if _project_3d and _cam_3d != null:
+		var o := _cam_3d.project_ray_origin(s)
+		var dir := _cam_3d.project_ray_normal(s)
+		var n := _plane_basis.z
+		var denom := dir.dot(n)
+		if absf(denom) < 1e-9:
+			return _pan   # grazing ray: no meaningful plane point
+		var hit := o - dir * (o.dot(n) / denom)
+		return Vector2(hit.dot(_plane_basis.x), hit.dot(_plane_basis.y))
 	var c := size * 0.5
 	var d := (s - c) / _zoom
 	return _pan + Vector2(d.x, -d.y)

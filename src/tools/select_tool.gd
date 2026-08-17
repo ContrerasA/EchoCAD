@@ -39,12 +39,15 @@ func _init() -> void:
 func deactivate() -> void:
 	_drag = Drag.NONE
 	_pending = false
+	if app != null:
+		app.set_live_gesture(false)
 	clear_hover()
 
 
 func cancel() -> bool:
 	if _drag != Drag.NONE:
 		_drag = Drag.NONE
+		app.set_live_gesture(false)
 		return true
 	if app.selected_constraint >= 0:
 		app.selected_constraint = -1
@@ -164,6 +167,9 @@ func pointer_move(world: Vector2, screen: Vector2, _e: InputEventMouseMotion) ->
 		_drag = Drag.MOVE
 		_rail_hinted = false
 		_last_pinned = _move_points.duplicate()
+		# Heavy derived work (DOF analysis, projection refresh) pauses for
+		# the duration of the drag — it re-runs once at pointer_up.
+		app.set_live_gesture(true)
 		app.rebuild_snap_index(_moving_entity_ids())
 		# The whole gesture — every move + every constraint re-solve — is
 		# one sealed undo step.
@@ -274,6 +280,7 @@ func pointer_up(_world: Vector2, _screen: Vector2, e: InputEventMouseButton) -> 
 			_batch.seal()
 			_batch = null
 		app.rebuild_snap_index()
+		app.set_live_gesture(false)
 	_pending = false
 	_drag = Drag.NONE
 	return true

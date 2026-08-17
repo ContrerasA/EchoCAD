@@ -1,8 +1,10 @@
 extends SceneTree
 
 # M14: orbitable sketch view. Shift+MMB inside a sketch leaves the locked 2D
-# view for a free 3D orbit (editing disabled); the plane's view-cube face or
-# Esc flies back to the locked view at the exact pan/zoom the user left.
+# view for a free 3D orbit; sketching CONTINUES off-axis with clicks
+# ray-cast onto the original plane (Fusion's workflow — QA revision); the
+# plane's view-cube face or Esc flies back to the locked view at the exact
+# pan/zoom the user left.
 
 var _root: AppRoot = null
 
@@ -65,16 +67,55 @@ func _run() -> bool:
 		return _fail("off-axis view should be perspective")
 	if not rig.is_orbiting():
 		return _fail("orbit gesture did not start")
+	if not sv.is_projection_3d():
+		return _fail("mapping did not delegate to the 3D camera")
 
-	# Editing is disabled: tool shortcuts and Delete are dead keys now.
-	var was_tool := _root.tools.active_id()
+	# Sketching continues off-axis: shortcuts work, clicks land on the plane.
 	var lkey := InputEventKey.new()
 	lkey.keycode = KEY_L
 	lkey.pressed = true
-	if _root.handle_app_key(lkey):
-		return _fail("tool shortcut handled while off-axis")
-	if _root.tools.active_id() != was_tool:
-		return _fail("tool changed while off-axis")
+	if not _root.handle_app_key(lkey):
+		return _fail("tool shortcut dead while off-axis")
+	if _root.tools.active_id() != "line":
+		return _fail("L did not activate the line tool off-axis")
+	await _idle()
+	# The delegated mapping round-trips through the camera.
+	var probe := Vector2(22, 14)
+	var rt := sv.screen_to_world(sv.world_to_screen(probe))
+	if rt.distance_to(probe) > 0.01:
+		return _fail("off-axis mapping round-trip drifted: %s -> %s"
+			% [str(probe), str(rt)])
+	# Draw a line with clicks routed through the viewport (ray -> plane).
+	_root.snap.grid_enabled = false
+	_root.prefs["inference"] = false
+	var n_before := sk.size()
+	for w: Vector2 in [Vector2(70, 15), Vector2(95, 32)]:
+		var lc := InputEventMouseButton.new()
+		lc.button_index = MOUSE_BUTTON_LEFT
+		lc.pressed = true
+		lc.position = sv.world_to_screen(w)
+		_root._on_viewport_input(lc)
+		var lu := InputEventMouseButton.new()
+		lu.button_index = MOUSE_BUTTON_LEFT
+		lu.pressed = false
+		lu.position = lc.position
+		_root._on_viewport_input(lu)
+		await _idle()
+	var esc_chain := InputEventKey.new()
+	esc_chain.keycode = KEY_ESCAPE
+	esc_chain.pressed = true
+	_root.handle_app_key(esc_chain)   # end the chain (drops back to Select)
+	if sk.size() != n_before + 3:
+		return _fail("off-axis clicks did not draw a line (+%d entities)"
+			% (sk.size() - n_before))
+	var drawn_ok := false
+	for e in sk.entities():
+		if e.kind() == "point" and (e as SketchPoint).pos.distance_to(Vector2(70, 15)) < 0.1:
+			drawn_ok = true
+	if not drawn_ok:
+		return _fail("off-axis click did not land on the plane at (70,15)")
+	if not _root.sketch_orbit:
+		return _fail("drawing off-axis must stay off-axis")
 
 	# --- the orbit actually moves the camera off the plane -------------------
 	var rot_before := rig.rotation

@@ -162,6 +162,30 @@ func _run() -> bool:
 	if sk.point(r00).pos.distance_to(Vector2(200, 10)) > 1e-6:
 		return _fail("undo did not revert the corner drag")
 
+	# --- Point-On a circle: the point rides the circle, and STAYS on it -----
+	# (QA finding: the substep walk drifted off the circle enough to trip the
+	# conflict badge; the Newton polish must keep the residual below the DOF
+	# analyzer's violation tolerance for the whole drag.)
+	var cc := _pt(sk, Vector2(320, 200))
+	var circ := SketchCircle.make(cc, 25.0)
+	circ.id = sk.next_id()
+	sk.add(circ)
+	var rider := _pt(sk, Vector2(345, 200))   # on the rim, due east
+	_con(sk, SketchConstraint.Type.POINT_ON, [rider, circ.id])
+	await _drag(Vector2(345, 200), Vector2(-10, 24))   # pull up and around
+	var rp: Vector2 = sk.point(rider).pos
+	var rerr := absf(rp.distance_to(sk.point(cc).pos) - 25.0)
+	if rerr > 5e-4:
+		return _fail("rider left the circle by %.5f mm (pos %s)" % [rerr, str(rp)])
+	if rp.distance_to(Vector2(345, 200)) < 5.0:
+		return _fail("rider did not slide around the circle (%s)" % str(rp))
+	if sk.point(cc).pos.distance_to(Vector2(320, 200)) > 1e-6:
+		return _fail("circle center moved during rim drag")
+	var dof_after := DofAnalyzer.analyze(sk)
+	if not (dof_after["conflicts"] as Array).is_empty():
+		return _fail("conflict badge tripped after point-on drag: %s"
+			% str(dof_after["conflicts"]))
+
 	# --- FIXed geometry refuses with no motion ------------------------------
 	var fx := _pt(sk, Vector2(300, 300))
 	_con(sk, SketchConstraint.Type.FIX, [fx])

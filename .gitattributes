@@ -1,2 +1,26 @@
-# Normalize EOL for all files that Git considers text files.
-* text=auto eol=lf
+# Cross-platform hygiene: the repo is cloned on Linux and Windows machines.
+# Scripts and sources stay LF everywhere (bash and Godot both want LF, and
+# CRLF-converted .sh files break under git-bash/WSL); native libraries are
+# binary and must never be touched by text filters.
+
+* text=auto
+
+*.sh text eol=lf
+*.gd text eol=lf
+*.py text eol=lf
+*.md text eol=lf
+*.gdextension text eol=lf
+*.tscn text eol=lf
+*.godot text eol=lf
+*.svg text eol=lf
+*.uid text eol=lf
+
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+
+*.so binary
+*.dll binary
+*.dylib binary
+*.wasm binary
+*.png binary
+*.ecad text eol=lf
