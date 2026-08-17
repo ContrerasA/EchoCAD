@@ -5,7 +5,7 @@
 # Usage (PowerShell):
 #   tools\run_rpc_tests.ps1 [name-filter]
 #   $env:GODOT = "C:\path\to\Godot_v4.7.1-stable_win64.exe"
-#   $env:HEADLESS = "1"        # force headless (recommended unattended —
+#   $env:HEADLESS = "1"        # force headless (recommended unattended -
 #                              # windowed runs flake from real mouse focus)
 #   $env:PORT = "4777"
 
@@ -20,14 +20,22 @@ function Find-Godot {
         $cmd = Get-Command $name -ErrorAction SilentlyContinue
         if ($cmd) { return $cmd.Source }
     }
-    Write-Error "godot binary not found — set `$env:GODOT to your Godot 4.7 executable"
+    Write-Error "godot binary not found - set `$env:GODOT to your Godot 4.7 executable"
 }
 
+# Prefer a real python.exe: WindowsApps entries are Store-stub aliases that
+# print an install nag and exit 9009, and the py launcher honors the scripts'
+# `#!/usr/bin/env python3` shebang, which resolves to that same stub. When
+# only py exists, "-3" overrides the shebang.
 function Find-Python {
-    foreach ($name in @("py", "python3", "python")) {
+    foreach ($name in @("python", "python3")) {
         $cmd = Get-Command $name -ErrorAction SilentlyContinue
-        if ($cmd) { return $cmd.Source }
+        if ($cmd -and $cmd.Source -notlike "*\WindowsApps\*") {
+            return @{ exe = $cmd.Source; args = @() }
+        }
     }
+    $cmd = Get-Command py -ErrorAction SilentlyContinue
+    if ($cmd) { return @{ exe = $cmd.Source; args = @("-3") } }
     Write-Error "Python 3 not found on PATH (install from python.org or the Store)"
 }
 
@@ -47,7 +55,7 @@ foreach ($f in Get-ChildItem tests\rpc -Filter test_*.py) {
         -ArgumentList (@("--path", ".") + $headless + @("--", "--automation-port=$port")) `
         -PassThru -WindowStyle Hidden
     $env:ECHOCAD_PORT = $port
-    & $python $f.FullName
+    & $python.exe @($python.args + $f.FullName)
     if ($LASTEXITCODE -eq 0) {
         $pass++
     } else {

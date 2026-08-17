@@ -18,7 +18,7 @@ function Find-Godot {
         $cmd = Get-Command $name -ErrorAction SilentlyContinue
         if ($cmd) { return $cmd.Source }
     }
-    Write-Error "godot binary not found — set `$env:GODOT to your Godot 4.7 executable (the console build, Godot_*_win64_console.exe, shows test output best)"
+    Write-Error "godot binary not found - set `$env:GODOT to your Godot 4.7 executable (the console build, Godot_*_win64_console.exe, shows test output best)"
 }
 
 $godot = Find-Godot
@@ -28,7 +28,9 @@ $fail = 0
 foreach ($f in Get-ChildItem tests -Filter *.gd) {
     $t = $f.BaseName
     if ($Filter -and ($t -notlike "*$Filter*")) { continue }
-    & $godot --headless --path . --script "res://tests/$t.gd" *> $null
+    # cmd /c owns the redirection: PS 5.1 wraps native stderr in ErrorRecords,
+    # which terminates the script under $ErrorActionPreference = "Stop".
+    cmd /c "`"$godot`" --headless --path . --script `"res://tests/$t.gd`" >nul 2>&1"
     if ($LASTEXITCODE -eq 0) {
         $pass++
     } else {
