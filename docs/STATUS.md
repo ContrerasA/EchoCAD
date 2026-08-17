@@ -1,11 +1,14 @@
 # EchoCAD — Status
 
-Updated: 2026-08-16. Milestones M0–M13 implemented and merged to `main`.
-Automated coverage: 29 headless tests (`tools/run_tests.sh`) + 10 RPC
-suites (`tools/run_rpc_tests.sh`), all green (run RPC suites HEADLESS=1
-when unattended — windowed runs on a live desktop flake from real mouse
-interference). Manual QA sections in `docs/MANUAL_QA.md`: §M2–§M12 hand
-signed off 2026-08-15/16.
+Updated: 2026-08-16. Milestones M0–M17 implemented and merged to `main` —
+every milestone in `docs/MILESTONES.md`, including the four deferred out of
+earlier QA passes (M14 sketch orbit, M15 project, M16 threaded solver, M17
+per-DOF drag). Automated coverage: 33 headless tests (`tools/run_tests.sh`)
++ 12 RPC suites (`tools/run_rpc_tests.sh`), all green (run RPC suites
+HEADLESS=1 when unattended — windowed runs on a live desktop flake from
+real mouse interference). Manual QA sections in `docs/MANUAL_QA.md`:
+§M2–§M12 hand signed off 2026-08-15/16; §M13 folded into §M2; §M14–§M17
+written, PENDING hand sign-off.
 
 | Milestone | State | Notes |
 |---|---|---|
