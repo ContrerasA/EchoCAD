@@ -605,6 +605,8 @@ func _build_ui() -> void:
 	_btn_redo.name = "RedoBtn"
 	_btn_save = _button(top, "Save", func() -> void: save_interactive(false))
 	_btn_save.name = "SaveBtn"
+	var dxfb := _button(top, "Export DXF", _export_dxf_interactive)
+	dxfb.name = "ExportDxfBtn"
 	_btn_open = _button(top, "Open", open_interactive)
 	_btn_open.name = "OpenBtn"
 	# Orbit pivot: Fusion's body-center is the default, Blender-style
@@ -1200,6 +1202,60 @@ func open_from(path: String) -> bool:
 	stack.mark_saved()
 	set_status_hint("Opened " + path)
 	return true
+
+
+## --- DXF export (M21) ----------------------------------------------------------
+
+var _dxf_dialog: FileDialog
+
+
+## The sketch a DXF export would write: the active one in sketch mode, or
+## the document's ONLY sketch in model mode. Null = ambiguous/none.
+func _dxf_target_sketch() -> Sketch:
+	var sk := active_sketch()
+	if sk != null:
+		return sk
+	var only: Sketch = null
+	for f in doc.features:
+		if f is SketchFeature:
+			if only != null:
+				return null
+			only = (f as SketchFeature).sketch
+	return only
+
+
+func _export_dxf_interactive() -> void:
+	if _dxf_target_sketch() == null:
+		set_status_hint("Export DXF: open the sketch you want to export "
+			+ "(the document has more than one).")
+		return
+	if _dxf_dialog == null:
+		_dxf_dialog = FileDialog.new()
+		_dxf_dialog.name = "DxfFileDialog"
+		_dxf_dialog.access = FileDialog.ACCESS_FILESYSTEM
+		_dxf_dialog.filters = ["*.dxf ; DXF drawings"]
+		_dxf_dialog.file_mode = FileDialog.FILE_MODE_SAVE_FILE
+		_dxf_dialog.size = Vector2i(640, 420)
+		_dxf_dialog.title = "Export DXF"
+		_dxf_dialog.file_selected.connect(
+			func(path: String) -> void: export_dxf(path))
+		add_child(_dxf_dialog)
+	_dxf_dialog.popup_centered()
+
+
+## Write the target sketch to `path` (.dxf appended if missing). True on
+## success; the status bar reports either way.
+func export_dxf(path: String) -> bool:
+	var sk := _dxf_target_sketch()
+	if sk == null:
+		set_status_hint("DXF export: no unambiguous sketch to export")
+		return false
+	if not path.to_lower().ends_with(".dxf"):
+		path += ".dxf"
+	var why := DxfExporter.save(sk, path)
+	set_status_hint(("Exported " + path) if why == ""
+		else ("DXF export failed: " + why))
+	return why == ""
 
 
 ## Ctrl+S / Save button. Saves in place when the document has a path;

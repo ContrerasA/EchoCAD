@@ -632,6 +632,34 @@ func _cmd_action_open(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
 	return {"features": doc.features.size()}
 
 
+## Export one sketch as DXF R12: {path, sketch? (default: the app's
+## unambiguous target — active sketch, or the document's only one)}.
+func _cmd_action_export_dxf(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
+	var path := String(a.get("path", ""))
+	if path == "":
+		_reply_err(p, id, "bad_args", "missing path")
+		return null
+	var sk: Sketch = null
+	if a.has("sketch"):
+		var sf := app.doc.sketch_feature(String(a["sketch"]))
+		if sf == null:
+			_reply_err(p, id, "bad_args", "no such sketch")
+			return null
+		sk = sf.sketch
+	else:
+		sk = app._dxf_target_sketch()
+		if sk == null:
+			_reply_err(p, id, "bad_state", "no unambiguous sketch to export")
+			return null
+	if not path.to_lower().ends_with(".dxf"):
+		path += ".dxf"
+	var why := DxfExporter.save(sk, path)
+	if why != "":
+		_reply_err(p, id, "io", why)
+		return null
+	return {"path": path}
+
+
 func _cmd_action_new_document(_a: Dictionary, _p: StreamPeerTCP, _id: Variant) -> Dictionary:
 	app.load_document(CadDocument.new())
 	return {}
