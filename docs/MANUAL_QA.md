@@ -1120,78 +1120,82 @@ Fix log:
 
 Status: PENDING sign-off
 
-- [ ] 1. Enter a sketch (any plane), draw a rectangle, pan/zoom somewhere
+- [X] 1. Enter a sketch (any plane), draw a rectangle, pan/zoom somewhere
    deliberate. Shift+MMB drag. **Expect:** the view orbits away from the
    plane; the sketch renders as lines in 3D on its plane; the toolbar and
    constraint bar disappear; the status bar says how to get back.
-- [ ] 2. While off-axis: tool shortcuts (L, D...) and Delete do nothing;
+- [X] 2. While off-axis: tool shortcuts (L, D...) and Delete do nothing;
    LMB clicks create nothing; plain MMB pans, wheel zooms, Shift+MMB keeps
    orbiting.
-- [ ] 3. Ctrl+Z / Ctrl+Shift+Z while off-axis: the 3D sketch lines update in
+- [X] 3. Ctrl+Z / Ctrl+Shift+Z while off-axis: the 3D sketch lines update in
    place; the app stays off-axis in the sketch.
-- [ ] 4. Click the sketch plane's face on the view cube. **Expect:** the
+- [X] 4. Click the sketch plane's face on the view cube. **Expect:** the
    camera flies back square onto the plane (reads as a fly-back, not a
    snap) and the 2D canvas returns at the exact pan/zoom you left.
-- [ ] 5. Orbit away again, click a DIFFERENT cube face: the view reorients
+- [X] 5. Orbit away again, click a DIFFERENT cube face: the view reorients
    but stays off-axis. Esc flies home like the plane face does.
-- [ ] 6. Grid/axes stay legible at grazing angles while off-axis.
-- [ ] 7. Finish Sketch while off-axis returns to model mode cleanly.
+- [X] 6. Grid/axes stay legible at grazing angles while off-axis.
+- [X] 7. Finish Sketch while off-axis returns to model mode cleanly.
+
+    This worls as indented, but one difference i want to add is that we should be able to use the tools when off axis, but if we draw lines / geometry, add features / dimensions, etc, they should work against the original axis the sketch is on. same workflow as in fusion
 
 ## §M15 — Project / reference geometry
 
 Status: PENDING sign-off
 
-- [ ] 1. Sketch a rectangle on XY, Finish. New sketch on XY — the rectangle
+- [X] 1. Sketch a rectangle on XY, Finish. New sketch on XY — the rectangle
    shows dimmed. Click Project, hover the dimmed edges. **Expect:** amber
    pre-highlight on the edge a click would take.
-- [ ] 2. Click an edge. **Expect:** a magenta copy appears in the active
+- [X] 2. Click an edge. **Expect:** a magenta copy appears in the active
    sketch (2 points + line); one Ctrl+Z removes all of it. Clicking the
    same edge again is refused with a status message.
-- [ ] 3. Project the adjoining edge: the shared corner is ONE point, not two.
-- [ ] 4. Projected geometry snaps: start a line on a projected corner — it
+- [X] 3. Project the adjoining edge: the shared corner is ONE point, not two.
+- [X] 4. Projected geometry snaps: start a line on a projected corner — it
    welds; dimension from a projected point works.
-- [ ] 5. Projected points read as constrained (no DOF added); dragging a
+- [X] 5. Projected points read as constrained (no DOF added); dragging a
    projected point refuses to move it.
-- [ ] 6. Finish. Edit the source sketch, drag a corner, Finish. **Expect:**
+- [X] 6. Finish. Edit the source sketch, drag a corner, Finish. **Expect:**
    the projection in the other sketch follows the source.
-- [ ] 7. Edit the source and delete the projected edge, Finish. **Expect:**
+- [X] 7. Edit the source and delete the projected edge, Finish. **Expect:**
    status message says the link broke; the projected copy stays as
    ordinary (blue) geometry; no crash.
-- [ ] 8. Project all 4 edges into a sketch, Finish, Extrude inside the
+- [X] 8. Project all 4 edges into a sketch, Finish, Extrude inside the
    projected rectangle: the profile is found and extrudes.
-- [ ] 9. Save, reopen: projections still linked (edit source → copy follows).
+- [X] 9. Save, reopen: projections still linked (edit source → copy follows).
 
 ## §M16 — Threaded solver
 
 Status: PENDING sign-off
 
-- [ ] 1. Build a heavily constrained sketch (100+ entities: rects, slots,
+- [!] 1. Build a heavily constrained sketch (100+ entities: rects, slots,
    fillets, dimensions). Drag an under-constrained point around fast.
    **Expect:** the drag stays interactive — no stutter, no rubber-banding
    lag; CPU load spread across cores rather than one pegged.
-- [ ] 2. Release the drag mid-motion. **Expect:** geometry lands exactly
+    One core still pegged, and temp rose 20c when moving one line
+- [X] 2. Release the drag mid-motion. **Expect:** geometry lands exactly
    where the cursor let go (final solve is exact), constraints hold.
-- [ ] 3. One Ctrl+Z reverts the entire drag including all re-solves.
-- [ ] 4. Drag a tangent-arc construction and a slot: tangency and
+- [X] 3. One Ctrl+Z reverts the entire drag including all re-solves.
+- [X] 4. Drag a tangent-arc construction and a slot: tangency and
    slot-shape survive fast dragging, same as before the threading.
 
 ## §M17 — Per-DOF drag (rails)
 
 Status: PENDING sign-off
 
-- [ ] 1. Two lines, Parallel between them. Drag an endpoint of one around.
+- [X] 1. Two lines, Parallel between them. Drag an endpoint of one around.
    **Expect:** it slides along the line's direction; the OTHER line never
    rotates or moves. The status bar says it is sliding along the
    remaining freedom.
-- [ ] 2. Horizontal line: drag an endpoint diagonally — it slides in x only;
+- [X] 2. Horizontal line: drag an endpoint diagonally — it slides in x only;
    drag it straight up — it sticks (the line never translates from an
    endpoint drag). Dragging the LINE (not an endpoint) still moves it
    freely.
-- [ ] 3. Rectangle (auto H/V): drag a corner — it follows the cursor, the
+- [X] 3. Rectangle (auto H/V): drag a corner — it follows the cursor, the
    two adjacent corners slide along their edges, the opposite corner
    stays put. One Ctrl+Z reverts the whole drag.
-- [ ] 4. Point with a Fix constraint (or the origin): dragging refuses with
+- [X] 4. Point with a Fix constraint (or the origin): dragging refuses with
    a reason in the status bar.
-- [ ] 5. Point-On a circle: dragging the point slides it AROUND the circle.
-- [ ] 6. Drags feel like rails, not lurches: no geometry the cursor never
+- [!] 5. Point-On a circle: dragging the point slides it AROUND the circle.
+    When drgging point off circle most of the time the badge shows invalid constrain, sometimes its green valid. even with snap disabled
+- [X] 6. Drags feel like rails, not lurches: no geometry the cursor never
    touched jumps during any of the above.
