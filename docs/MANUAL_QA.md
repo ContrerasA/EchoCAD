@@ -1329,3 +1329,18 @@ Status: PENDING sign-off
    parameter deletes fine.
 - [ ] 8. Type a bad expression (`width +`) in the dialog. **Expect:** the
    error shows inline; nothing is applied.
+
+## §M21 — DXF export
+
+Status: PENDING sign-off
+
+- [ ] 1. Sketch with a line, circle, arc, slot, and a construction line.
+   "Export DXF", save somewhere. **Expect:** file dialog defaults to .dxf;
+   status bar confirms the path.
+- [ ] 2. Open the exported file in any DXF viewer (eMachineShop viewer,
+   LibreCAD, an online viewer, or Fusion insert-DXF). **Expect:** geometry
+   matches the sketch exactly — arc directions included; construction
+   geometry sits on its own CONSTRUCTION layer.
+- [ ] 3. Check units in the viewer: a 1 in line measures 25.4 (mm).
+- [ ] 4. In model mode with several sketches, "Export DXF". **Expect:** a
+   status-bar explanation asking to open the sketch to export (no dialog).

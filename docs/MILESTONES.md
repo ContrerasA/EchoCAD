@@ -354,6 +354,21 @@ Phase-2 backlog: the two daily-driver gaps left in the UI.
   — the same through real pointer input and the RPC actions.
 - **Manual**: §M20 — band feel and colors, dialog UX.
 
+## M21 — DXF export  (branch: `m21-dxf-export`)
+
+Phase-2 backlog. Minimal DXF R12 (ASCII) writer for a sketch: lines, arcs,
+circles, and lone points in sketch-plane millimetres ($INSUNITS = 4).
+Regular geometry on layer "0", construction geometry on "CONSTRUCTION" so
+CAM tools can filter it; cw arcs swap ends for DXF's ccw convention; the
+sketch origin and entity-owned points do not export. "Export DXF" button
+(file dialog) exports the active sketch — or the document's only sketch
+from model mode; `action.export_dxf {path, sketch?}` for automation.
+
+- **Automated**: `tests/m21_dxf_export.gd` — parses the emitted DXF back:
+  units header, layer split, coordinates, radii, arc angle spans (cw swap),
+  lone-point rule, file API extension handling.
+- **Manual**: §M21 — open an exported file in a second CAD/viewer.
+
 ---
 
 ## Milestone order rationale
