@@ -26,6 +26,7 @@ signed off 2026-08-15/16.
 | M14 sketch orbit | merged | off-axis orbit inside a sketch, cube-face return |
 | M15 project | merged | linked projections, source-follow, broken-link handling |
 | M16 threaded solver | merged | drag re-solves on a worker thread, newest-only |
+| M17 per-DOF drag | merged | drags project onto remaining freedom (rails) |
 
 ## Known limitations / phase-2 backlog
 

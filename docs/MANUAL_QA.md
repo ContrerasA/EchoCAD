@@ -1174,3 +1174,24 @@ Status: PENDING sign-off
 - [ ] 3. One Ctrl+Z reverts the entire drag including all re-solves.
 - [ ] 4. Drag a tangent-arc construction and a slot: tangency and
    slot-shape survive fast dragging, same as before the threading.
+
+## §M17 — Per-DOF drag (rails)
+
+Status: PENDING sign-off
+
+- [ ] 1. Two lines, Parallel between them. Drag an endpoint of one around.
+   **Expect:** it slides along the line's direction; the OTHER line never
+   rotates or moves. The status bar says it is sliding along the
+   remaining freedom.
+- [ ] 2. Horizontal line: drag an endpoint diagonally — it slides in x only;
+   drag it straight up — it sticks (the line never translates from an
+   endpoint drag). Dragging the LINE (not an endpoint) still moves it
+   freely.
+- [ ] 3. Rectangle (auto H/V): drag a corner — it follows the cursor, the
+   two adjacent corners slide along their edges, the opposite corner
+   stays put. One Ctrl+Z reverts the whole drag.
+- [ ] 4. Point with a Fix constraint (or the origin): dragging refuses with
+   a reason in the status bar.
+- [ ] 5. Point-On a circle: dragging the point slides it AROUND the circle.
+- [ ] 6. Drags feel like rails, not lurches: no geometry the cursor never
+   touched jumps during any of the above.
