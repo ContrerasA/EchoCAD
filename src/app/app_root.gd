@@ -89,6 +89,7 @@ var _btn_extrude: Button
 var _btn_finish: Button
 var _extrude_dialog: Window
 var _extrude_dist: LineEdit
+var _extrude_op: OptionButton
 var _btn_undo: Button
 var _btn_redo: Button
 var _btn_save: Button
@@ -898,17 +899,22 @@ func _on_extrude_pressed() -> void:
 
 
 ## Create an extrude feature from a profile hit (undoable). Returns the
-## feature id or "" when no profile encloses `at`.
-func extrude(sketch_id: String, at: Vector2, dist: float) -> String:
+## feature id or "" when no profile encloses `at`. `operation` is the
+## boolean role (M18): new_body / join / cut.
+func extrude(sketch_id: String, at: Vector2, dist: float,
+		operation := ExtrudeFeature.OP_NEW_BODY) -> String:
 	var sf := doc.sketch_feature(sketch_id)
 	if sf == null:
 		return ""
 	if ProfileFinder.profile_at(sf.sketch, at).is_empty():
 		return ""
-	var f := ExtrudeFeature.make(sketch_id, at, dist)
+	var f := ExtrudeFeature.make(sketch_id, at, dist, operation)
 	f.name = doc.auto_name("Extrude")
 	f.id = doc.next_feature_id()
 	stack.push_no_merge(CmdAddFeature.new(f))
+	if operation == ExtrudeFeature.OP_CUT:
+		set_status_hint("Cut extrude: carves its prism out of the bodies "
+			+ "it touches.")
 	return f.id
 
 
@@ -939,7 +945,7 @@ func _open_extrude_dialog() -> void:
 		_extrude_dialog = Window.new()
 		_extrude_dialog.name = "ExtrudeDialog"
 		_extrude_dialog.title = "Extrude"
-		_extrude_dialog.size = Vector2i(220, 90)
+		_extrude_dialog.size = Vector2i(220, 118)
 		_extrude_dialog.exclusive = false
 		_extrude_dialog.close_requested.connect(
 			func() -> void: _extrude_dialog.hide())
@@ -950,6 +956,13 @@ func _open_extrude_dialog() -> void:
 		_extrude_dist.name = "ExtrudeDistEdit"
 		_extrude_dist.placeholder_text = "Distance (e.g. 0.5in)"
 		box.add_child(_extrude_dist)
+		_extrude_op = OptionButton.new()
+		_extrude_op.name = "ExtrudeOpPick"
+		_extrude_op.add_item("New Body", 0)
+		_extrude_op.add_item("Join", 1)
+		_extrude_op.add_item("Cut", 2)
+		_extrude_op.focus_mode = Control.FOCUS_NONE
+		box.add_child(_extrude_op)
 		var okb := Button.new()
 		okb.name = "ExtrudeOkBtn"
 		okb.text = "OK"
@@ -970,8 +983,10 @@ func _commit_extrude() -> void:
 		return
 	_extrude_dialog.hide()
 	if not _pending_extrude.is_empty():
+		var ops := [ExtrudeFeature.OP_NEW_BODY, ExtrudeFeature.OP_JOIN,
+			ExtrudeFeature.OP_CUT]
 		extrude(_pending_extrude["sketch_id"], _pending_extrude["at"],
-			float(r["mm"]))
+			float(r["mm"]), ops[_extrude_op.selected])
 	_pending_extrude = {}
 
 

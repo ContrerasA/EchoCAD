@@ -99,6 +99,14 @@ var _body_hidden := {}
 ## shown. Governs the 3D line mesh AND the sketch-mode reference geometry, so
 ## one tick means the same thing in both modes.
 var _sketch_hidden := {}
+## Body rebuild state (M18). Bodies come from BodyBuilder, which is a
+## coroutine when CSG booleans are involved: a rebuild may land a frame or
+## two after the model change. `_bodies_building` serializes overlapping
+## requests; the latest requested document wins.
+var _bodies_building := false
+var _bodies_pending: CadDocument = null
+## The last built body list: [{id, name, mesh, feature_ids}].
+var _bodies: Array = []
 
 
 func _ready() -> void:
@@ -571,39 +579,16 @@ func pick_plane(origin: Vector3, dir: Vector3) -> String:
 ## Rebuild the 3D display for every live feature: sketch line meshes plus
 ## extruded solids. Arcs/circles are polyline-tessellated — display only.
 func rebuild_sketches(doc: CadDocument) -> void:
+	# Sketch line meshes rebuild synchronously here; BODY meshes rebuild
+	# through `_rebuild_bodies` (M18) because boolean bodies bake through the
+	# engine's CSG, which needs a frame. Body nodes are tagged and survive
+	# this clear so solids never blink out while a rebuild is in flight.
 	for c in _sketch_root.get_children():
-		c.queue_free()
+		if not (c as Node).has_meta("is_body"):
+			c.queue_free()
 	for f in doc.live_features():
 		if f is ExtrudeFeature:
-			var mesh := (f as ExtrudeFeature).build_mesh(doc)
-			if mesh != null:
-				var smi := MeshInstance3D.new()
-				smi.name = f.name
-				smi.mesh = mesh
-				# Feature id rides along so picks and the browser tree can map
-				# a mesh back to its feature — node names follow f.name, which
-				# the user can end up renaming.
-				smi.set_meta("feature_id", f.id)
-				var mat := StandardMaterial3D.new()
-				mat.albedo_color = COLOR_BODY_SELECTED if f.id == _selected_body \
-					else COLOR_BODY
-				mat.metallic = 0.1
-				mat.roughness = 0.7
-				# Double-sided: with a closed outward-wound shell the back
-				# faces are depth-hidden anyway, so this costs nothing — and
-				# it guarantees a solid can NEVER render see-through even if
-				# some profile slips through with reversed winding.
-				mat.cull_mode = BaseMaterial3D.CULL_DISABLED
-				# Per-surface, NOT material_override: surface 1 is the edge-line
-				# overlay and an override would shade the edges like the body.
-				smi.set_surface_override_material(0, mat)
-				if mesh.get_surface_count() > 1:
-					var emat := _line_material(COLOR_BODY_EDGE)
-					emat.albedo_color = COLOR_BODY_EDGE
-					smi.set_surface_override_material(1, emat)
-				smi.visible = _body_shown(f.id)
-				_sketch_root.add_child(smi)
-			continue
+			continue   # bodies are rebuilt below, boolean-aware
 		if not (f is SketchFeature):
 			continue
 		var sf := f as SketchFeature
@@ -627,6 +612,70 @@ func rebuild_sketches(doc: CadDocument) -> void:
 		mi.material_override = _line_material(COLOR_SKETCH)
 		mi.visible = sketch_shown(sf.id)
 		_sketch_root.add_child(mi)
+	_rebuild_bodies(doc)
+
+
+## Rebuild solid bodies via BodyBuilder. Runs to completion synchronously
+## when no CSG boolean is involved (all extrudes are plain new bodies), so
+## code that counts solids right after a stack change keeps working; with
+## booleans it suspends for the CSG bake frame and applies when it lands.
+## Overlapping requests coalesce: the newest document wins.
+func _rebuild_bodies(doc: CadDocument) -> void:
+	if _bodies_building:
+		_bodies_pending = doc
+		return
+	_bodies_building = true
+	while true:
+		var bodies: Array = await BodyBuilder.build(doc, self)
+		_apply_bodies(bodies)
+		if _bodies_pending == null:
+			break
+		doc = _bodies_pending
+		_bodies_pending = null
+	_bodies_building = false
+
+
+func _apply_bodies(bodies: Array) -> void:
+	_bodies = bodies
+	for c in _sketch_root.get_children():
+		if (c as Node).has_meta("is_body"):
+			c.free()   # immediate: the replacement is added THIS call
+	for b: Dictionary in bodies:
+		var mesh: ArrayMesh = b["mesh"]
+		var smi := MeshInstance3D.new()
+		smi.name = b["name"]
+		smi.mesh = mesh
+		# Feature id rides along so picks and the browser tree can map a
+		# mesh back to its feature — node names follow the display name,
+		# which the user can end up renaming.
+		smi.set_meta("feature_id", b["id"])
+		smi.set_meta("is_body", true)
+		var mat := StandardMaterial3D.new()
+		mat.albedo_color = COLOR_BODY_SELECTED if b["id"] == _selected_body \
+			else COLOR_BODY
+		mat.metallic = 0.1
+		mat.roughness = 0.7
+		# Double-sided: with a closed outward-wound shell the back faces are
+		# depth-hidden anyway, so this costs nothing — and it guarantees a
+		# solid can NEVER render see-through even if some profile slips
+		# through with reversed winding.
+		mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+		# Per-surface, NOT material_override: surface 1 (when present) is the
+		# edge-line overlay and an override would shade the edges like the body.
+		smi.set_surface_override_material(0, mat)
+		if mesh.get_surface_count() > 1 \
+				and mesh.surface_get_primitive_type(1) == Mesh.PRIMITIVE_LINES:
+			var emat := _line_material(COLOR_BODY_EDGE)
+			emat.albedo_color = COLOR_BODY_EDGE
+			smi.set_surface_override_material(1, emat)
+		smi.visible = _body_shown(b["id"])
+		_sketch_root.add_child(smi)
+
+
+## The last built body list: [{id, name, mesh, feature_ids}]. Display state —
+## derived from the document, possibly a frame behind it (see above).
+func bodies() -> Array:
+	return _bodies
 
 
 ## World-space bounds of everything the model shows — solids and sketch
