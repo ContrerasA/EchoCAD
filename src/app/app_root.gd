@@ -90,6 +90,12 @@ var _btn_finish: Button
 var _extrude_dialog: Window
 var _extrude_dist: LineEdit
 var _extrude_op: OptionButton
+var _params_dialog: Window
+var _params_tree: Tree
+var _param_name: LineEdit
+var _param_expr: LineEdit
+var _param_unit: OptionButton
+var _param_err: Label
 var _btn_undo: Button
 var _btn_redo: Button
 var _btn_save: Button
@@ -355,6 +361,58 @@ func _eval_dimension_text(text: String, unit_space: int) -> Dictionary:
 
 ## Replace the parameter list, re-value every expression-driven dimension in
 ## every sketch, and re-solve — ONE undo step (Fusion's parameter edit).
+## Create or update a named parameter (Parameters dialog, M20). Returns ""
+## on success or the reason it was refused. Mirrors action.set_parameter.
+func upsert_parameter(pname: String, expr: String, unit: int) -> String:
+	if not CadExpression.valid_name(pname):
+		return ("Invalid name '%s' — letters, digits and _ only, " % pname) \
+			+ "not starting with a digit"
+	var new_list: Array = []
+	var found := false
+	for prm in doc.parameters:
+		if prm.name == pname:
+			var np := prm.duplicate_parameter()
+			np.expr = expr
+			np.unit = unit
+			new_list.append(np)
+			found = true
+		else:
+			new_list.append(prm)
+	if not found:
+		new_list.append(CadParameter.make(pname, expr, unit))
+	var resolved := CadExpression.evaluate_params(new_list)
+	var errs: Dictionary = resolved["errors"]
+	if errs.has(pname):
+		return "%s: %s" % [pname, String(errs[pname])]
+	for prm: CadParameter in new_list:
+		prm.value = float((resolved["values"] as Dictionary).get(prm.name, 0.0))
+	set_parameters(new_list)
+	return ""
+
+
+## Delete a parameter — refused while anything still references it, because
+## silently zeroing every dependent is how documents rot. "" on success.
+func remove_parameter(pname: String) -> String:
+	for prm in doc.parameters:
+		if prm.name != pname \
+				and CadExpression.identifiers(prm.expr).has(pname):
+			return "'%s' is used by parameter '%s'" % [pname, prm.name]
+	for f in doc.features:
+		if not (f is SketchFeature):
+			continue
+		for c in (f as SketchFeature).sketch.constraints:
+			if c.expr != "" and CadExpression.identifiers(c.expr).has(pname):
+				return "'%s' is used by a dimension in %s" % [pname, f.name]
+	var new_list: Array = []
+	for prm in doc.parameters:
+		if prm.name != pname:
+			new_list.append(prm)
+	if new_list.size() == doc.parameters.size():
+		return "No parameter named '%s'" % pname
+	set_parameters(new_list)
+	return ""
+
+
 func set_parameters(new_params: Array) -> void:
 	var batch := CmdMergeBatch.new("Parameters", [])
 	stack.push_no_merge(batch)
@@ -537,6 +595,8 @@ func _build_ui() -> void:
 	_btn_create.name = "CreateSketchBtn"
 	_btn_extrude = _button(top, "Extrude", _on_extrude_pressed)
 	_btn_extrude.name = "ExtrudeBtn"
+	var pbtn := _button(top, "Parameters", _open_params_dialog)
+	pbtn.name = "ParametersBtn"
 	_btn_finish = _button(top, "Finish Sketch", _on_finish_sketch)
 	_btn_finish.name = "FinishSketchBtn"
 	_btn_undo = _button(top, "Undo", func() -> void: stack.undo())
@@ -992,6 +1052,124 @@ func _commit_extrude() -> void:
 
 func _on_finish_sketch() -> void:
 	finish_sketch()
+
+
+## --- Parameters dialog (M20) ---------------------------------------------------
+
+func _open_params_dialog() -> void:
+	if _params_dialog == null:
+		_params_dialog = Window.new()
+		_params_dialog.name = "ParametersDialog"
+		_params_dialog.title = "Parameters"
+		_params_dialog.size = Vector2i(420, 320)
+		_params_dialog.exclusive = false
+		_params_dialog.close_requested.connect(
+			func() -> void: _params_dialog.hide())
+		var box := VBoxContainer.new()
+		box.set_anchors_preset(Control.PRESET_FULL_RECT)
+		_params_dialog.add_child(box)
+		_params_tree = Tree.new()
+		_params_tree.name = "ParamsTree"
+		_params_tree.columns = 3
+		_params_tree.set_column_title(0, "Name")
+		_params_tree.set_column_title(1, "Expression")
+		_params_tree.set_column_title(2, "Value")
+		_params_tree.column_titles_visible = true
+		_params_tree.hide_root = true
+		_params_tree.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		_params_tree.item_selected.connect(_on_param_row_selected)
+		box.add_child(_params_tree)
+		var row := HBoxContainer.new()
+		box.add_child(row)
+		_param_name = LineEdit.new()
+		_param_name.name = "ParamNameEdit"
+		_param_name.placeholder_text = "name"
+		_param_name.custom_minimum_size.x = 90
+		row.add_child(_param_name)
+		_param_expr = LineEdit.new()
+		_param_expr.name = "ParamExprEdit"
+		_param_expr.placeholder_text = "expression (e.g. width/2 + 0.25)"
+		_param_expr.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(_param_expr)
+		_param_unit = OptionButton.new()
+		_param_unit.name = "ParamUnitPick"
+		_param_unit.focus_mode = Control.FOCUS_NONE
+		_param_unit.add_item("in", 0)
+		_param_unit.add_item("mm", 1)
+		_param_unit.add_item("scalar", 2)
+		row.add_child(_param_unit)
+		var setb := Button.new()
+		setb.name = "ParamSetBtn"
+		setb.text = "Set"
+		setb.focus_mode = Control.FOCUS_NONE
+		setb.pressed.connect(_commit_param)
+		row.add_child(setb)
+		var delb := Button.new()
+		delb.name = "ParamDeleteBtn"
+		delb.text = "Delete"
+		delb.focus_mode = Control.FOCUS_NONE
+		delb.pressed.connect(_delete_param)
+		row.add_child(delb)
+		_param_expr.text_submitted.connect(
+			func(_t: String) -> void: _commit_param())
+		_param_err = Label.new()
+		_param_err.name = "ParamErrLabel"
+		_param_err.add_theme_color_override("font_color", Color(0.9, 0.5, 0.4))
+		box.add_child(_param_err)
+		add_child(_params_dialog)
+		# Parameter edits land on the undo stack; keep the table current.
+		stack.changed.connect(func() -> void:
+			if _params_dialog.visible:
+				_refresh_params_tree())
+	_param_err.text = ""
+	_refresh_params_tree()
+	_params_dialog.popup_centered()
+
+
+func _refresh_params_tree() -> void:
+	_params_tree.clear()
+	var root := _params_tree.create_item()
+	for prm in doc.parameters:
+		var item := _params_tree.create_item(root)
+		item.set_text(0, prm.name)
+		item.set_text(1, prm.expr)
+		if prm.unit == CadParameter.UNIT_SCALAR:
+			item.set_text(2, String.num(prm.value, 4))
+		else:
+			item.set_text(2, "%s %s" % [
+				String.num(UnitConverter.from_mm(prm.value, prm.unit), 4),
+				UnitConverter.suffix(prm.unit)])
+
+
+func _on_param_row_selected() -> void:
+	var item := _params_tree.get_selected()
+	if item == null:
+		return
+	_param_name.text = item.get_text(0)
+	_param_expr.text = item.get_text(1)
+	for prm in doc.parameters:
+		if prm.name == item.get_text(0):
+			_param_unit.selected = 2 if prm.unit == CadParameter.UNIT_SCALAR \
+				else (1 if prm.unit == UnitConverter.Unit.MM else 0)
+
+
+func _commit_param() -> void:
+	var units: Array = [UnitConverter.Unit.IN, UnitConverter.Unit.MM,
+		CadParameter.UNIT_SCALAR]
+	var why := upsert_parameter(_param_name.text.strip_edges(),
+		_param_expr.text.strip_edges(), units[_param_unit.selected])
+	_param_err.text = why
+	if why == "":
+		_refresh_params_tree()
+
+
+func _delete_param() -> void:
+	var why := remove_parameter(_param_name.text.strip_edges())
+	_param_err.text = why
+	if why == "":
+		_param_name.text = ""
+		_param_expr.text = ""
+		_refresh_params_tree()
 
 
 ## --- save / open ---------------------------------------------------------------

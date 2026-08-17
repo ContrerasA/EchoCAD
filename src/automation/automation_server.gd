@@ -317,6 +317,15 @@ func _cmd_action_set_parameter(a: Dictionary, p: StreamPeerTCP, id: Variant) -> 
 	return {"values": resolved["values"], "errors": resolved["errors"]}
 
 
+## Delete a parameter (refused while referenced — same rule as the dialog).
+func _cmd_action_delete_parameter(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
+	var why := app.remove_parameter(String(a.get("name", "")))
+	if why != "":
+		_reply_err(p, id, "invalid", why)
+		return null
+	return {"count": app.doc.parameters.size()}
+
+
 func _cmd_action_set_dimension(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
 	var index := int(a.get("index", -1))
 	var batch := CmdMergeBatch.new("Edit Dimension", [])

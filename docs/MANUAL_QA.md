@@ -1305,3 +1305,27 @@ Status: PENDING sign-off
    snaps to the center point.
 - [ ] 8. Each of the above is ONE undo step (offset+constraints, trim+
    retargets, center rect+scaffolding).
+
+## §M20 — Marquee selection + Parameters dialog
+
+Status: PENDING sign-off
+
+- [ ] 1. Sketch with several entities. Drag LEFT-TO-RIGHT on empty space
+   around some of them. **Expect:** a blue band with a solid edge; on
+   release only entities ENTIRELY inside are selected (one poking out is
+   not).
+- [ ] 2. Drag RIGHT-TO-LEFT across the same geometry. **Expect:** a green
+   dashed band; everything the band merely TOUCHES selects.
+- [ ] 3. Ctrl+band adds to an existing selection; plain click on empty
+   space still deselects everything; Esc mid-band cancels it.
+- [ ] 4. Band over a dimension label / constraint badge area. **Expect:**
+   bands select geometry only — labels and badges are not kidnapped.
+- [ ] 5. Toolbar "Parameters": dialog lists name / expression / value.
+   Add `width = 2` (in). **Expect:** it appears with value 2 in.
+- [ ] 6. Dimension a line, double-click it, type `width`. **Expect:** the
+   line drives to 2 in. Change width to 3 in the dialog — the line follows.
+- [ ] 7. Try to delete `width` while the dimension uses it. **Expect:**
+   refused with a message naming the user. Delete the dimension, then the
+   parameter deletes fine.
+- [ ] 8. Type a bad expression (`width +`) in the dialog. **Expect:** the
+   error shows inline; nothing is applied.
