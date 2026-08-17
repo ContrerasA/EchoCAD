@@ -1218,8 +1218,10 @@ Status: PENDING sign-off
    stays put. One Ctrl+Z reverts the whole drag.
 - [X] 4. Point with a Fix constraint (or the origin): dragging refuses with
    a reason in the status bar.
-- [X] 5. Point-On a circle: dragging the point slides it AROUND the circle.
-    When drgging point off circle most of the time the badge shows invalid constrain, sometimes its green valid. even with snap disabled
+- [ ] 5. Point-On a circle: dragging the point slides it AROUND the circle.
+    ~~When drgging point off circle most of the time the badge shows invalid
+    constrain, sometimes its green valid. even with snap disabled~~
+    (fix 5b below — retest: badge should stay green for the whole gesture)
 - [X] 6. Drags feel like rails, not lurches: no geometry the cursor never
    touched jumps during any of the above.
 
@@ -1233,3 +1235,19 @@ Fix log:
   be absorbed by quietly growing the circle) at a tightened convergence
   threshold. Residual after a quarter-turn drag is < 0.0005 mm — covered by
   `tests/m17_dof_drag.gd`. Retest: badge stays green for the whole slide.
+- **5b** (2026-08-17 retest note: "badge shows invalid constrain" while
+  pulling the point off the circle) Two causes, both fixed:
+  (a) Badge colors were re-read from live residuals every repaint. Mid-drag,
+  the per-frame sub-solves legitimately leave transient sub-tolerance
+  residuals on a heavy sketch, so the badge flashed grey. The satisfied
+  state is now FROZEN during a live gesture and re-read at rest — the same
+  treatment `live_gesture` already gave the DOF analysis, and what Fusion
+  does (glyphs never flash mid-drag).
+  (b) APPLYING Point-On split the error between the point and the circle's
+  radius — a r=20 mm circle grew to r=34 mm on apply, so the fixture itself
+  was wrong before the drag even started. The apply-time solve now pins all
+  radii first and moves the under-constrained point onto the circle,
+  falling back to the free solve only when a radius genuinely must change
+  (a driving Radius dimension). `tests/m17_apply_prefer_points.gd`.
+  Retest 5: apply Point-On — the circle must NOT grow; drag the point
+  around and off — the badge stays green throughout.

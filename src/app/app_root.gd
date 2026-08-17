@@ -41,6 +41,9 @@ var selected_constraint := -1
 var live_gesture := false
 ## Latest DOF analysis of the active sketch ({} when stale/unavailable).
 var dof := {}
+## Constraint indices whose badge read "unsolved" at the last at-rest repaint
+## (see the repaint site — frozen during live gestures, like `dof`).
+var _badge_unsolved := {}
 ## Constraint badge hit rects from the last overlay draw: [{index, rect}].
 var badge_hits: Array = []
 ## Dimension label hit rects from the last overlay draw: [{index, rect}].
@@ -269,7 +272,7 @@ func add_constraint(c: SketchConstraint) -> void:
 			stack.push(CmdSetConstraints.new(active_sketch_id,
 				sk.constraints, driven_after))
 			demoted = SketchConstraint.Type.keys()[c.type]
-	solve_followers()
+	solve_followers_prefer_points()
 	batch.seal()
 	if demoted != "":
 		_status_hint.text = ("%s is redundant here — kept as a DRIVEN "
@@ -421,6 +424,44 @@ func solve_followers(pinned = []) -> void:
 		stack.push(CmdMovePoints.new(active_sketch_id, pts))
 	if not radii.is_empty():
 		stack.push(CmdSetRadii.new(active_sketch_id, radii))
+
+
+## The APPLY-time variant of `solve_followers`: constraining geometry should
+## move POINTS onto the constraint, not resize circles — the free solve split
+## a Point-On's residual between the point and the circle's radius, so
+## applying Point-On visibly inflated the circle (surfaced by the QA §M17-5
+## fixture: r=20 grew to r=34). Try the solve with every radius pinned first;
+## only when that cannot satisfy the constraints (a tangency that genuinely
+## needs the radius to give) fall back to the free solve.
+func solve_followers_prefer_points(pinned = []) -> void:
+	var sk := active_sketch()
+	if sk == null or sk.constraints.is_empty():
+		return
+	var all_radii: Array = []
+	for e in sk.entities():
+		if e.kind() == "circle":
+			all_radii.append(e.id)
+	if all_radii.is_empty():
+		solve_followers(pinned)
+		return
+	var res := ConstraintSolver.solve(sk, pinned, all_radii)
+	var ok := not bool(res.get("diverged", false))
+	if ok:
+		# Judge the radius-pinned result on a clone carrying its moves.
+		var clone := Sketch.from_dict(sk.to_dict())
+		for pid: String in res["points"]:
+			clone.point(pid).pos = res["points"][pid]
+		for c in clone.constraints:
+			if c.driven:
+				continue
+			if ConstraintSolver.error_of(clone, c) > 0.01:
+				ok = false
+				break
+	if not ok:
+		solve_followers(pinned)
+		return
+	if not (res["points"] as Dictionary).is_empty():
+		stack.push(CmdMovePoints.new(active_sketch_id, res["points"]))
 
 
 ## The drag-time variant of `solve_followers`: hand the solve to the worker
@@ -1390,7 +1431,14 @@ func _on_overlay_draw() -> void:
 		if e == null:
 			continue
 		_draw_entity_outline(sk, e, COLOR_SELECTED, 2.0)
-	badge_hits = ConstraintOverlay.draw(overlay, v, sk, dof, selected_constraint)
+	# Badge satisfied/unsolved state is re-read only at REST: mid-gesture the
+	# sub-solves leave transient residuals that made badges flash "unsolved"
+	# during a healthy drag (QA §M17-5). Frozen alongside `dof`, which already
+	# pauses for the same reason.
+	if not live_gesture:
+		_badge_unsolved = ConstraintOverlay.unsolved_set(sk)
+	badge_hits = ConstraintOverlay.draw(overlay, v, sk, dof, selected_constraint,
+		_badge_unsolved)
 	dim_hits = DimensionOverlay.draw(overlay, v, sk, dof, selected_constraint,
 		doc.display_unit)
 	tools.draw_overlay(overlay)

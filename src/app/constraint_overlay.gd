@@ -80,11 +80,29 @@ static func anchor_of(sk: Sketch, c: SketchConstraint) -> Vector2:
 	return sum / maxf(1.0, float(n))
 
 
+## Which constraints are currently violated past SATISFIED_TOL (index -> true).
+## Computed separately from `draw` so the caller can evaluate it only at REST:
+## mid-gesture the sub-solves leave transient sub-tolerance residuals on a
+## heavy sketch, and reading them live made badges flash "unsolved" during a
+## perfectly healthy drag (QA §M17-5 note). Dimensional constraints are skipped
+## exactly as `draw` skips them.
+static func unsolved_set(sk: Sketch) -> Dictionary:
+	var out := {}
+	for i in sk.constraints.size():
+		var c := sk.constraints[i]
+		if c.is_dimensional():
+			continue
+		if ConstraintSolver.error_of(sk, c) > SATISFIED_TOL:
+			out[i] = true
+	return out
+
+
 ## Draw all badges. Returns hit list: [{index, rect (screen)}] for click
 ## handling. `analysis` — DofAnalyzer.analyze result (or empty), `selected`
-## — selected constraint index or -1.
+## — selected constraint index or -1, `unsolved` — the `unsolved_set` the
+## caller last computed at rest (frozen during live gestures, like `analysis`).
 static func draw(overlay: Control, view: SketchView, sk: Sketch,
-		analysis: Dictionary, selected: int) -> Array:
+		analysis: Dictionary, selected: int, unsolved: Dictionary = {}) -> Array:
 	var hits: Array = []
 	var font := ThemeDB.fallback_font
 	var used_slots := {}      # screen cell -> count, to fan out stacked badges
@@ -97,7 +115,7 @@ static func draw(overlay: Control, view: SketchView, sk: Sketch,
 			color = COLOR_CONFLICT
 		elif (analysis.get("redundant", []) as Array).has(i):
 			color = COLOR_REDUNDANT
-		elif ConstraintSolver.error_of(sk, c) > SATISFIED_TOL:
+		elif unsolved.has(i):
 			color = COLOR_UNSOLVED
 		var label: String = GLYPH.get(c.type, "?")
 		var sz := font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 11)
