@@ -118,6 +118,10 @@ func _run() -> bool:
 		return _fail("drawing off-axis must stay off-axis")
 
 	# --- the orbit actually moves the camera off the plane -------------------
+	# The overlay chrome (vertex markers) projects through the camera, so it
+	# must repaint on every orbit step — not only when the orbit ends.
+	var redraws := [0]
+	_root.overlay.draw.connect(func() -> void: redraws[0] += 1)
 	var rot_before := rig.rotation
 	for i in 10:
 		var mm := InputEventMouseMotion.new()
@@ -125,8 +129,12 @@ func _run() -> bool:
 		mm.relative = Vector2(15, 6)
 		mm.button_mask = MOUSE_BUTTON_MASK_MIDDLE
 		_root._on_viewport_input(mm)
+		await process_frame
 	if rig.rotation.is_equal_approx(rot_before):
 		return _fail("orbit did not rotate the camera")
+	if redraws[0] < 5:
+		return _fail("overlay repainted only %d times over 10 orbit steps — "
+			% redraws[0] + "vertices trail the lines mid-orbit")
 	var rel := InputEventMouseButton.new()
 	rel.button_index = MOUSE_BUTTON_MIDDLE
 	rel.pressed = false
