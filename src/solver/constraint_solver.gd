@@ -64,6 +64,17 @@ static func solve(sk: Sketch, pinned = []) -> Dictionary:
 	# else is measured from, so it is pinned exactly as a FIX operand is.
 	if sk.origin_id() != "":
 		pin[sk.origin_id()] = true
+	# Projected geometry follows its SOURCE, not this sketch's constraints:
+	# its points are pinned and a projected circle's radius snaps back each
+	# round, so constraints can hang off a projection without moving it.
+	var pin_r := {}
+	for e in sk.entities():
+		if not e.is_projected():
+			continue
+		if e.kind() == "point":
+			pin[e.id] = true
+		elif e.kind() == "circle":
+			pin_r[e.id] = (e as SketchCircle).radius
 	# FIX constraints pin every point of their operand.
 	for c in sk.constraints:
 		if c.type == SketchConstraint.Type.FIX:
@@ -224,6 +235,8 @@ static func solve(sk: Sketch, pinned = []) -> Dictionary:
 		# is free back to the ceiling, preferring the center (moving the rim
 		# would fight the coincidence that is holding it).
 		_clamp_arc_radii(arcs, arc_ceiling, pos, pin)
+		for id: String in pin_r:
+			rad[id] = pin_r[id]
 		if worst < CONVERGED:
 			break
 

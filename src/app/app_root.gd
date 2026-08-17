@@ -119,6 +119,7 @@ func _ready() -> void:
 	tools.register(OffsetTool.new())
 	tools.register(MirrorTool.new())
 	tools.register(FilletTool.new())
+	tools.register(ProjectTool.new())
 	tools.register(SmartDimensionTool.new())
 	tools.overlay_needs_redraw.connect(func() -> void: overlay.queue_redraw())
 	tools.active_changed.connect(func(_id: String) -> void: _refresh_ui())
@@ -395,6 +396,7 @@ func load_document(new_doc: CadDocument) -> void:
 	doc = new_doc
 	stack.doc = new_doc
 	stack.clear()
+	Projector.refresh(doc)
 	active_sketch_id = ""
 	picking_plane = false
 	mode = Mode.MODEL
@@ -748,6 +750,16 @@ func active_sketch() -> Sketch:
 ## reference geometry always matches what the 3D view shows.
 func reference_sketches() -> Array:
 	var out: Array = []
+	for sf in reference_features():
+		out.append((sf as SketchFeature).sketch)
+	return out
+
+
+## The FEATURES behind `reference_sketches` — the Project tool needs the
+## feature identity (plane, id) as well as the sketch, since a projection
+## links to its source by feature id.
+func reference_features() -> Array:
+	var out: Array = []
 	var feat := doc.sketch_feature(active_sketch_id)
 	if feat == null:
 		return out
@@ -759,7 +771,7 @@ func reference_sketches() -> Array:
 		# one meaning, whichever mode you are in.
 		if not world.sketch_shown(sf.id):
 			continue
-		out.append(sf.sketch)
+		out.append(sf)
 	return out
 
 
@@ -1362,6 +1374,12 @@ func _draw_entity_outline(sk: Sketch, e: SketchEntity, c: Color, w: float) -> vo
 
 
 func _on_stack_changed() -> void:
+	# Projections are derived state: recompute them from their sources on
+	# EVERY model change (edits, undo, redo, parameter changes), so linked
+	# geometry follows its source and dead links break with a message.
+	var proj_msgs := Projector.refresh(doc)
+	if not proj_msgs.is_empty():
+		set_status_hint(proj_msgs[0])
 	if mode == Mode.SKETCH:
 		var sk := active_sketch()
 		# The active sketch may have been undone out of existence.

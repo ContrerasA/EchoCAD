@@ -24,6 +24,7 @@ signed off 2026-08-15/16.
 | M12 extrude | merged | profile finder, anchored replay, solids |
 | M13 Z-up + orbit pivots | merged | Z-up world, roll-free orbit, 3 pivot modes |
 | M14 sketch orbit | merged | off-axis orbit inside a sketch, cube-face return |
+| M15 project | merged | linked projections, source-follow, broken-link handling |
 
 ## Known limitations / phase-2 backlog
 

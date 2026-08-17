@@ -1136,3 +1136,27 @@ Status: PENDING sign-off
    but stays off-axis. Esc flies home like the plane face does.
 - [ ] 6. Grid/axes stay legible at grazing angles while off-axis.
 - [ ] 7. Finish Sketch while off-axis returns to model mode cleanly.
+
+## §M15 — Project / reference geometry
+
+Status: PENDING sign-off
+
+- [ ] 1. Sketch a rectangle on XY, Finish. New sketch on XY — the rectangle
+   shows dimmed. Click Project, hover the dimmed edges. **Expect:** amber
+   pre-highlight on the edge a click would take.
+- [ ] 2. Click an edge. **Expect:** a magenta copy appears in the active
+   sketch (2 points + line); one Ctrl+Z removes all of it. Clicking the
+   same edge again is refused with a status message.
+- [ ] 3. Project the adjoining edge: the shared corner is ONE point, not two.
+- [ ] 4. Projected geometry snaps: start a line on a projected corner — it
+   welds; dimension from a projected point works.
+- [ ] 5. Projected points read as constrained (no DOF added); dragging a
+   projected point refuses to move it.
+- [ ] 6. Finish. Edit the source sketch, drag a corner, Finish. **Expect:**
+   the projection in the other sketch follows the source.
+- [ ] 7. Edit the source and delete the projected edge, Finish. **Expect:**
+   status message says the link broke; the projected copy stays as
+   ordinary (blue) geometry; no crash.
+- [ ] 8. Project all 4 edges into a sketch, Finish, Extrude inside the
+   projected rectangle: the profile is found and extrudes.
+- [ ] 9. Save, reopen: projections still linked (edit source → copy follows).
