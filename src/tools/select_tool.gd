@@ -23,6 +23,11 @@ var _dim_fields := DimFields.new(["Value"])   # edit box for selected dimension
 ## `tick` applies it once per frame. See pointer_move for why.
 var _pending := false
 var _pending_world := Vector2.ZERO
+## Points the current drag actually moves (drag group + rail companions from
+## DragFilter) — what the follower solve pins.
+var _last_pinned: Array = []
+## The "sliding on rails" hint fires once per gesture, not per frame.
+var _rail_hinted := false
 
 
 func _init() -> void:
@@ -157,6 +162,8 @@ func pointer_move(world: Vector2, screen: Vector2, _e: InputEventMouseMotion) ->
 	if _drag == Drag.PENDING \
 			and screen.distance_to(_down_screen) > DEADZONE_PX:
 		_drag = Drag.MOVE
+		_rail_hinted = false
+		_last_pinned = _move_points.duplicate()
 		app.rebuild_snap_index(_moving_entity_ids())
 		# The whole gesture — every move + every constraint re-solve — is
 		# one sealed undo step.
@@ -196,14 +203,43 @@ func _apply_drag(world: Vector2) -> void:
 		var target: Vector2 = (_start[_move_points[0]] as Vector2) + delta
 		delta = app.snap.snap_point(target, tol, grid)["pos"] \
 			- (_start[_move_points[0]] as Vector2)
-	var targets := {}
+	# Per-DOF projection (M17): the cursor asks for `delta` from the drag's
+	# start; what actually moves is that request projected onto the freedoms
+	# the constraints leave open — so constrained geometry slides on rails
+	# and geometry the user never touched is not yanked around.
+	var sk := sketch()
+	var desired := {}
 	for pid in _move_points:
-		targets[pid] = (_start[pid] as Vector2) + delta
+		desired[pid] = (_start[pid] as Vector2) + delta - sk.point(pid).pos
+	var dplan := DragFilter.plan(sk, _move_points, desired)
+	if not bool(dplan["allowed"]):
+		app.set_status_hint("Held by constraints — no free direction to move "
+			+ "this. Delete or edit a constraint/dimension first.")
+		return
+	if bool(dplan["restricted"]) and not _rail_hinted:
+		app.set_status_hint("Sliding along the remaining freedom — "
+			+ "constraints hold the other directions.")
+		_rail_hinted = true
+	var moved: Dictionary = dplan["moves"]
+	if moved.is_empty():
+		return
+	var targets := {}
+	for pid: String in moved:
+		targets[pid] = sk.point(pid).pos + (moved[pid] as Vector2)
 	app.stack.push(CmdMovePoints.new(app.active_sketch_id, targets))
-	# Mid-gesture the re-solve runs on the worker thread (M16) so a large
-	# constrained sketch cannot stutter the drag; the final exact solve
-	# happens synchronously in pointer_up before the batch seals.
-	app.solve_followers_async(_move_points)
+	_last_pinned = targets.keys()
+	# Mid-gesture, the DragFilter plan already moved every point that should
+	# move — a free follower solve here would spread its microscopic residual
+	# onto geometry the plan deliberately held still. So the mid-drag solve
+	# pins ALL points and only lets radii adjust (a circle whose centre is
+	# sliding under a tangency); it runs on the worker thread (M16). The
+	# final exact solve happens synchronously in pointer_up before the batch
+	# seals, with only the plan's movers pinned.
+	var all_points: Array = []
+	for e in sk.entities():
+		if e.kind() == "point":
+			all_points.append(e.id)
+	app.solve_followers_async(all_points)
 
 
 func pointer_up(_world: Vector2, _screen: Vector2, e: InputEventMouseButton) -> bool:
@@ -221,10 +257,19 @@ func pointer_up(_world: Vector2, _screen: Vector2, e: InputEventMouseButton) -> 
 			_apply_drag(_pending_world)
 		# The gesture's LAST solve is synchronous: outstanding threaded work
 		# is cancelled (its result would land after the batch seals) and the
-		# exact final state is computed here, inside the batch.
+		# final radius cleanup runs here, inside the batch. Points stay
+		# pinned even now — the DragFilter plan placed every point, and a
+		# free settle would smear its sub-micron residual onto geometry the
+		# whole gesture was careful never to touch.
 		if app.threaded_solver != null:
 			app.threaded_solver.cancel()
-		app.solve_followers(_move_points)
+		var sk_up := sketch()
+		if sk_up != null:
+			var all_pts: Array = []
+			for e_up in sk_up.entities():
+				if e_up.kind() == "point":
+					all_pts.append(e_up.id)
+			app.solve_followers(all_pts)
 		if _batch != null:
 			_batch.seal()
 			_batch = null
