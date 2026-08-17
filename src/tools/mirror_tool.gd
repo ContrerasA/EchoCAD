@@ -9,6 +9,8 @@ const HIT_PX := 6.0
 
 var _hover := false
 var _preview := Vector2.ZERO
+## "x"/"y" while the cursor hovers an ORIGIN axis (and no line is closer).
+var _hover_axis := ""
 
 
 func _init() -> void:
@@ -17,29 +19,93 @@ func _init() -> void:
 	shortcut = KEY_M
 
 
+func activate() -> void:
+	_hover = false
+	_hover_axis = ""
+	clear_hover()
+
+
+## Nearest LINE within tol — entity_at would prefer points, which cannot be a
+## mirror axis, so the pick (and its pre-highlight) searches lines directly.
+func _line_at(sk: Sketch, world: Vector2) -> String:
+	var best := HIT_PX / view().zoom()
+	var best_id := ""
+	for e in sk.entities():
+		if e.kind() != "line":
+			continue
+		var dd := SketchGeometry.distance_to_entity(sk, e, world)
+		if dd <= best:
+			best = dd
+			best_id = e.id
+	return best_id
+
+
 func pointer_move(world: Vector2, _screen: Vector2, _e: InputEventMouseMotion) -> bool:
 	_preview = world
 	_hover = true
+	var sk := sketch()
+	hover_id = _line_at(sk, world)
+	_hover_axis = ""
+	if hover_id == "":
+		var tol := HIT_PX / view().zoom()
+		if absf(world.y) <= tol:
+			_hover_axis = "x"
+		elif absf(world.x) <= tol:
+			_hover_axis = "y"
 	return true
 
 
 func pointer_down(world: Vector2, _screen: Vector2, e: InputEventMouseButton) -> bool:
 	if e.button_index != MOUSE_BUTTON_LEFT:
 		return false
+	pointer_move(world, _screen, null)
 	var sk := sketch()
-	var axis_id := SketchGeometry.entity_at(sk, world, HIT_PX / view().zoom())
-	var axis := sk.entity(axis_id) as SketchLine
-	if axis == null:
-		app._status_hint.text = "Mirror: click an axis line"
-		return true
 	if app.selection.is_empty():
-		app._status_hint.text = "Mirror: select entities first, then the axis"
+		app.set_status_hint("Mirror: select entities first, then the axis")
 		return true
-	_apply(sk, axis)
+	var axis := sk.entity(hover_id) as SketchLine
+	if axis != null:
+		_apply(sk, axis)
+		return true
+	if _hover_axis != "":
+		_apply_origin_axis(sk, _hover_axis)
+		return true
+	app.set_status_hint("Mirror: click an axis line (or the X/Y origin axis)")
 	return true
 
 
-func _apply(sk: Sketch, axis: SketchLine) -> void:
+## Mirror about a sketch ORIGIN axis. The SYMMETRY constraint needs a real
+## line entity as its axis, so one is created as pinned CONSTRUCTION geometry
+## from the origin point outward — same undo step as the mirror itself.
+func _apply_origin_axis(sk: Sketch, which: String) -> void:
+	var reach := 50.0
+	for sel_id in app.selection:
+		var e := sk.entity(sel_id)
+		if e == null:
+			continue
+		var pids := e.point_refs()
+		if e.kind() == "point":
+			pids = [e.id]
+		for pid in pids:
+			var p := sk.point(pid)
+			if p != null:
+				reach = maxf(reach, p.pos.length() * 1.5)
+	var far := SketchPoint.make(
+		Vector2(reach, 0.0) if which == "x" else Vector2(0.0, reach))
+	far.id = sk.next_id()
+	var axis := SketchLine.make(sk.origin_id(), far.id)
+	axis.id = sk.next_id()
+	axis.construction = true
+	var fix_ops: Array[String] = [far.id]
+	var cons: Array = [SketchConstraint.make(SketchConstraint.Type.FIX, fix_ops)]
+	var batch := CmdMergeBatch.new("Mirror", [])
+	app.stack.push_no_merge(batch)
+	app.stack.push(CmdAddEntities.new(app.active_sketch_id, [far, axis], cons))
+	_apply(sk, axis, true)
+	batch.seal()
+
+
+func _apply(sk: Sketch, axis: SketchLine, in_batch := false) -> void:
 	var a := sk.point(axis.p0).pos
 	var b := sk.point(axis.p1).pos
 	var d := (b - a).normalized()
@@ -100,12 +166,23 @@ func _apply(sk: Sketch, axis: SketchLine) -> void:
 				adds.append(na)
 	if adds.is_empty():
 		return
-	app.stack.push_no_merge(CmdAddEntities.new(app.active_sketch_id, adds, cons))
+	var cmd := CmdAddEntities.new(app.active_sketch_id, adds, cons)
+	if in_batch:
+		app.stack.push(cmd)
+	else:
+		app.stack.push_no_merge(cmd)
 	app.rebuild_snap_index()
 
 
 func draw_overlay(overlay: Control) -> void:
 	if not _hover:
 		return
-	overlay.draw_circle(view().world_to_screen(_preview), 2.0,
+	var v := view()
+	if _hover_axis != "":
+		# Origin-axis pre-highlight: the axis a click would mirror about.
+		var col := Color(1.0, 0.85, 0.3, 0.5)
+		var half := 100000.0
+		var a := Vector2(-half, 0.0) if _hover_axis == "x" else Vector2(0.0, -half)
+		overlay.draw_line(v.world_to_screen(a), v.world_to_screen(-a), col, 3.0)
+	overlay.draw_circle(v.world_to_screen(_preview), 2.0,
 		Color(1, 1, 1, 0.6))

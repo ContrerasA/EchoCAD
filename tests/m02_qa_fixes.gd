@@ -157,7 +157,8 @@ func _run() -> bool:
 	var mesh := world._body_mesh(bid)
 	if mesh == null:
 		return _fail("no mesh for body " + bid)
-	var mat := mesh.material_override as StandardMaterial3D
+	# Bodies carry their shaded material on surface 0 (surface 1 = edges).
+	var mat := mesh.get_surface_override_material(0) as StandardMaterial3D
 	if mat.albedo_color != CadWorld.COLOR_BODY_SELECTED:
 		return _fail("selected body is not highlighted")
 	# Selecting must not touch the model — it is view state.
@@ -165,7 +166,7 @@ func _run() -> bool:
 	_root.select_body("")
 	if _root.stack.can_undo() != depth:
 		return _fail("selecting a body pushed onto the command stack")
-	if (mesh.material_override as StandardMaterial3D).albedo_color \
+	if (mesh.get_surface_override_material(0) as StandardMaterial3D).albedo_color \
 			!= CadWorld.COLOR_BODY:
 		return _fail("deselected body kept its highlight")
 
@@ -359,7 +360,9 @@ func _run() -> bool:
 ## Does the grid lie in `plane_name`? The grid is a single quad oriented by its
 ## TRANSFORM (it used to be a line mesh whose vertices were baked onto the
 ## plane), so every corner is checked after transforming — which is the same
-## question asked of the geometry that actually reaches the screen.
+## question asked of the geometry that actually reaches the screen. The quad
+## deliberately sits GRID_SINK_MM behind the plane (depth-tested grid must
+## lose to coplanar axes/sketch lines), so that offset is the tolerance.
 func _grid_lies_on(grid: MeshInstance3D, plane_name: String) -> bool:
 	var n := SketchFeature.plane_basis(plane_name).z
 	var mesh := grid.mesh
@@ -371,6 +374,6 @@ func _grid_lies_on(grid: MeshInstance3D, plane_name: String) -> bool:
 		if verts.is_empty():
 			return false
 		for v in verts:
-			if absf((grid.transform * v).dot(n)) > 1e-6:
+			if absf((grid.transform * v).dot(n)) > CadWorld.GRID_SINK_MM + 1e-6:
 				return false
 	return true

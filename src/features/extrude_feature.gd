@@ -51,27 +51,48 @@ func build_mesh(doc: CadDocument) -> ArrayMesh:
 	if prof.is_empty():
 		return null
 	var poly: PackedVector2Array = prof["polygon"]
+	# Normalize to CCW: cap and wall windings below assume it, and a CW
+	# profile turned every face INWARD — front faces culled, so the solid
+	# rendered as a see-through hollow shell.
+	var area2 := 0.0
+	for i in poly.size():
+		area2 += poly[i].cross(poly[(i + 1) % poly.size()])
+	if area2 < 0.0:
+		poly.reverse()
 	var indices := Geometry2D.triangulate_polygon(poly)
 	if indices.is_empty():
 		return null
 	var xf := sf.plane_transform()
-	var n: Vector3 = xf.basis.z
+	# `n` is the OUTWARD direction of the top cap: the plane normal for a
+	# positive distance, its negation for a negative one. The top verts use
+	# the true signed offset along the plane normal either way.
+	var n: Vector3 = xf.basis.z if distance >= 0.0 else -xf.basis.z
+	var offset: Vector3 = xf.basis.z * distance
 	var verts := PackedVector3Array()
+	var normals := PackedVector3Array()
 
 	var top := func(p: Vector2) -> Vector3:
-		return xf * Vector3(p.x, p.y, 0.0) + n * distance
+		return xf * Vector3(p.x, p.y, 0.0) + offset
 	var bot := func(p: Vector2) -> Vector3:
 		return xf * Vector3(p.x, p.y, 0.0)
 
-	# Caps (bottom wound to face -n, top to face +n).
+	# Caps (plane-level cap faces -n, offset cap faces +n; `n` is the outward
+	# direction of the OFFSET cap, so a negative distance mirrors the
+	# windings). Flat normals per face — without a normal array the lighting
+	# has nothing to shade by and the whole solid renders as one flat tone.
+	var flip := distance < 0.0
 	for t in range(0, indices.size(), 3):
-		verts.append(bot.call(poly[indices[t]]))
-		verts.append(bot.call(poly[indices[t + 2]]))
-		verts.append(bot.call(poly[indices[t + 1]]))
-		verts.append(top.call(poly[indices[t]]))
-		verts.append(top.call(poly[indices[t + 1]]))
-		verts.append(top.call(poly[indices[t + 2]]))
-	# Walls.
+		var fwd: Array = [poly[indices[t]], poly[indices[t + 1]], poly[indices[t + 2]]]
+		var rev: Array = [poly[indices[t]], poly[indices[t + 2]], poly[indices[t + 1]]]
+		for p: Vector2 in (fwd if flip else rev):
+			verts.append(bot.call(p))
+		for _i in 3:
+			normals.append(-n)
+		for p: Vector2 in (rev if flip else fwd):
+			verts.append(top.call(p))
+		for _i in 3:
+			normals.append(n)
+	# Walls (winding mirrors with the distance sign too).
 	for i in poly.size():
 		var a2 := poly[i]
 		var b2 := poly[(i + 1) % poly.size()]
@@ -79,13 +100,40 @@ func build_mesh(doc: CadDocument) -> ArrayMesh:
 		var b0: Vector3 = bot.call(b2)
 		var a1: Vector3 = top.call(a2)
 		var b1: Vector3 = top.call(b2)
-		verts.append_array([a0, b0, b1, a0, b1, a1])
+		if flip:
+			verts.append_array([a0, b1, b0, a0, a1, b1])
+		else:
+			verts.append_array([a0, b0, b1, a0, b1, a1])
+		var wn := ((verts[-5] - verts[-6]).cross(verts[-4] - verts[-6])).normalized()
+		for _i in 6:
+			normals.append(wn)
 
 	var mesh := ArrayMesh.new()
 	var arrays := []
 	arrays.resize(Mesh.ARRAY_MAX)
 	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_NORMAL] = normals
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+
+	# Second surface: EDGE LINES (cap outlines + wall edges at sharp profile
+	# corners), so the silhouette reads even under flat ambient light. Smooth
+	# profile runs (a tessellated circle) get no vertical seams.
+	var edges := PackedVector3Array()
+	var m := poly.size()
+	for i in m:
+		var a2 := poly[i]
+		var b2 := poly[(i + 1) % m]
+		edges.append_array([bot.call(a2), bot.call(b2)])
+		edges.append_array([top.call(a2), top.call(b2)])
+		var prev := poly[(i - 1 + m) % m]
+		var din := (a2 - prev).normalized()
+		var dout := (b2 - a2).normalized()
+		if din.dot(dout) < cos(deg_to_rad(15.0)):   # sharp corner at a2
+			edges.append_array([bot.call(a2), top.call(a2)])
+	var earr := []
+	earr.resize(Mesh.ARRAY_MAX)
+	earr[Mesh.ARRAY_VERTEX] = edges
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_LINES, earr)
 	return mesh
 
 
@@ -93,6 +141,8 @@ func build_mesh(doc: CadDocument) -> ArrayMesh:
 static func mesh_volume(mesh: ArrayMesh) -> float:
 	var v := 0.0
 	for s in mesh.get_surface_count():
+		if mesh.surface_get_primitive_type(s) != Mesh.PRIMITIVE_TRIANGLES:
+			continue   # the edge-line surface holds no volume
 		var arrays := mesh.surface_get_arrays(s)
 		var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
 		for t in range(0, verts.size(), 3):

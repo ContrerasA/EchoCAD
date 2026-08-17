@@ -99,7 +99,20 @@ static func solve(sk: Sketch, pinned = []) -> Dictionary:
 		var r0 := 0.0
 		if pos.has(a.center) and pos.has(a.start):
 			r0 = (pos[a.start] as Vector2).distance_to(pos[a.center] as Vector2)
-		arc_ceiling[a.id] = r0 * MAX_RADIUS_GROWTH + RADIUS_SLACK_MM
+		# An explicit DRIVING radius/diameter dimension is a legitimate target,
+		# not runaway growth: a user driving a 0.25 in fillet to 1 in jumps 4x
+		# in ONE solve, and a ceiling anchored only to the entry radius would
+		# clamp the centre back every round — the geometry thrashes and lands
+		# nowhere. The ceiling grows to cover the dimensioned value instead.
+		var dim_r := 0.0
+		for c in sk.constraints:
+			if c.driven or not c.references(a.id):
+				continue
+			if c.type == SketchConstraint.Type.RADIUS:
+				dim_r = maxf(dim_r, c.value)
+			elif c.type == SketchConstraint.Type.DIAMETER:
+				dim_r = maxf(dim_r, c.value * 0.5)
+		arc_ceiling[a.id] = maxf(r0, dim_r) * MAX_RADIUS_GROWTH + RADIUS_SLACK_MM
 
 	# Rim points that other geometry holds in place. They are still solver
 	# variables — projections move them freely — but they are not free to be
@@ -141,6 +154,24 @@ static func solve(sk: Sketch, pinned = []) -> Dictionary:
 		var e_held := shared.has(a.end) or anchored.has(a.end)
 		if s_held != e_held:
 			anchored[a.start if s_held else a.end] = true
+		elif s_held and e_held:
+			# BOTH rims welded to two NON-parallel lines: a corner fillet. Its
+			# rims sit at tangency points determined by the lines, so carrying
+			# them along with the centre just knocks them off those lines and
+			# makes every radius edit ripple outward. Parallel lines (a slot's
+			# end cap) keep the ride-along — that is what preserves slot width.
+			var l1 := _line_sharing_rim(sk, a.start)
+			var l2 := _line_sharing_rim(sk, a.end)
+			if l1 != null and l2 != null and l1 != l2:
+				var d1 := (pos.get(l1.p1, Vector2.ZERO) as Vector2) \
+					- (pos.get(l1.p0, Vector2.ZERO) as Vector2)
+				var d2 := (pos.get(l2.p1, Vector2.ZERO) as Vector2) \
+					- (pos.get(l2.p0, Vector2.ZERO) as Vector2)
+				# Same real-corner gate as the analytic radius pathway in
+				# _set_radius (>~8.6 deg), so the two agree on what a fillet is.
+				if absf(d1.normalized().cross(d2.normalized())) > 0.15:
+					anchored[a.start] = true
+					anchored[a.end] = true
 
 	var rounds := 0
 	for round_i in MAX_ROUNDS:
@@ -943,6 +974,56 @@ static func _set_radius(sk: Sketch, id: String, r: float, pos: Dictionary,
 	if e.kind() == "arc":
 		var arc := e as SketchArc
 		var cc: Vector2 = pos[arc.center]
+		# FILLET pattern: each rim welded to its own line. Pushing the rims
+		# radially off those lines makes the tangencies fight back — the whole
+		# neighbourhood drifts every round while the corner never lands. The
+		# radius change has an exact answer instead: slide the rims ALONG their
+		# lines to the new tangency points and re-seat the centre on the corner
+		# bisector, leaving the lines' directions (and everything beyond them)
+		# alone. Parallel lines (a slot's end cap) have no corner and fall
+		# through to the radial pathway, which is the behaviour the slot needs.
+		var l1 := _line_sharing_rim(sk, arc.start)
+		var l2 := _line_sharing_rim(sk, arc.end)
+		if l1 != null and l2 != null and l1 != l2:
+			var f1: String = l1.p1 if l1.p0 == arc.start else l1.p0
+			var f2: String = l2.p1 if l2.p0 == arc.end else l2.p0
+			var far1: Vector2 = pos.get(f1, Vector2.ZERO)
+			var far2: Vector2 = pos.get(f2, Vector2.ZERO)
+			var t1p: Vector2 = pos.get(arc.start, Vector2.ZERO)
+			var t2p: Vector2 = pos.get(arc.end, Vector2.ZERO)
+			var d1 := t1p - far1
+			var d2 := t2p - far2
+			var denom := d1.cross(d2)
+			if absf(denom) > 1e-9:
+				var corner := far1 + d1 * ((far2 - far1).cross(d2) / denom)
+				var u := (far1 - corner).normalized()
+				var w := (far2 - corner).normalized()
+				var cos_full := clampf(u.dot(w), -1.0, 1.0)
+				var theta := acos(cos_full)
+				# Only a REAL corner qualifies (>~8.6 deg). A slot's side
+				# lines are parallel by design but tilt slightly mid-solve;
+				# a near-degenerate theta then puts the "corner" hundreds of
+				# mm away and this path would tear the slot apart.
+				if theta > 0.15 and theta < PI - 0.15:
+					var leg := r / tan(theta * 0.5)
+					# Never push a rim past its line's far end: an over-large
+					# radius would flip the line's direction and the corner
+					# with it, and every following round chases the flip. The
+					# radius simply stops growing at what the lines can carry
+					# (the dimension shows unsatisfied, geometry stays sane).
+					var leg_max := 0.98 * minf(far1.distance_to(corner),
+						far2.distance_to(corner))
+					var r_eff := r
+					if leg > leg_max:
+						leg = leg_max
+						r_eff = leg * tan(theta * 0.5)
+					var center := corner \
+						+ (u + w).normalized() * (r_eff / sin(theta * 0.5))
+					var moved2 := 0.0
+					moved2 = maxf(moved2, _move(arc.start, corner + u * leg, pos, pin))
+					moved2 = maxf(moved2, _move(arc.end, corner + w * leg, pos, pin))
+					moved2 = maxf(moved2, _move(arc.center, center, pos, pin))
+					return moved2
 		var moved := 0.0
 		for pid: String in [arc.start, arc.end]:
 			var p: Vector2 = pos[pid]
@@ -952,6 +1033,20 @@ static func _set_radius(sk: Sketch, id: String, r: float, pos: Dictionary,
 			moved = maxf(moved, _move(pid, cc + dv.normalized() * r, pos, pin))
 		return moved
 	return 0.0
+
+
+## The one LINE whose endpoint IS `pid` (welded rim), or null when none or
+## when several share it (ambiguous — not the fillet pattern).
+static func _line_sharing_rim(sk: Sketch, pid: String) -> SketchLine:
+	var found: SketchLine = null
+	for e in sk.entities():
+		var l := e as SketchLine
+		if l == null or (l.p0 != pid and l.p1 != pid):
+			continue
+		if found != null:
+			return null
+		found = l
+	return found
 
 
 ## Arc implicit coupling: |start-c| == |end-c| (project to the mean).
@@ -970,6 +1065,21 @@ static func _project_arc_radius(sk: Sketch, arc: SketchArc, pos: Dictionary,
 	# fight forever and the solve never converges.
 	var sp := pin.has(arc.start) or anchored.has(arc.start)
 	var ep := pin.has(arc.end) or anchored.has(arc.end)
+	# BOTH rims held (a fillet: each rim welded to its own line): the rims are
+	# where their lines put them, so the coupling must move the CENTRE onto the
+	# rims' perpendicular bisector instead — pushing held rims radially would
+	# drag them off their lines and the tangencies would fight back forever.
+	if sp and ep and not pin.has(arc.center):
+		var s: Vector2 = pos[arc.start]
+		var epos: Vector2 = pos[arc.end]
+		var d := s - epos
+		var len2 := d.length_squared()
+		if len2 < 1e-12:
+			return 0.0
+		# |s-c| == |e-c|  <=>  c . d == (|s|^2 - |e|^2) / 2 ; project c onto it.
+		var k := (s.length_squared() - epos.length_squared()) * 0.5
+		var target_c := cc - d * ((cc.dot(d) - k) / len2)
+		return _move(arc.center, target_c, pos, pin)
 	# The held rim point's radius is authoritative; both free (or both held ->
 	# nothing to choose between them) -> meet in the middle.
 	var target := rs if sp and not ep else (re if ep and not sp else (rs + re) * 0.5)

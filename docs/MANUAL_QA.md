@@ -97,7 +97,7 @@ Status: PENDING sign-off
 - [x] 18. Untick "Axes" under Origin. **Expect:** the origin axes disappear.
 - [x] 19. Look closely at the view cube while a solid is on screen. **Expect:** it
     shows *only* the cube — no bodies, no axes, no planes inside it.
-- [!] 20. In plain model mode, look at the ground. **Expect:** a Fusion-style grid
+- [X] 20. In plain model mode, look at the ground. **Expect:** a Fusion-style grid
     lying flat on the **XY** ground plane, every 5th line brighter, fading
     out well away from the origin. Orbit under it: the grid does not block
     the solids sitting on it. **Issue:** at some camera distances not every
@@ -107,7 +107,7 @@ Status: PENDING sign-off
     thing on screen untouched.
 - [x] 21. Zoom way out, then way in. **Expect:** the grid spacing steps through
     1/2/5 × powers of ten — it never packs into a solid sheet or vanishes.
-- [ ] 21a. Zoom slowly through a spacing change, in BOTH model and sketch mode.
+- [X] 21a. Zoom slowly through a spacing change, in BOTH model and sketch mode.
     **Expect:** Blender-style — the intermediate lines FADE in and out as you
     scale, reaching full strength exactly as the spacing changes over. Nothing
     should appear or vanish on a single frame, and no line should have a TWIN
@@ -905,21 +905,22 @@ Fix log:
 
 Status: PENDING sign-off
 
-- [ ] 1. Slot (S) — center-to-center: click two center points, move the cursor
+- [X] 1. Slot (S) — center-to-center: click two center points, move the cursor
    off-axis (live outline + W readout follows), click to set width. Result:
    two side lines + two end caps, tangent everywhere, no seams.
-- [ ] 2. Type-in: after the two clicks, type `0.5` Enter for an exact 0.5 in
+    Arcs facing wrong direction when drawing slot. when finalized arcs do appear in correct orientation. some constraints showing as orange, not sure if that's normal
+- [X] 2. Type-in: after the two clicks, type `0.5` Enter for an exact 0.5 in
    width. Suffixes work.
-- [ ] 3. Slot (Overall): the two clicks are the OUTER extremes; caps inset so the
+- [X] 3. Slot (Overall): the two clicks are the OUTER extremes; caps inset so the
    total length matches the clicks.
-- [ ] 4. Slot (Center Pt): first click is the slot's midpoint, second an end
+- [X] 4. Slot (Center Pt): first click is the slot's midpoint, second an end
    center; the other end mirrors automatically.
-- [ ] 5. One Ctrl+Z removes the whole slot.
-- [ ] 6. Dimension the center distance (D, click both centers) and drive it —
+- [X] 5. One Ctrl+Z removes the whole slot.
+- [X] 6. Dimension the center distance (D, click both centers) and drive it —
    the slot stretches, width unchanged, caps stay tangent. Dimension an end
    arc radius — width drives. Drag a center with Select — the slot follows
    as a slot.
-- [ ] 7. Esc mid-placement leaves nothing behind.
+- [X] 7. Esc mid-placement leaves nothing behind.
 
 Fix log:
 - Solver: damped Gauss-Seidel (RELAX 0.6) + arc rims ride rigidly with
@@ -927,27 +928,45 @@ Fix log:
   stiff constraint loop exploded (or collapsed its width) without these.
   (The radius pathway is what §M6 fix **2** had to bound; the slot case is
   covered by `tests/m09_slot.gd`, which now also asserts the bound.)
+- **1** Live preview drew each end cap on the wrong half (A's cap bulged
+  toward B and vice versa); the two screen-angle ranges were swapped in
+  `SlotTool._draw_slot_preview`. Committed geometry was always correct.
+- **1** Orange badges: that is the REDUNDANT colour, and for a slot it is
+  expected — 4 tangencies + equal radii over-describe the shape (any three
+  imply the fourth), so the DOF analyzer flags the surplus. Harmless; the
+  constraints still hold. Not a bug.
 
 ## §M10 — Modify tools
 
 Status: PENDING sign-off
 
-- [ ] 1. Trim (T): draw crossing geometry; hovering a piece highlights exactly
+- [X] 1. Trim (T): draw crossing geometry; hovering a piece highlights exactly
    the doomed span (red, thick) between its nearest intersections; click
    removes it. Lines split; a crossed circle becomes an arc; arcs shorten.
    One Ctrl+Z per trim.
-- [ ] 2. Extend (X): hover a line near the endpoint that faces other geometry —
+    Does trim, but leaves vertex / point at end of line that was just trimmed
+    Line that was crossed into another then trimmed so that new line endpoint lays on edge of the other line isn't constrained to the line, thus if we move the other line, this one gets disconnected
+    When i do this now, it does add a constraint that keeps the lines together, but it seems that it auto adds two constraints, and now there is an over constraint. there should just be one instead. it creates two badges, and asa i move hte lines they go from red to green to red to green seemingly at random
+- [X] 2. Extend (X): hover a line near the endpoint that faces other geometry —
    green preview shows the extension to the nearest hit; click applies.
-- [ ] 3. Offset (O): click a line/circle/arc, move the cursor to choose side and
-   distance (live preview), click or type `0.5` Enter for exact.
-- [ ] 4. Mirror (M): select entities with V (Ctrl-click for several), press M,
+    Does work, but as described above, line isn't constrained, so it isn't really attached to the line
+    Same with above that it seems to over constraint the new junction
+
+- [X] 3. Offset (O): click a line/circle/arc, move the cursor to choose side and
+   distance (live preview), click or type `0.5` Enter for exact. Offset does seem to work, but no indication that 
+    what's under mouse will be enabled for offset. must be like dimension where when tool is armed, whatever is under 
+    the mouse grows in thickness to indicate and changes in color
+    Also, unable to offset multiple lines / shapes at once. if geometry is selected (more than one line) then it should properly offset from that geometry, like what you'd expect in fusion or illustrator
+- [X] 4. Mirror (M): select entities with V (Ctrl-click for several), press M,g
    click the axis line. Mirrored copies appear with live Symmetry
    constraints — drag an original point and the mirror follows.
-- [ ] 5. Fillet (F): type a radius (or accept 0.25 in), click a sharp corner
+    Seems to work when axis is another line, but no indication of what's happeneing like in above message. we also need to be able to click on origin axis, not just lines we place in the world
+- [X] 5. Fillet (F): type a radius (or accept 0.25 in), click a sharp corner
    where exactly two lines meet: tangent arc replaces the corner, lines
    shorten to the tangency points, corner point disappears. Undo restores
    the sharp corner. Over-large radius refuses with a message.
-- [ ] 6. Tool rows wrap (flow) — every button stays reachable at any window
+    Adding a works if we click on a corner vertex. but adjusting the radius causes all geometry to move
+- [X] 6. Tool rows wrap (flow) — every button stays reachable at any window
    width.
 
 Fix log:
@@ -955,46 +974,144 @@ Fix log:
   1280 px and made tail buttons unreachable (automation caught it — the
   Python client now refuses clicks outside the window instead of silently
   missing).
+- **1** Trim no longer sheds debris: endpoints of the trimmed entity that
+  nothing references any more are deleted in the same undo step, and
+  circle/arc trims REUSE the original center point instead of minting a
+  duplicate and stranding the old one.
+- **1/2** Trim and Extend now constrain the new/moved endpoint onto the
+  entity it landed on (POINT_ON), so the joint survives dragging the other
+  line. (`tests/m10_qa_fixes.gd`)
+- **1/2 round 2** The "two constraints / over-constrained / badges flip
+  red-green" junction had three roots, all fixed:
+  (a) Extend re-applied at an already-tied junction added a DUPLICATE
+  POINT_ON — the redundant copy is what made the analyzer flag violations
+  during drags. Extend now skips the tie when the tip is already tied or
+  welded to the hit entity.
+  (b) Trimming the OTHER line of a junction deleted it and PRUNED the
+  first trim's POINT_ON with it — the joint silently unhooked. POINT_ONs
+  now retarget onto whichever kept piece the point lies on.
+  (c) T-joints were invisible to trim: the solver leaves the touching
+  endpoint ~0.0005 mm off the line, the exact segment intersection missed
+  it, and trim deleted the WHOLE line instead of cutting at the junction.
+  Trim now also counts another entity's endpoint within 0.02 mm as a cut.
+- **3** Offset pre-highlights what a click would pick (same amber hover as
+  Select/Dimension; points excluded). A multi-entity selection made with V
+  now offsets as a CHAIN: one distance, one side, shared corners
+  re-intersected, tangent line/arc joints preserved, offset arcs/circles
+  share the source's center point (concentric by construction).
+- **4** Mirror pre-highlights the axis line under the cursor, and the
+  ORIGIN X/Y axes are now clickable as the axis: a pinned construction
+  line is created along the axis (same undo step) so the SYMMETRY
+  constraints stay live.
+- **5** Driving a fillet's radius dimension re-solved by pushing the rims
+  radially off their lines, and the tangency corrections then rippled
+  through everything — the whole sketch drifted. The solver now recognises
+  the fillet pattern (each rim welded to its own non-parallel line) and
+  solves the radius change analytically: rims slide ALONG the lines to the
+  new tangency points, the center re-seats on the corner bisector, far
+  geometry does not move. Parallel-line arcs (slot caps) keep the old
+  pathway, which is what preserves slot behaviour.
+- **5 round 2** (triangle screenshots) Driving 0.25 in -> 1 in still
+  collapsed the sketch. Three more solver causes:
+  (a) the anti-runaway radius ceiling (2x entry radius per solve) clamped
+  a legitimate 4x dimension jump, yanking the centre back every round —
+  the ceiling now grows to cover an explicit driving radius/diameter
+  dimension;
+  (b) the arc's equal-radius coupling pushed the fillet's rims radially
+  OFF their lines — with both rims welded to lines it now moves the
+  CENTRE onto the rims' perpendicular bisector instead;
+  (c) a radius too large for the legs pushed a rim PAST the line's far
+  end, inverting the line and flipping the corner every round — the rim
+  now stops just short of the far end, so the radius tops out at what the
+  lines can carry and geometry stays sane (dimension reads unsatisfied
+  instead of destroying the sketch).
 
 ## §M11 — Timeline
 
 Status: PENDING sign-off
 
-- [ ] 1. The timeline bar (above the status bar) shows one chip per feature in
+- [X] 1. The timeline bar (above the status bar) shows one chip per feature in
    order, with the ‖ rollback marker after the last.
-- [ ] 2. Create two sketches with content. Drag the marker left of Sketch2 —
+- [X] 2. Create two sketches with content. Drag the marker left of Sketch2 —
    Sketch2's geometry vanishes from the 3D view and its chip dims to
    "(Sketch2)". Drag back — it returns. One Ctrl+Z per drag.
-- [ ] 3. With the marker rolled back, Create Sketch inserts the new feature AT
+- [X] 3. With the marker rolled back, Create Sketch inserts the new feature AT
    the marker; downstream features shift right and stay rolled back.
-- [ ] 4. Right-click a chip: Edit Sketch / Suppress / Delete. Suppress dims the
+- [X] 4. Right-click a chip: Edit Sketch / Suppress / Delete. Suppress dims the
    chip and hides the geometry without moving the marker; all three are
    undoable.
-- [ ] 5. Double-click a sketch chip to edit it; Finish returns to model mode
+- [X] 5. Double-click a sketch chip to edit it; Finish returns to model mode
    with edits applied.
-- [ ] 6. Save, reopen: order, marker position, and suppressed flags survive.
+- [X] 6. Save, reopen: order, marker position, and suppressed flags survive.
+    No file save system currently in place
 
 Fix log:
-- (none yet)
+- **6** Save/Open now exist in the UI: Save + Open buttons in the top bar,
+  Ctrl+S (save, or Save-As dialog when the document has no path yet),
+  Ctrl+Shift+S (always Save As), Ctrl+O (open). Files are `.ecad` via the
+  existing Serializer; opening replaces the document and clears history.
+  Round trip covered by `tests/m10_qa_fixes.gd`.
 
 ## §M12 — Extrude
 
 Status: PENDING sign-off
 
-- [ ] 1. Sketch a closed rectangle on XY, Finish, click Extrude, then click
+- [X] 1. Sketch a closed rectangle on XY, Finish, click Extrude, then click
    inside the rectangle in the 3D view. **Expect:** a distance dialog;
    type `1in`, OK — a shaded solid appears; Extrude1 lands on the timeline
    after Sketch1.
-- [ ] 2. Orbit around the solid: caps and walls shaded correctly, no missing
+- [X] 2. Orbit around the solid: caps and walls shaded correctly, no missing
    faces at any angle.
-- [ ] 3. Open profiles and empty space refuse the pick (status hint keeps
+    Caps are present, but there's no colored edges, so impoissible to tell what the shape is. also there's no shading, so model looks all exact same color. no depth clues
+    Now the 3d model is transparent. makes it hard to determine what faces we're looking at. 
+- [!] 3. Open profiles and empty space refuse the pick (status hint keeps
    asking); Esc cancels picking.
-- [ ] 4. Edit Sketch1 (double-click its chip), drive the rectangle wider, Finish.
+    Don't know what that is
+- [X] 4. Edit Sketch1 (double-click its chip), drive the rectangle wider, Finish.
    **Expect:** the solid updates to the new profile (replay).
-- [ ] 5. Drag the timeline marker before Extrude1 — the solid vanishes; back —
+- [X] 5. Drag the timeline marker before Extrude1 — the solid vanishes; back —
    it returns. Ctrl+Z after creating an extrude removes it.
-- [ ] 6. A circle extrudes to a cylinder. Triangle to a prism.
-- [ ] 7. Save/reopen: solids rebuild identically.
+- [X] 6. A circle extrudes to a cylinder. Triangle to a prism.
+- [X] 7. Save/reopen: solids rebuild identically.
+    No current way in ui to save / load
+
 
 Fix log:
-- (none yet)
+- **2** The extrude mesh carried no normal array, so lighting had nothing
+  to shade by and the solid rendered one flat tone. Flat per-face normals
+  added, and a second PRIMITIVE_LINES surface draws dark edge lines (cap
+  outlines + wall edges at sharp profile corners — smooth circle walls get
+  no fake seams), so the silhouette reads at any angle. Bodies now use
+  per-surface materials instead of `material_override`.
+- **2 round 2** "Now the 3D model is transparent" — two separate causes,
+  both fixed (verified by screenshot):
+  (a) the ground grid and origin axes rendered with `no_depth_test`, so
+  they painted straight OVER solids — grid lines through a body read as
+  transparency. The grid now depth-tests (still never writes depth) and
+  sits 0.05 mm below its plane so coplanar axes/sketch lines still win;
+  the axes are plain depth-tested lines again and hide behind solids.
+  (b) a CLOCKWISE profile polygon turned every extrude face INWARD —
+  front faces were back-face-culled and you saw the shell's interior
+  ("inverted normals"). `build_mesh` now normalizes the profile to CCW,
+  and a NEGATIVE distance (extrude below the plane) mirrors the windings
+  too instead of building inside-out. Audited numerically: signed volume
+  positive + every face normal outward on all three planes, both
+  windings, both distance signs (`tests/m10_qa_fixes.gd`), and verified
+  by orbiting screenshots from above, below, and behind.
+- **2 round 3** Reported again from a running instance. The full UI path
+  (plane pick -> rect tool, both click orders and quadrants -> profile
+  click -> distance dialog, +/-, all three planes: 15 cases) audits
+  outward in the current build, so the sighting matched a stale app
+  instance launched mid-fix (Godot never hot-reloads scripts). Two
+  belt-and-braces changes so it cannot present again and stale builds are
+  obvious: body materials are now DOUBLE-SIDED (a closed outward shell
+  hides the back faces via depth anyway, so this is free — but a solid
+  can never render see-through even with a reversed winding), and the
+  window title now carries a build stamp (`AppRoot.BUILD`, currently
+  2026-08-16-r4) — check the title bar to confirm which build a window
+  is running.
+- **3** Not a bug — clarification: an "open profile" is a loop that does
+  not close (e.g. three sides of a rectangle). Extrude's profile pick must
+  refuse clicks there and in empty space; the status bar keeps asking for
+  a closed profile until Esc.
+- **7** Save/Open UI added — see §M11 fix **6**.

@@ -18,11 +18,14 @@ const COLOR_CONSTRUCTION := Color(0.72, 0.55, 0.95)
 const COLOR_BG := Color(0.13, 0.14, 0.16)
 const COLOR_BODY := Color(0.62, 0.66, 0.72)
 const COLOR_BODY_SELECTED := Color(1.0, 0.72, 0.25)
+## Solid edge overlay — dark, Fusion-style, so silhouettes read at any angle.
+const COLOR_BODY_EDGE := Color(0.10, 0.11, 0.13)
 const AXIS_LEN := 150.0
-## Transparent draw order. The grid paints with no_depth_test and would
-## otherwise scribble over the axes; a higher priority draws later, on top.
-const AXES_RENDER_PRIORITY := 2
+## Transparent draw order: the grid draws early among transparents.
 const GRID_RENDER_PRIORITY := -1
+## How far the grid quad sits BELOW its plane (mm). Enough to win/lose depth
+## tests cleanly against coplanar lines, far too small to see.
+const GRID_SINK_MM := 0.05
 
 ## Ground grid, Fusion-style. Lines every `step` mm with a brighter line every
 ## GRID_MAJOR_EVERY; the whole thing spans GRID_SPAN_MM each way from the
@@ -136,17 +139,13 @@ func _build_axes() -> void:
 	_axes = MeshInstance3D.new()
 	_axes.name = "Axes"
 	_axes.mesh = im
-	# The origin axes must sit ON TOP of the grid. The grid draws with
-	# `no_depth_test`, so it paints over whatever it crosses no matter where
-	# that geometry actually is in space — and with grid lines every 50 mm the
-	# coloured axes were being scribbled over until they read as grey stubs,
-	# with Y and Z looking absent entirely. `sorting_offset` does not settle
-	# this; `render_priority` is the control that orders transparent draws, so
-	# the axes take a higher one and land last.
+	# Plain depth-tested lines. They used to be `no_depth_test` to survive the
+	# grid painting over them, but that same flag drew them THROUGH solids —
+	# a blue axis skewering every extrude, which read as a transparent body.
+	# Now the grid depth-tests and sits GRID_SINK_MM below the plane, so the
+	# axes win against the grid honestly and hide behind solids like
+	# everything else.
 	var axis_mat := _line_material(Color.WHITE)
-	axis_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	axis_mat.no_depth_test = true
-	axis_mat.render_priority = AXES_RENDER_PRIORITY
 	_axes.material_override = axis_mat
 	add_child(_axes)
 
@@ -170,7 +169,11 @@ func _build_axes() -> void:
 ## background instead of flickering out, and the whole grid is two triangles.
 const GRID_SHADER := """
 shader_type spatial;
-render_mode unshaded, blend_mix, depth_draw_never, depth_test_disabled,
+// Depth-TESTED (but never written): solids must occlude the grid — painting
+// it over bodies made every solid read as transparent. The coplanar-fight
+// with sketch lines and axes is solved by sinking the quad GRID_SINK_MM
+// below its plane instead of disabling the test.
+render_mode unshaded, blend_mix, depth_draw_never,
 	cull_disabled, shadows_disabled;
 
 uniform float fade_mm = 2600.0;
@@ -283,7 +286,9 @@ func _rebuild_grid() -> void:
 	var quad := QuadMesh.new()
 	quad.size = Vector2(half * 2.0, half * 2.0)
 	_grid.mesh = quad
-	_grid.transform = Transform3D(basis, Vector3.ZERO)
+	# A hair below the plane, so coplanar geometry (axes, sketch lines on the
+	# plane) wins the depth test instead of z-fighting the grid.
+	_grid.transform = Transform3D(basis, basis * Vector3(0, 0, -GRID_SINK_MM))
 	var mat := _grid.material_override as ShaderMaterial
 	if mat != null:
 		mat.set_shader_parameter("fade_mm", half * GRID_FADE_FRAC)
@@ -484,7 +489,10 @@ func set_selected_body(fid: String) -> void:
 		var mi := c as MeshInstance3D
 		if mi == null or not mi.has_meta("feature_id"):
 			continue
-		var mat := mi.material_override as StandardMaterial3D
+		# Bodies carry their shaded material on SURFACE 0 (surface 1 is the
+		# edge overlay); sketch line meshes have no surface override and are
+		# not bodies, so they fall through untouched.
+		var mat := mi.get_surface_override_material(0) as StandardMaterial3D
 		if mat == null:
 			continue
 		mat.albedo_color = COLOR_BODY_SELECTED \
@@ -581,7 +589,18 @@ func rebuild_sketches(doc: CadDocument) -> void:
 					else COLOR_BODY
 				mat.metallic = 0.1
 				mat.roughness = 0.7
-				smi.material_override = mat
+				# Double-sided: with a closed outward-wound shell the back
+				# faces are depth-hidden anyway, so this costs nothing — and
+				# it guarantees a solid can NEVER render see-through even if
+				# some profile slips through with reversed winding.
+				mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+				# Per-surface, NOT material_override: surface 1 is the edge-line
+				# overlay and an override would shade the edges like the body.
+				smi.set_surface_override_material(0, mat)
+				if mesh.get_surface_count() > 1:
+					var emat := _line_material(COLOR_BODY_EDGE)
+					emat.albedo_color = COLOR_BODY_EDGE
+					smi.set_surface_override_material(1, emat)
 				smi.visible = _body_shown(f.id)
 				_sketch_root.add_child(smi)
 			continue

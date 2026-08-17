@@ -7,6 +7,10 @@ extends Control
 
 enum Mode { MODEL, SKETCH }
 
+## Bumped on every QA-fix pass; shown in the window title so a stale running
+## instance (launched before the latest fixes) is identifiable at a glance.
+const BUILD := "2026-08-16-r4"
+
 ## Editor chrome colours.
 const COLOR_SELECTED := Color(1.0, 0.85, 0.3)
 ## Hover pre-highlight: the same amber, dimmer, so hovering reads as "this is
@@ -71,6 +75,12 @@ var _extrude_dialog: Window
 var _extrude_dist: LineEdit
 var _btn_undo: Button
 var _btn_redo: Button
+var _btn_save: Button
+var _btn_open: Button
+## Where the document lives on disk ("" = never saved). Ctrl+S reuses it.
+var _save_path := ""
+var _file_dialog: FileDialog = null
+var _file_dialog_saving := false
 var _pivot_pick: OptionButton
 var _status_mode: Label
 var _status_hint: Label
@@ -111,6 +121,7 @@ func _ready() -> void:
 	_build_ui()
 	_refresh_ui()
 	_maybe_start_automation()
+	get_window().title = "EchoCAD — build " + BUILD
 
 
 ## Drives the active tool's per-frame tick. Tools are RefCounted and have no
@@ -433,6 +444,10 @@ func _build_ui() -> void:
 	_btn_undo.name = "UndoBtn"
 	_btn_redo = _button(top, "Redo", func() -> void: stack.redo())
 	_btn_redo.name = "RedoBtn"
+	_btn_save = _button(top, "Save", func() -> void: save_interactive(false))
+	_btn_save.name = "SaveBtn"
+	_btn_open = _button(top, "Open", open_interactive)
+	_btn_open.name = "OpenBtn"
 	# Orbit pivot: Fusion's body-center is the default, Blender-style
 	# under-cursor and plain view-center are the alternatives.
 	_pivot_pick = OptionButton.new()
@@ -846,6 +861,71 @@ func _on_finish_sketch() -> void:
 	finish_sketch()
 
 
+## --- save / open ---------------------------------------------------------------
+
+## Write the document to `path` (.ecad). Returns true on success.
+func save_to(path: String) -> bool:
+	if not path.to_lower().ends_with(".ecad"):
+		path += ".ecad"
+	if not Serializer.save(doc, path):
+		set_status_hint("Save failed: " + path)
+		return false
+	_save_path = path
+	stack.mark_saved()
+	set_status_hint("Saved " + path)
+	return true
+
+
+## Load `path` and replace the document. Returns true on success.
+func open_from(path: String) -> bool:
+	var loaded := Serializer.load_file(path)
+	if loaded == null:
+		set_status_hint("Open failed: " + path)
+		return false
+	if mode == Mode.SKETCH:
+		finish_sketch()
+	load_document(loaded)
+	_save_path = path
+	stack.mark_saved()
+	set_status_hint("Opened " + path)
+	return true
+
+
+## Ctrl+S / Save button. Saves in place when the document has a path;
+## `force_dialog` (Ctrl+Shift+S) always asks where.
+func save_interactive(force_dialog := false) -> void:
+	if _save_path != "" and not force_dialog:
+		save_to(_save_path)
+		return
+	_open_file_dialog(true)
+
+
+func open_interactive() -> void:
+	_open_file_dialog(false)
+
+
+func _open_file_dialog(saving: bool) -> void:
+	if _file_dialog == null:
+		_file_dialog = FileDialog.new()
+		_file_dialog.name = "EcadFileDialog"
+		_file_dialog.access = FileDialog.ACCESS_FILESYSTEM
+		_file_dialog.filters = ["*.ecad ; EchoCAD documents"]
+		_file_dialog.size = Vector2i(640, 420)
+		_file_dialog.file_selected.connect(func(path: String) -> void:
+			if _file_dialog_saving:
+				save_to(path)
+			else:
+				open_from(path))
+		add_child(_file_dialog)
+	_file_dialog_saving = saving
+	_file_dialog.file_mode = FileDialog.FILE_MODE_SAVE_FILE if saving \
+		else FileDialog.FILE_MODE_OPEN_FILE
+	_file_dialog.title = "Save As" if saving else "Open"
+	if _save_path != "":
+		_file_dialog.current_path = _save_path
+	_file_dialog.popup_centered()
+
+
 ## Set the orbit pivot mode (view preference, not model state — not undoable).
 func set_pivot_mode(m: OrbitCamera.PivotMode) -> void:
 	rig.pivot_mode = m
@@ -924,6 +1004,12 @@ func handle_app_key(k: InputEventKey) -> bool:
 		return true
 	if k.keycode == KEY_Z and k.ctrl_pressed:
 		stack.undo()
+		return true
+	if k.keycode == KEY_S and k.ctrl_pressed:
+		save_interactive(k.shift_pressed)
+		return true
+	if k.keycode == KEY_O and k.ctrl_pressed:
+		open_interactive()
 		return true
 	if k.keycode == KEY_ESCAPE:
 		if mode == Mode.SKETCH:
