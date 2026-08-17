@@ -200,7 +200,10 @@ func _apply_drag(world: Vector2) -> void:
 	for pid in _move_points:
 		targets[pid] = (_start[pid] as Vector2) + delta
 	app.stack.push(CmdMovePoints.new(app.active_sketch_id, targets))
-	app.solve_followers(_move_points)
+	# Mid-gesture the re-solve runs on the worker thread (M16) so a large
+	# constrained sketch cannot stutter the drag; the final exact solve
+	# happens synchronously in pointer_up before the batch seals.
+	app.solve_followers_async(_move_points)
 
 
 func pointer_up(_world: Vector2, _screen: Vector2, e: InputEventMouseButton) -> bool:
@@ -216,6 +219,12 @@ func pointer_up(_world: Vector2, _screen: Vector2, e: InputEventMouseButton) -> 
 		if _pending:
 			_pending = false
 			_apply_drag(_pending_world)
+		# The gesture's LAST solve is synchronous: outstanding threaded work
+		# is cancelled (its result would land after the batch seals) and the
+		# exact final state is computed here, inside the batch.
+		if app.threaded_solver != null:
+			app.threaded_solver.cancel()
+		app.solve_followers(_move_points)
 		if _batch != null:
 			_batch.seal()
 			_batch = null

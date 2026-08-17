@@ -58,6 +58,9 @@ var _model_view_before_sketch := {}
 
 var world: CadWorld
 var rig: OrbitCamera
+## Worker-thread solver for drag re-solves (M16). Falls back to the
+## synchronous path when unavailable.
+var threaded_solver: ThreadedSolver = null
 var sketch_view: SketchView
 var overlay: Control
 var view_cube: ViewCube
@@ -123,6 +126,9 @@ func _ready() -> void:
 	tools.register(SmartDimensionTool.new())
 	tools.overlay_needs_redraw.connect(func() -> void: overlay.queue_redraw())
 	tools.active_changed.connect(func(_id: String) -> void: _refresh_ui())
+	threaded_solver = ThreadedSolver.new()
+	threaded_solver.name = "ThreadedSolver"
+	add_child(threaded_solver)
 	_build_ui()
 	_refresh_ui()
 	_maybe_start_automation()
@@ -135,6 +141,27 @@ func _ready() -> void:
 func _process(_dt: float) -> void:
 	if mode == Mode.SKETCH and not sketch_orbit:
 		tools.handle_tick()
+	_poll_threaded_solver()
+
+
+## Apply whatever the worker-thread solver finished this frame. Results land
+## inside the drag's open CmdMergeBatch, so the undo story is unchanged;
+## stale results (older than the newest request) never come back from
+## `take_result` at all.
+func _poll_threaded_solver() -> void:
+	if threaded_solver == null:
+		return
+	var res := threaded_solver.take_result()
+	if res.is_empty():
+		return
+	if mode != Mode.SKETCH or String(res["sketch_id"]) != active_sketch_id:
+		return
+	var pts: Dictionary = res["points"]
+	var radii: Dictionary = res["radii"]
+	if not pts.is_empty():
+		stack.push(CmdMovePoints.new(active_sketch_id, pts))
+	if not radii.is_empty():
+		stack.push(CmdSetRadii.new(active_sketch_id, radii))
 
 
 ## How long a posted hint holds the status bar against the live cursor readout.
@@ -388,6 +415,22 @@ func solve_followers(pinned = []) -> void:
 		stack.push(CmdMovePoints.new(active_sketch_id, pts))
 	if not radii.is_empty():
 		stack.push(CmdSetRadii.new(active_sketch_id, radii))
+
+
+## The drag-time variant of `solve_followers`: hand the solve to the worker
+## thread and return immediately — `_poll_threaded_solver` applies whichever
+## result lands, and only the newest ever does. Falls back to the synchronous
+## solve when the thread is unavailable. Gesture END must not use this: the
+## final state has to be exact before the batch seals, so pointer_up runs
+## `threaded_solver.cancel()` + a synchronous `solve_followers`.
+func solve_followers_async(pinned = []) -> void:
+	var sk := active_sketch()
+	if sk == null or sk.constraints.is_empty():
+		return
+	if threaded_solver == null or not threaded_solver.available():
+		solve_followers(pinned)
+		return
+	threaded_solver.request(active_sketch_id, sk, pinned)
 
 
 ## Replace the whole document (open/new). History is cleared — a loaded file
