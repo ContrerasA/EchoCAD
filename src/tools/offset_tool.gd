@@ -2,11 +2,13 @@ class_name OffsetTool
 extends SketchTool
 ## Offset (O): click an entity (or select several with V first, then press O),
 ## move the cursor to choose side and distance — live preview — then click or
-## type a distance + Enter for exactness. A connected selection offsets as a
-## CHAIN, Fusion/Illustrator-style: every element shifts the same distance to
-## the same side, shared corners are re-intersected, tangent joints stay
-## joined. One undo step, no constraints (Fusion adds an offset constraint;
-## deferred).
+## type a distance + Enter for exactness. A single click picks the WHOLE
+## connected chain, Fusion-style (M19): every element shifts the same
+## distance to the same side, shared corners are re-intersected, tangent
+## joints stay joined. The copies are CONSTRAINED to their sources: each
+## offset line is PARALLEL to its source and one driving point-to-line
+## dimension holds the gap; offset arcs/circles share their source's center
+## point, so they are concentric by construction. One undo step.
 
 var _targets: Array[String] = []
 var _hover := false
@@ -94,7 +96,9 @@ func pointer_down(world: Vector2, _screen: Vector2, e: InputEventMouseButton) ->
 	if _targets.is_empty():
 		var hit := SketchGeometry.entity_at(sk, world, 6.0 / view().zoom())
 		if hit != "" and sk.entity(hit).kind() != "point":
-			_targets.append(hit)
+			# One click offsets the whole connected chain (Fusion behaviour):
+			# picking one edge of a rectangle offsets the rectangle.
+			_targets.append_array(_connected_chain(sk, hit))
 			clear_hover()
 		return true
 	_preview = world
@@ -103,6 +107,57 @@ func pointer_down(world: Vector2, _screen: Vector2, e: InputEventMouseButton) ->
 
 
 ## --- geometry -----------------------------------------------------------------
+
+## Every line/arc reachable from `seed` through shared endpoints or
+## COINCIDENT welds between endpoints. Circles have no endpoints — a circle
+## seed stays alone.
+static func _connected_chain(sk: Sketch, seed: String) -> Array[String]:
+	var out: Array[String] = [seed]
+	var seed_e := sk.entity(seed)
+	if seed_e == null or seed_e is SketchCircle:
+		return out
+	# Node = weld group: endpoint ids merged through COINCIDENT constraints.
+	var group := {}       # pid -> group root
+	var find := func(pid: String) -> String:
+		var r := pid
+		while group.get(r, r) != r:
+			r = group[r]
+		return r
+	for e in sk.entities():
+		for pid: String in _elem_ends(e):
+			if not group.has(pid):
+				group[pid] = pid
+	for c in sk.constraints:
+		if c.type != SketchConstraint.Type.COINCIDENT or c.operands.size() != 2:
+			continue
+		var a := String(c.operands[0])
+		var b := String(c.operands[1])
+		if group.has(a) and group.has(b):
+			group[find.call(b)] = find.call(a)
+	var by_node := {}     # group root -> [entity id]
+	for e in sk.entities():
+		if not (e is SketchLine or e is SketchArc):
+			continue
+		for pid: String in _elem_ends(e):
+			var r: String = find.call(pid)
+			if not by_node.has(r):
+				by_node[r] = []
+			(by_node[r] as Array).append(e.id)
+	var queue: Array = [seed]
+	var seen := {seed: true}
+	while not queue.is_empty():
+		var cur: String = queue.pop_back()
+		var ce := sk.entity(cur)
+		if ce == null:
+			continue
+		for pid: String in _elem_ends(ce):
+			for nb: String in by_node.get(find.call(pid), []):
+				if not seen.has(nb):
+					seen[nb] = true
+					out.append(nb)
+					queue.append(nb)
+	return out
+
 
 static func _elem_ends(e: SketchEntity) -> Array:
 	if e is SketchLine:
@@ -328,12 +383,18 @@ func _apply() -> void:
 		_reset()
 		return
 	var adds: Array = []
+	var cons: Array = []
 	var pid_map := {}
 	for pid: String in spec["pts"]:
 		var np := SketchPoint.make(spec["pts"][pid])
 		np.id = sk.next_id()
 		pid_map[pid] = np.id
 		adds.append(np)
+	# The copies are tied to their sources (M19): PARALLEL per line, and ONE
+	# driving point-to-line gap dimension on the first offset line, so the
+	# offset follows its source through later edits. Arcs/circles reuse the
+	# source's center point — concentric by construction, no constraint needed.
+	var gap_done := false
 	for rec: Dictionary in spec["elems"]:
 		var e: SketchEntity = rec["e"]
 		if e is SketchLine:
@@ -342,6 +403,14 @@ func _apply() -> void:
 			nl.id = sk.next_id()
 			nl.construction = l.construction
 			adds.append(nl)
+			cons.append(SketchConstraint.make(
+				SketchConstraint.Type.PARALLEL, [nl.id, l.id]))
+			if not gap_done:
+				var gap := SketchConstraint.make(
+					SketchConstraint.Type.POINT_LINE_DIST,
+					[pid_map[l.p0], l.id], float(spec["d"]))
+				cons.append(gap)
+				gap_done = true
 		else:
 			var arc := e as SketchArc
 			# The source's center point is REUSED: the offset arc is concentric
@@ -360,7 +429,7 @@ func _apply() -> void:
 	if adds.is_empty():
 		_reset()
 		return
-	app.stack.push_no_merge(CmdAddEntities.new(app.active_sketch_id, adds))
+	app.stack.push_no_merge(CmdAddEntities.new(app.active_sketch_id, adds, cons))
 	app.rebuild_snap_index()
 	_reset()
 

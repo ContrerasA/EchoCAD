@@ -117,10 +117,21 @@ func _commit_rect(second: Vector2) -> void:
 		SketchConstraint.make(SketchConstraint.Type.VERTICAL, [right.id]),
 		SketchConstraint.make(SketchConstraint.Type.VERTICAL, [left.id]),
 	]
-	app.stack.push_no_merge(CmdAddEntities.new(app.active_sketch_id,
-		[p00, p10, p11, p01, bottom, right, top, left], cons))
+	var ents: Array = [p00, p10, p11, p01, bottom, right, top, left]
+	var extra := _extras(sk, [p00, p10, p11, p01])
+	ents.append_array(extra.get("entities", []))
+	cons.append_array(extra.get("cons", []))
+	app.stack.push_no_merge(CmdAddEntities.new(app.active_sketch_id, ents, cons))
 	app.rebuild_snap_index()
 	_reset()
+
+
+## Variant hook: extra geometry committed WITH the rectangle (same undo
+## step). `corners` are the four SketchPoints in p00/p10/p11/p01 order.
+## The base 2-point rectangle adds nothing (Fusion's plain rect has no
+## center either); CenterRect overrides this.
+func _extras(_sk: Sketch, _corners: Array) -> Dictionary:
+	return {}
 
 
 func draw_overlay(overlay: Control) -> void:
