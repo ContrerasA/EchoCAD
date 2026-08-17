@@ -27,6 +27,11 @@ static func analyze(sk: Sketch) -> Dictionary:
 
 	# Variable layout: fixed point ids removed entirely.
 	var fixed := {}
+	# The origin is a datum, not a free variable — the solver pins it, so it
+	# must not contribute 2 DOF here either, or a fully-dimensioned sketch
+	# would never report "fully constrained".
+	if sk.origin_id() != "":
+		fixed[sk.origin_id()] = true
 	for c in sk.constraints:
 		if c.type == SketchConstraint.Type.FIX:
 			for op in c.operands:

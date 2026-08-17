@@ -91,27 +91,57 @@ func pointer_down(world: Vector2, _screen: Vector2, e: InputEventMouseButton) ->
 	var arc_geo := solve_arc(_start, _dir, s["pos"])
 	if arc_geo.is_empty():
 		return true
-	_commit(s["pos"], arc_geo)
+	# The END click's snap matters as much as the start's. Only its POSITION
+	# was used before, so an arc closed onto existing geometry looked joined
+	# but was not: its far endpoint was a fresh, unconstrained point sitting on
+	# top of another one, and the moment anything moved they came apart.
+	var end_id := String(s["id"]) \
+		if String(s.get("kind", "")) == SnapEngine.KIND_POINT else ""
+	_commit(s["pos"], arc_geo, end_id)
 	return true
 
 
-func _commit(end_pos: Vector2, geo: Dictionary) -> void:
+## `snapped_end_id` — an existing point the closing click landed on, to weld
+## the arc's far end onto; "" to mint a fresh point there.
+func _commit(end_pos: Vector2, geo: Dictionary, snapped_end_id := "") -> void:
 	var sk := sketch()
 	var center := SketchPoint.make(geo["center"])
-	var start := SketchPoint.make(_start)
-	var end := SketchPoint.make(end_pos)
-	for p: SketchPoint in [center, start, end]:
-		p.id = sk.next_id()
-	var arc := SketchArc.make(center.id, start.id, end.id, bool(geo["ccw"]))
+	var entities: Array = []
+	center.id = sk.next_id()
+	# WELD the arc's start onto the line endpoint it was launched from, rather
+	# than minting a twin there and tying the two with a Coincident (which is
+	# what the line tool used to do — see its `_commit_segment`).
+	#
+	# The twin was not merely redundant, it was actively unstable. The solver's
+	# rigid ride-along translates an arc's rim when its centre moves, the
+	# tangency projection moves that centre to close its gap, and the Coincident
+	# then hauls the twin back — three rules taking turns undoing each other, so
+	# the solve never converged and a 5 mm drag of the line sent the arc's
+	# centre over a metre while leaving tangency WORSE than it started. One
+	# shared point removes the contradiction at the source: there is nothing to
+	# reconcile, because there is only one point.
+	var start_id := _start_point_id
+	if start_id == "" or not sk.has(start_id):
+		var start := SketchPoint.make(_start)
+		start.id = sk.next_id()
+		entities.append(start)
+		start_id = start.id
+	# Same weld for the closing end.
+	var end_id := snapped_end_id
+	if end_id == "" or not sk.has(end_id) or end_id == start_id:
+		var end := SketchPoint.make(end_pos)
+		end.id = sk.next_id()
+		entities.append(end)
+		end_id = end.id
+	entities.append(center)
+	var arc := SketchArc.make(center.id, start_id, end_id, bool(geo["ccw"]))
 	arc.id = sk.next_id()
+	entities.append(arc)
 	var cons: Array = [
-		SketchConstraint.make(SketchConstraint.Type.COINCIDENT,
-			[start.id, _start_point_id]),
-		SketchConstraint.make(SketchConstraint.Type.TANGENT,
-			[_line_id, arc.id]),
+		SketchConstraint.make(SketchConstraint.Type.TANGENT, [_line_id, arc.id]),
 	]
 	app.stack.push_no_merge(CmdAddEntities.new(app.active_sketch_id,
-		[center, start, end, arc], cons))
+		entities, cons))
 	app.rebuild_snap_index()
 	_reset()
 

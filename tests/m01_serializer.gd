@@ -59,8 +59,13 @@ func _run() -> bool:
 	var lf := loaded.sketch_feature(feat.id)
 	if lf == null or lf.plane != "XZ" or lf.name != "Sketch1":
 		return _fail("feature fields lost")
-	if lf.sketch.size() != 6 or lf.sketch.constraints.size() != 2:
+	# 6 authored entities + the sketch's own origin point.
+	if lf.sketch.size() != 7 or lf.sketch.constraints.size() != 2:
 		return _fail("sketch contents lost")
+	# The origin survives the round trip AS THE SAME ENTITY — a reloaded
+	# sketch that minted a fresh origin would strand dimensions drawn from it.
+	if lf.sketch.origin_id() != feat.sketch.origin_id():
+		return _fail("origin id not preserved across save/load")
 	if not (lf.sketch.entity(circle.id) as SketchCircle).construction:
 		return _fail("construction flag lost")
 	var ldim := lf.sketch.constraints[1]

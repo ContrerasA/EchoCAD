@@ -75,7 +75,8 @@ func _run() -> bool:
 		return _fail("3pt arc winding wrong (through lower-right = ccw)")
 	# One undo step.
 	_root.stack.undo()
-	if sk.size() != 0:
+	# Back to a bare sketch: only its origin point remains.
+	if sk.size() != 1:
 		return _fail("3pt arc not one undo step")
 	_root.stack.redo()
 
@@ -123,8 +124,15 @@ func _run() -> bool:
 	var con_types: Array = []
 	for c in sk.constraints:
 		con_types.append(SketchConstraint.Type.keys()[c.type])
-	if not con_types.has("TANGENT") or not con_types.has("COINCIDENT"):
+	if not con_types.has("TANGENT"):
 		return _fail("tangent arc constraints missing: %s" % str(con_types))
+	# The arc's start is WELDED to the line's endpoint — one shared point, not
+	# a twin held by a Coincident. The twin was what made this case unstable:
+	# the rigid ride-along, the tangency projection and the Coincident each
+	# undid the others, so the solve never converged and a few mm of drag threw
+	# the arc's centre metres away. Sharing the point removes the contradiction.
+	if ta.start != line.p0 and ta.start != line.p1:
+		return _fail("tangent arc start not welded to the line endpoint")
 	# Geometry: center must sit on the normal of the line at the start point
 	# (tangency), i.e. center.x == start.x for a horizontal line.
 	var t_center: Vector2 = sk.point(ta.center).pos

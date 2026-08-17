@@ -25,11 +25,13 @@ def main():
     app.call("action.set_view", {"pan": [0, 0], "zoom": 4.0})
     app.call("action.set_pref", {"grid_snap": False, "inference": False})
 
-    # Two separate lines drawn by hand.
+    # Two separate lines drawn by hand. Esc ends a chain AND drops back to
+    # Select (Fusion behaviour), so the tool is re-armed for the second line.
     app.click_control("LineToolBtn")
     app.click_world([-40, -20], steps=6)
     app.click_world([10, -12], steps=6)
     app.call("input.key", {"key": "escape"})
+    app.click_control("LineToolBtn")
     app.click_world([-40, 20], steps=6)
     app.click_world([10, 35], steps=6)
     app.call("input.key", {"key": "escape"})
@@ -46,7 +48,7 @@ def main():
     app.click_control("ParallelConBtn")
     cons = app.constraints()
     check(any(c["type"] == "PARALLEL" for c in cons), "Parallel button applied")
-    ents = {e["id"]: e for e in app.entities()}
+    ents = app.entity_map()
     l1, l2 = lines
     import math
     def direction(l):
@@ -75,7 +77,7 @@ def main():
     app.call("action.add_constraint",
              {"type": "DISTANCE", "operands": [l1["p0"], l1["p1"]],
               "value": 50.8})
-    ents = {e["id"]: e for e in app.entities()}
+    ents = app.entity_map()
     a, b = ents[l1["p0"]]["pos"], ents[l1["p1"]]["pos"]
     check(near(math.hypot(b[0] - a[0], b[1] - a[1]), 50.8, 1e-3)
           and near(a[1], b[1], 1e-3), "driven distance + H solved to 2in flat")
@@ -84,17 +86,30 @@ def main():
           and l1["p1"] in dof["constrained_points"],
           "fully constrained points reported")
 
-    # Conflict: second contradictory distance -> conflicts + summary.
+    # A second, contradictory distance on the same pair cannot drive -- the
+    # first already determined it. Rather than let the two fight (which is what
+    # produced a jittering "conflict"), it is accepted as a DRIVEN reference
+    # dimension, Fusion-style: it measures, it does not move geometry.
+    before = app.entity_map()
+    a0, b0 = before[l1["p0"]]["pos"], before[l1["p1"]]["pos"]
     app.call("action.add_constraint",
              {"type": "DISTANCE", "operands": [l1["p0"], l1["p1"]],
               "value": 100.0})
+    added = app.constraints()[-1]
+    check(added.get("driven") is True,
+          f"redundant dimension demoted to driven (got {added})")
+    after = app.entity_map()
+    a1, b1 = after[l1["p0"]]["pos"], after[l1["p1"]]["pos"]
+    check(near(math.hypot(b1[0] - a1[0], b1[1] - a1[1]),
+               math.hypot(b0[0] - a0[0], b0[1] - a0[1]), 1e-3),
+          "driven dimension did not move geometry")
     dof = app.call("query.dof")
-    check(len(dof["conflicts"]) > 0 and dof["summary"] == "Conflicting constraints",
-          "conflict detected and summarized")
-    idx = app.constraints()[-1]["index"]
+    check(len(dof["conflicts"]) == 0,
+          "driven dimension is not reported as a conflict")
+    idx = added["index"]
     app.call("action.delete_constraint", {"index": idx})
     dof = app.call("query.dof")
-    check(len(dof["conflicts"]) == 0, "delete clears conflict")
+    check(len(dof["conflicts"]) == 0, "delete leaves no conflict")
 
     app.call("app.quit")
     print(f"\n{'PASS' if not FAILURES else 'FAIL'}: {len(FAILURES)} failures")

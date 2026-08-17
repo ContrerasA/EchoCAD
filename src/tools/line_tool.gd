@@ -92,31 +92,61 @@ func _commit_segment(pos: Vector2) -> void:
 	var entities: Array = []
 	var constraints: Array = []
 
-	# Chain start point (first segment only).
+	# Chain start point (first segment only). If that very first click landed
+	# on an existing point, the segment STARTS at that point — reusing its id,
+	# not minting a twin beside it. `_first_id` was set from the same snap.
 	var start_id := _anchor_id
 	if start_id == "":
-		var sp := SketchPoint.make(_anchor)
-		sp.id = sk.next_id()
-		entities.append(sp)
-		start_id = sp.id
-		if _first_id == "":
-			_first_id = start_id
-		# The chain's very first click may itself have snapped to a point —
-		# that inference was recorded then, but kept simple: first click
-		# coincidence is applied through position only in M4.
+		if _first_id != "" and sk.has(_first_id):
+			start_id = _first_id
+		else:
+			var sp := SketchPoint.make(_anchor)
+			sp.id = sk.next_id()
+			entities.append(sp)
+			start_id = sp.id
+			if _first_id == "":
+				_first_id = start_id
 
-	var ep := SketchPoint.make(pos)
-	ep.id = sk.next_id()
-	entities.append(ep)
+	# Welding, Fusion-style: a click on an existing point ENDS THE SEGMENT ON
+	# THAT POINT. Sharing the id is what makes both lines move together when it
+	# is later dragged. The old shape here — a fresh twin point plus a
+	# Coincident constraint — is not a weld: the two points are independent
+	# variables that merely tend to agree, and a drag pins one and lets the
+	# solver pull the other away, which is how joined shapes came apart.
+	var end_id := ""
+	if snapped_point != "" and sk.has(snapped_point) and snapped_point != start_id:
+		end_id = snapped_point
+	else:
+		var ep := SketchPoint.make(pos)
+		ep.id = sk.next_id()
+		entities.append(ep)
+		end_id = ep.id
 
-	var line := SketchLine.make(start_id, ep.id)
+	var line := SketchLine.make(start_id, end_id)
 	line.id = sk.next_id()
 	entities.append(line)
 
-	if snapped_point != "":
-		var cc := SketchConstraint.make(SketchConstraint.Type.COINCIDENT,
-			[ep.id, snapped_point])
-		constraints.append(cc)
+	# A snap the user SAW must become a constraint, or the join is cosmetic:
+	# it looks attached and comes apart the moment anything moves. Welding
+	# covers the endpoint case above; these are the other two snaps the engine
+	# reports, and both previously set the POSITION and nothing else.
+	#   - on a curve  -> POINT_ON, so the endpoint slides along that entity but
+	#                    never leaves it.
+	#   - on a midpoint -> MIDPOINT, so it tracks the middle as the line moves.
+	# Skipped when the endpoint was welded, since it is then already tied to
+	# real geometry and a second rule would only fight the first.
+	if end_id != snapped_point:
+		var owner := String(snap.get("owner", ""))
+		match String(snap.get("kind", "")):
+			SnapEngine.KIND_CURVE:
+				if owner != "" and sk.has(owner):
+					constraints.append(SketchConstraint.make(
+						SketchConstraint.Type.POINT_ON, [end_id, owner]))
+			SnapEngine.KIND_MID:
+				if owner != "" and sk.has(owner):
+					constraints.append(SketchConstraint.make(
+						SketchConstraint.Type.MIDPOINT, [end_id, owner]))
+
 	match String(_inference["axis"]):
 		"h":
 			constraints.append(SketchConstraint.make(
@@ -133,7 +163,7 @@ func _commit_segment(pos: Vector2) -> void:
 		_reset()
 	else:
 		_anchor = pos
-		_anchor_id = ep.id
+		_anchor_id = end_id
 
 
 ## Snap + infer: returns the resolved preview position and records

@@ -105,8 +105,27 @@ class EchoCad:
                            f"{name} center ({cx:.0f},{cy:.0f}) outside window {win}")
         return self.call("input.click", {"at": [cx, cy]})
 
-    def entities(self, **kw):
-        return self.call("query.entities", kw)["entities"]
+    def entities(self, include_origin=False, **kw):
+        """Entities in a sketch, EXCLUDING its origin point by default.
+
+        Every sketch owns an origin point at (0,0) so geometry can be
+        dimensioned from it. It is a real entity, but it is scaffolding rather
+        than something a tool drew, so counting/slicing authored geometry means
+        leaving it out. Pass include_origin=True to see it.
+        """
+        ents = self.call("query.entities", kw)["entities"]
+        if include_origin:
+            return ents
+        return [e for e in ents if not e.get("origin")]
+
+    def entity_map(self, **kw):
+        """id -> entity for EVERY entity, origin included.
+
+        Lookup is a different job from counting: geometry may legitimately
+        reference the origin point (welding an endpoint onto it), so a map used
+        to resolve those references must be complete.
+        """
+        return {e["id"]: e for e in self.entities(include_origin=True, **kw)}
 
     def constraints(self, **kw):
         return self.call("query.constraints", kw)["constraints"]

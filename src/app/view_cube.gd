@@ -13,6 +13,13 @@ const CAM_DIST := 120.0
 var _cube: MeshInstance3D = null
 var _cam: Camera3D = null
 
+## Orientation to adopt in `_ready`. The rig emits `moved` from its own
+## `_ready`, which runs before this widget exists, so the first sync would
+## otherwise not arrive until the user orbited — leaving the cube facing front
+## while the view sat at the 3/4 home angle. Owners set this before adding the
+## node (or call `sync_orientation` right after) to start in agreement.
+var rotation_hint := Vector3.ZERO
+
 
 func _ready() -> void:
 	custom_minimum_size = Vector2(SIZE_PX, SIZE_PX)
@@ -21,6 +28,10 @@ func _ready() -> void:
 	vp.name = "VP"
 	vp.transparent_bg = true
 	vp.size = Vector2i(SIZE_PX, SIZE_PX)
+	# The cube lives in a world of its OWN. Sharing the main World3D would
+	# cross-contaminate both ways: the cube would render as a stray box at the
+	# model origin, and every body would show up inside the cube's corner.
+	vp.own_world_3d = true
 	add_child(vp)
 	var root := Node3D.new()
 	vp.add_child(root)
@@ -41,6 +52,10 @@ func _ready() -> void:
 	_cam.near = 1.0
 	_cam.far = 500.0
 	root.add_child(_cam)
+	# Seed a defined orientation. The owner overwrites this with the rig's real
+	# rotation, but the cube must never sit in an unset pose waiting for the
+	# first orbit — that is exactly the bug this guards against.
+	sync_orientation(rotation_hint)
 
 
 ## Mirror the main rig's orientation: the cube camera orbits the cube exactly
@@ -62,9 +77,11 @@ func _gui_input(event: InputEvent) -> void:
 	if n == Vector3.ZERO:
 		return
 	accept_event()
-	var up := Vector3(0, 1, 0)
-	if absf(n.y) > 0.9:                       # top/bottom: north = -Z
-		up = Vector3(0, 0, -1) * signf(n.y)
+	# World is Z-up: +Z is the top face, so a side face's up is +Z and the
+	# top/bottom faces fall back to +Y / -Y as their on-screen north.
+	var up := Vector3(0, 0, 1)
+	if absf(n.z) > 0.9:
+		up = Vector3(0, 1, 0) * signf(n.z)
 	face_picked.emit(n, up)
 
 

@@ -41,9 +41,14 @@ def main():
     # --- enter a sketch using ONLY real input: button click + plane click.
     app.click_control("CreateSketchBtn")
     check(app.call("query.mode")["picking_plane"], "create-sketch arms plane picking")
-    # The XY plane fills the view center at the home camera; click mid-window.
-    win = app.call("app.window")["size"]
-    app.call("input.click", {"at": [win[0] / 2, win[1] / 2]})
+    # Ask the app WHERE the XY plane is rather than guessing a pixel. The
+    # origin planes are quads with their corner ON the world origin, so the
+    # middle of the window sits on their shared knife edge and hits one only
+    # by luck -- which is exactly how this check broke before. Defaults to the
+    # middle of the quad, well inside it.
+    target = app.call("query.plane_point", {"plane": "XY"})
+    check(target["visible"], "XY plane is on screen at the home camera")
+    app.call("input.click", {"at": target["p"]})
     mode = app.call("query.mode")
     check(mode["mode"] == "sketch", "clicking a plane enters sketch mode")
     tl = app.call("query.timeline")

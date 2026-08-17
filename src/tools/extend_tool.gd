@@ -27,6 +27,8 @@ func pointer_move(world: Vector2, _screen: Vector2, _e: InputEventMouseMotion) -
 	_preview = world
 	_hover = true
 	_pending = _find(world)
+	# Pre-highlight the line whose endpoint would extend (base-class hover).
+	hover_id = String(_pending.get("line", ""))
 	return true
 
 
@@ -40,11 +42,37 @@ func pointer_down(world: Vector2, _screen: Vector2, e: InputEventMouseButton) ->
 	app.stack.push_no_merge(batch)
 	app.stack.push(CmdMovePoints.new(app.active_sketch_id,
 		{_pending["point_id"]: _pending["target"]}))
+	# The extended tip lands ON the hit entity — record that as a POINT_ON so
+	# the joint survives later edits instead of being a lucky overlap. Never
+	# a second time: extending a tip that is already tied (or welded) to the
+	# hit entity would over-constrain the junction.
+	var sk := sketch()
+	var hit_id := String(_pending.get("hit", ""))
+	var tip_id := String(_pending["point_id"])
+	if hit_id != "" and sk.has(hit_id) and not _already_tied(sk, tip_id, hit_id):
+		var after: Array = sk.constraints.duplicate()
+		var ops: Array[String] = [tip_id, hit_id]
+		after.append(SketchConstraint.make(SketchConstraint.Type.POINT_ON, ops))
+		app.stack.push(CmdSetConstraints.new(app.active_sketch_id,
+			sk.constraints, after))
 	app.solve_followers([_pending["point_id"]])
 	batch.seal()
 	_pending = {}
 	app.rebuild_snap_index()
 	return true
+
+
+## Is `pid` already attached to `target` — by an existing POINT_ON/COINCIDENT
+## or by being one of the target's own points (welded)?
+func _already_tied(sk: Sketch, pid: String, target: String) -> bool:
+	var te := sk.entity(target)
+	if te != null and te.point_refs().has(pid):
+		return true
+	for c in sk.constraints:
+		if c.type == SketchConstraint.Type.POINT_ON \
+				and c.operands[0] == pid and c.operands[1] == target:
+			return true
+	return false
 
 
 func _find(world: Vector2) -> Dictionary:
@@ -75,6 +103,7 @@ func _find(world: Vector2) -> Dictionary:
 	var far := tip + dir * 100000.0
 	var best := INF
 	var target := Vector2.ZERO
+	var hit := ""
 	for other in sk.entities():
 		if other.id == line_id or other.kind() == "point":
 			continue
@@ -101,10 +130,11 @@ func _find(world: Vector2) -> Dictionary:
 			if d > 1e-6 and d < best:
 				best = d
 				target = p
+				hit = other.id
 	if not is_finite(best):
 		return {}
 	return {"line": line_id, "point_id": l.p1 if from_b else l.p0,
-		"target": target}
+		"target": target, "hit": hit}
 
 
 func draw_overlay(overlay: Control) -> void:

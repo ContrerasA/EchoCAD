@@ -179,6 +179,16 @@ static func arc_contains_angle(sk: Sketch, arc: SketchArc, ang: float) -> bool:
 
 ## Every intersection point between entity `id` and all OTHER curve entities.
 static func entity_intersections(sk: Sketch, id: String) -> Array:
+	var out: Array = []
+	for hit: Dictionary in entity_intersections_ex(sk, id):
+		out.append(hit["pos"])
+	return out
+
+
+## Like entity_intersections, but each hit carries WHICH entity produced it:
+## [{"pos": Vector2, "other": String}]. Trim/extend use the source to tie the
+## new endpoint onto the cutting entity with a POINT_ON constraint.
+static func entity_intersections_ex(sk: Sketch, id: String) -> Array:
 	var e := sk.entity(id)
 	if e == null:
 		return []
@@ -187,7 +197,7 @@ static func entity_intersections(sk: Sketch, id: String) -> Array:
 		if other.id == id or other.kind() == "point":
 			continue
 		for p in _intersect_pair(sk, e, other):
-			out.append(p)
+			out.append({"pos": p, "other": other.id})
 	return out
 
 

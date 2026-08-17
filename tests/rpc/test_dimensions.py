@@ -20,7 +20,7 @@ def check(cond, label):
 
 
 def length(app, line):
-    ents = {e["id"]: e for e in app.entities()}
+    ents = app.entity_map()
     a, b = ents[line["p0"]]["pos"], ents[line["p1"]]["pos"]
     return math.hypot(b[0] - a[0], b[1] - a[1])
 

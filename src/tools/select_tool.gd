@@ -19,6 +19,10 @@ var _label_drag := -1                  # dimension index whose label is dragged
 var _label_start := Vector2.ZERO       # label_offset at drag start
 var _label_down := Vector2.ZERO        # world pos at drag start
 var _dim_fields := DimFields.new(["Value"])   # edit box for selected dimension
+## Coalesced drag state: pointer_move records where the drag wants to be and
+## `tick` applies it once per frame. See pointer_move for why.
+var _pending := false
+var _pending_world := Vector2.ZERO
 
 
 func _init() -> void:
@@ -29,6 +33,8 @@ func _init() -> void:
 
 func deactivate() -> void:
 	_drag = Drag.NONE
+	_pending = false
+	clear_hover()
 
 
 func cancel() -> bool:
@@ -71,7 +77,10 @@ func pointer_down(world: Vector2, screen: Vector2, e: InputEventMouseButton) -> 
 		if not e.ctrl_pressed:
 			app.set_selection([])
 		return true
-	if e.ctrl_pressed:
+	# Shift adds to the selection as well as Ctrl. Ctrl-click is the CAD
+	# convention and Shift-click is the everything-else convention; users reach
+	# for whichever their hands know, and there is no reason to accept only one.
+	if e.ctrl_pressed or e.shift_pressed:
 		var sel := app.selection.duplicate()
 		if sel.has(hit):
 			sel.erase(hit)
@@ -96,11 +105,45 @@ func pointer_down(world: Vector2, screen: Vector2, e: InputEventMouseButton) -> 
 			_start[pid] = p.pos
 	_down_world = world
 	_down_screen = screen
+	# A FULLY CONSTRAINED point cannot be dragged — its position is already
+	# determined, so there is nothing left for a drag to decide. Fusion refuses
+	# the gesture outright, and it has to: allowing it means the drag and the
+	# dimensions each demand a different position, the solver is handed a system
+	# with no solution, and the sketch ends up mangled and reading "Conflicting
+	# constraints" when the user did nothing wrong. Refusing keeps the drawing
+	# intact and puts the reason in the status bar.
+	if not _move_points.is_empty() and _all_constrained(_move_points):
+		app.set_status_hint("Fully constrained — remove or edit a dimension to "
+			+ "move this. (Drag refused so the sketch is not broken.)")
+		_drag = Drag.NONE
+		return true
 	_drag = Drag.PENDING if not _move_points.is_empty() else Drag.NONE
 	return true
 
 
+## Are ALL of these points determined by the current constraints? Read from the
+## DOF analysis the status bar already shows, so what blocks a drag is exactly
+## what the user was told is fully constrained.
+func _all_constrained(pids: Array) -> bool:
+	var determined: Array = app.dof.get("constrained_points", [])
+	if determined.is_empty():
+		return false
+	for pid in pids:
+		if not determined.has(pid):
+			return false
+	return true
+
+
 func pointer_move(world: Vector2, screen: Vector2, _e: InputEventMouseMotion) -> bool:
+	# Pre-highlight what a click would pick, Fusion-style. Deliberately the
+	# SAME hit test the click uses, so the highlight can never promise
+	# something the click would not deliver. Skipped mid-drag, where the
+	# cursor is committed to geometry it already grabbed.
+	if _drag == Drag.NONE and _label_drag < 0:
+		if update_hover(world, HIT_PX):
+			app.overlay.queue_redraw()
+	elif clear_hover():
+		app.overlay.queue_redraw()
 	if _label_drag >= 0:
 		var sk := sketch()
 		if _label_drag < sk.constraints.size():
@@ -121,6 +164,30 @@ func pointer_move(world: Vector2, screen: Vector2, _e: InputEventMouseMotion) ->
 		app.stack.push_no_merge(_batch)
 	if _drag != Drag.MOVE:
 		return false
+	# Record the target and let _process apply it ONCE this frame. Motion
+	# events arrive several times per displayed frame, and each one used to run
+	# the whole pipeline: push a move command, which fires stack.changed, which
+	# rebuilds the snap index, re-runs the DOF analysis and re-rasterizes the
+	# canvas — then a full constraint solve (up to MAX_ROUNDS sweeps over every
+	# constraint) on top. Everything but the last of those is overwritten
+	# before it is ever seen, so it was pure heat: one core pegged and the CPU
+	# ~20 °C hotter for a result identical to solving once per frame.
+	_pending_world = world
+	_pending = true
+	return true
+
+
+## Apply at most one drag update per frame — see `pointer_move`. The undo
+## semantics are unchanged: every push still lands in the same sealed
+## CmdMergeBatch, so the whole gesture remains one step.
+func tick() -> void:
+	if not _pending or _drag != Drag.MOVE:
+		return
+	_pending = false
+	_apply_drag(_pending_world)
+
+
+func _apply_drag(world: Vector2) -> void:
 	var delta := world - _down_world
 	# Snap the DRAGGED point (single-point drags) so moves land on targets.
 	if _move_points.size() == 1:
@@ -134,7 +201,6 @@ func pointer_move(world: Vector2, screen: Vector2, _e: InputEventMouseMotion) ->
 		targets[pid] = (_start[pid] as Vector2) + delta
 	app.stack.push(CmdMovePoints.new(app.active_sketch_id, targets))
 	app.solve_followers(_move_points)
-	return true
 
 
 func pointer_up(_world: Vector2, _screen: Vector2, e: InputEventMouseButton) -> bool:
@@ -144,10 +210,17 @@ func pointer_up(_world: Vector2, _screen: Vector2, e: InputEventMouseButton) -> 
 		_label_drag = -1
 		return true
 	if _drag == Drag.MOVE:
+		# Flush the last coalesced move BEFORE sealing, or the drag ends
+		# wherever the final frame happened to land rather than where the
+		# button came up.
+		if _pending:
+			_pending = false
+			_apply_drag(_pending_world)
 		if _batch != null:
 			_batch.seal()
 			_batch = null
 		app.rebuild_snap_index()
+	_pending = false
 	_drag = Drag.NONE
 	return true
 

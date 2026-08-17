@@ -21,6 +21,33 @@ const CONVERGED := 0.0005      # mm — max correction magnitude to stop
 ## explode at full step; damped Gauss-Seidel trades round count for
 ## stability.
 const RELAX := 0.6
+## Most a SINGLE solve may grow an arc's radius, as a multiple of the radius it
+## had on entry.
+##
+## A RATE limit, not a hard cap. A drag is one solve per frame, each re-anchored
+## to the previous result, so this bound compounds and cannot by itself stop
+## sustained growth — nor should it, since a legitimate tangency re-solve
+## genuinely needs to resize an arc substantially in one step (2.0 is the
+## smallest factor that leaves `tests/m06_arc_tools.gd`'s tangent-arc drag
+## satisfiable). What it does buy is that a diverging tangency can no longer
+## jump by orders of magnitude between two frames. The hard stop for an actual
+## blow-up is the sanity check at the end of `solve`.
+const MAX_RADIUS_GROWTH := 2.0
+## Absolute slack added to that ceiling (mm), so an arc that starts tiny or
+## degenerate still has room to move. Kept small for the same compounding
+## reason as MAX_RADIUS_GROWTH: it is granted afresh on every solve.
+const RADIUS_SLACK_MM := 1.0
+## Smallest radius any projection may drive an arc to (mm). A collapsed arc is
+## unrecoverable — with centre and rim coincident there is no radius direction
+## left for a later projection to push along — so this is a floor, not a hint.
+const MIN_ARC_RADIUS_MM := 0.01
+## A solved point further than this many times the sketch's own reach is taken
+## as a numerical blow-up, not a result, and the whole solve is discarded.
+## Deliberately loose: a solve legitimately moves geometry a long way when a
+## dimension is driven, so this must only ever catch divergence.
+const SANITY_FACTOR := 100.0
+## Floor for that budget (mm), so an empty or tiny sketch still has room.
+const SANITY_FLOOR_MM := 10000.0
 
 ## Solve the sketch. `pinned` — Dictionary set OR Array of point entity ids
 ## that must not move (dragged points, FIX operands are added internally).
@@ -33,6 +60,10 @@ static func solve(sk: Sketch, pinned = []) -> Dictionary:
 	else:
 		for id in pinned:
 			pin[String(id)] = true
+	# The sketch origin is immovable by definition — it is the datum everything
+	# else is measured from, so it is pinned exactly as a FIX operand is.
+	if sk.origin_id() != "":
+		pin[sk.origin_id()] = true
 	# FIX constraints pin every point of their operand.
 	for c in sk.constraints:
 		if c.type == SketchConstraint.Type.FIX:
@@ -59,6 +90,89 @@ static func solve(sk: Sketch, pinned = []) -> Dictionary:
 		if e.kind() == "arc":
 			arcs.append(e)
 
+	# Per-arc radius ceiling, from EACH ARC's OWN radius on entry. Anchoring to
+	# the arc rather than to the sketch's overall extent matters: a bound taken
+	# from the whole point cloud ratchets, because an inflated rim widens the
+	# cloud and so grants a larger bound on the next solve.
+	var arc_ceiling := {}
+	for a: SketchArc in arcs:
+		var r0 := 0.0
+		if pos.has(a.center) and pos.has(a.start):
+			r0 = (pos[a.start] as Vector2).distance_to(pos[a.center] as Vector2)
+		# An explicit DRIVING radius/diameter dimension is a legitimate target,
+		# not runaway growth: a user driving a 0.25 in fillet to 1 in jumps 4x
+		# in ONE solve, and a ceiling anchored only to the entry radius would
+		# clamp the centre back every round — the geometry thrashes and lands
+		# nowhere. The ceiling grows to cover the dimensioned value instead.
+		var dim_r := 0.0
+		for c in sk.constraints:
+			if c.driven or not c.references(a.id):
+				continue
+			if c.type == SketchConstraint.Type.RADIUS:
+				dim_r = maxf(dim_r, c.value)
+			elif c.type == SketchConstraint.Type.DIAMETER:
+				dim_r = maxf(dim_r, c.value * 0.5)
+		arc_ceiling[a.id] = maxf(r0, dim_r) * MAX_RADIUS_GROWTH + RADIUS_SLACK_MM
+
+	# Rim points that other geometry holds in place. They are still solver
+	# variables — projections move them freely — but they are not free to be
+	# translated as a SIDE EFFECT of an arc's centre moving. See the rigid
+	# ride-along in the round loop for why that distinction matters.
+	#
+	# Two ways a rim gets held, and both must count:
+	#  - a COINCIDENT ties it to another point, or
+	#  - it is SHARED outright with another entity (the tangent arc tool welds
+	#    its start onto the line's endpoint, so one point serves both). Keying
+	#    only on Coincident silently missed every welded rim, which is the more
+	#    common case now that the tools weld rather than duplicate.
+	var anchored := {}
+	for c in sk.constraints:
+		if c.driven or c.type != SketchConstraint.Type.COINCIDENT:
+			continue
+		for op in c.operands:
+			anchored[op] = true
+	var shared := {}
+	var rim_of := {}
+	for a: SketchArc in arcs:
+		for pid: String in [a.start, a.end]:
+			rim_of[pid] = true
+	for e in sk.entities():
+		if e.kind() == "arc":
+			continue
+		for pid in e.point_refs():
+			if rim_of.has(pid):
+				shared[pid] = true
+	# Only anchor a shared rim when the arc's OTHER rim is free. An arc with
+	# BOTH rims shared — a slot's end cap, whose two rim points are also the
+	# ends of its side lines — is meant to ride rigidly with its centre; that
+	# is exactly how driving a slot's length keeps its width. Freezing both
+	# rims there would stop the slot deforming as a slot at all. It is the
+	# one-end-held case (a tangent arc welded to a line at a single point)
+	# where riding along is self-defeating.
+	for a: SketchArc in arcs:
+		var s_held := shared.has(a.start) or anchored.has(a.start)
+		var e_held := shared.has(a.end) or anchored.has(a.end)
+		if s_held != e_held:
+			anchored[a.start if s_held else a.end] = true
+		elif s_held and e_held:
+			# BOTH rims welded to two NON-parallel lines: a corner fillet. Its
+			# rims sit at tangency points determined by the lines, so carrying
+			# them along with the centre just knocks them off those lines and
+			# makes every radius edit ripple outward. Parallel lines (a slot's
+			# end cap) keep the ride-along — that is what preserves slot width.
+			var l1 := _line_sharing_rim(sk, a.start)
+			var l2 := _line_sharing_rim(sk, a.end)
+			if l1 != null and l2 != null and l1 != l2:
+				var d1 := (pos.get(l1.p1, Vector2.ZERO) as Vector2) \
+					- (pos.get(l1.p0, Vector2.ZERO) as Vector2)
+				var d2 := (pos.get(l2.p1, Vector2.ZERO) as Vector2) \
+					- (pos.get(l2.p0, Vector2.ZERO) as Vector2)
+				# Same real-corner gate as the analytic radius pathway in
+				# _set_radius (>~8.6 deg), so the two agree on what a fillet is.
+				if absf(d1.normalized().cross(d2.normalized())) > 0.15:
+					anchored[a.start] = true
+					anchored[a.end] = true
+
 	var rounds := 0
 	for round_i in MAX_ROUNDS:
 		rounds = round_i + 1
@@ -79,15 +193,68 @@ static func solve(sk: Sketch, pinned = []) -> Dictionary:
 				- (centers_before[a.id] as Vector2)
 			if delta.length() > 1e-12:
 				for pid: String in [a.start, a.end]:
-					if not pin.has(pid) and pos.has(pid):
-						pos[pid] = (pos[pid] as Vector2) + delta
-						worst = maxf(worst, delta.length())
+					# ANCHORED rims do not ride along. A rim that a Coincident
+					# ties to other geometry is not free to translate, and
+					# moving it here is self-defeating in the exact case that
+					# broke: the tangency projection shifts the CENTRE to close
+					# its gap, this loop then carries the rim the same way, and
+					# the gap reopens by precisely the amount just corrected.
+					# The constraint can never be satisfied, so it pushes harder
+					# every round — a perfectly tangent arc's centre travelling
+					# 1.7 m and tangency ending up WORSE than it started, off a
+					# 5 mm drag. Rigid ride-along is a minimal-motion nicety
+					# (driving a slot's length must not shrink its width); it
+					# has to yield to an actual constraint.
+					if pin.has(pid) or anchored.has(pid) or not pos.has(pid):
+						continue
+					pos[pid] = (pos[pid] as Vector2) + delta
+					worst = maxf(worst, delta.length())
 		for a: SketchArc in arcs:
-			worst = maxf(worst, _project_arc_radius(sk, a, pos, pin))
+			worst = maxf(worst, _project_arc_radius(sk, a, pos, pin, anchored))
+		# Divergence guard. An arc's radius is implied by CENTER-TO-RIM distance,
+		# so it grows without any radius projection running at all: a tangency
+		# the solver cannot satisfy pushes the CENTER away each round while a
+		# coincidence holds a rim point on the geometry being dragged. Over
+		# MAX_ROUNDS that inflates without limit — the tangent-arc explosion,
+		# which also dragged the frame rate down with it.
+		#
+		# Both ends of the pair have to be considered. Clamping only the rim
+		# does nothing in exactly the case that matters, because the rim is the
+		# PINNED end there; the center is what ran away. So pull whichever end
+		# is free back to the ceiling, preferring the center (moving the rim
+		# would fight the coincidence that is holding it).
+		_clamp_arc_radii(arcs, arc_ceiling, pos, pin)
 		if worst < CONVERGED:
 			break
 
+	# ...and once more after the loop. Running it only inside is not enough:
+	# the guard sits before the convergence break, so on the final round the
+	# projections that ran after the previous clamp would escape unchecked —
+	# and a diverging arc does most of its damage in exactly those rounds.
+	_clamp_arc_radii(arcs, arc_ceiling, pos, pin)
+
 	var out_p := {}
+	# Last line of defence: REJECT a solve that blew up rather than applying it.
+	#
+	# The per-constraint guards keep individual projections sane, but a stiff,
+	# unsatisfiable system (the classic being a tangency fighting a coincidence
+	# on a dragged endpoint) can still go numerically unstable as a whole — one
+	# round where several projections reinforce, and every coordinate lands in
+	# the hundreds of millions or at NaN. Applying that is what destroyed the
+	# drawing and left the app crawling afterwards, since every later frame then
+	# had to render geometry at that scale. Refusing it costs only that frame's
+	# re-solve: the geometry simply stays where it was, which is the honest
+	# outcome for constraints that cannot all be met.
+	var budget := _sanity_budget(sk)
+	for id: String in pos:
+		var p: Vector2 = pos[id]
+		if not (is_finite(p.x) and is_finite(p.y)) or p.length() > budget:
+			return {"points": {}, "radii": {}, "rounds": rounds, "diverged": true}
+	for id: String in rad:
+		var rv := float(rad[id])
+		if not is_finite(rv) or rv > budget:
+			return {"points": {}, "radii": {}, "rounds": rounds, "diverged": true}
+
 	for id: String in pos:
 		var orig: Vector2 = (sk.point(id) as SketchPoint).pos
 		if (pos[id] as Vector2).distance_to(orig) > 1e-9:
@@ -96,7 +263,44 @@ static func solve(sk: Sketch, pinned = []) -> Dictionary:
 	for id: String in rad:
 		if absf(float(rad[id]) - (sk.entity(id) as SketchCircle).radius) > 1e-9:
 			out_r[id] = rad[id]
-	return {"points": out_p, "radii": out_r, "rounds": rounds}
+	return {"points": out_p, "radii": out_r, "rounds": rounds, "diverged": false}
+
+
+## How far from the origin a solved point may plausibly land, from the sketch's
+## own size. Generous — this catches blow-ups (1e8 mm is 100 km), not designs.
+static func _sanity_budget(sk: Sketch) -> float:
+	var far := 0.0
+	for e in sk.entities():
+		if e.kind() == "point":
+			far = maxf(far, (e as SketchPoint).pos.length())
+	return maxf(far * SANITY_FACTOR, SANITY_FLOOR_MM)
+
+
+## Hold every arc's center-to-rim distance at or under its ceiling.
+##
+## Pulls whichever end of the pair is free, preferring the CENTER: in the case
+## that actually diverges the rim is pinned (a coincidence holds it on the
+## geometry being dragged) and the center is what ran away, so clamping only
+## the rim would do nothing at all.
+static func _clamp_arc_radii(arcs: Array, ceilings: Dictionary,
+		pos: Dictionary, pin: Dictionary) -> void:
+	for a: SketchArc in arcs:
+		if not pos.has(a.center):
+			continue
+		var ceiling: float = ceilings.get(a.id, RADIUS_SLACK_MM)
+		for pid: String in [a.start, a.end]:
+			if not pos.has(pid):
+				continue
+			var cc: Vector2 = pos[a.center]
+			var dv: Vector2 = (pos[pid] as Vector2) - cc
+			var dist := dv.length()
+			if dist <= ceiling or dist < 1e-9:
+				continue
+			var dir := dv / dist
+			if not pin.has(a.center):
+				pos[a.center] = (pos[pid] as Vector2) - dir * ceiling
+			elif not pin.has(pid):
+				pos[pid] = cc + dir * ceiling
 
 
 ## Current signed error of a constraint against live values (for DOF /
@@ -493,23 +697,105 @@ static func _tangent_line_circle(sk: Sketch, line_id: String, circ_id: String,
 	# ARC radius is defined by its own rim points — self-referential, so the
 	# projection must give it a radius pathway (pull rims toward the gap) or
 	# stiff loops like a slot never converge. Circles keep their radius here.
+	# Resizing the arc is a LAST RESORT, used only when the centre is held and
+	# so cannot absorb the error itself. Resizing is always available and always
+	# "works", which is the trap: shrinking an arc towards a point satisfies
+	# tangency trivially, so a solver free to reach for it will happily collapse
+	# a 59 mm arc to 0.001 mm and report success. Preferring to move the centre
+	# keeps the arc's size an expression of what the user drew.
 	var is_arc := sk.entity(circ_id) is SketchArc
-	if is_arc:
-		moved = maxf(moved, _set_radius(sk, circ_id, r + err * 0.5, pos, rad, pin))
+	if is_arc and pin.has(cid):
+		# Damped with the same RELAX every other projection uses. Undamped,
+		# this pathway overshoots whenever another constraint contests the same
+		# rim points — the classic case being a tangent arc whose start is
+		# coincident with the line endpoint being dragged. The hard ceiling on
+		# runaway radii lives at the end of the solve round (see the divergence
+		# guard there), because the radius can also grow with no radius
+		# projection running at all.
+		# Never below a floor: an arc collapsed to a point cannot be recovered
+		# by any later projection, because its radius direction is gone.
+		var want := maxf(r + err * 0.5 * RELAX, MIN_ARC_RADIUS_MM)
+		moved = maxf(moved, _set_radius(sk, circ_id, want, pos, rad, pin))
 		err *= 0.5
-	# Move the center toward/away, or translate the line, by mobility.
-	var line_mobile := not (pin.has(ids[0]) and pin.has(ids[1]))
+	# Close the gap by moving the ARC's centre in preference to the line.
+	#
+	# Translating the line sideways is almost always the wrong answer, and was
+	# the cause of the tangent-arc blow-up. A tangent arc's start is COINCIDENT
+	# with a line endpoint, so sliding the line perpendicular to itself drags
+	# that shared point, which moves the arc, which changes the tangency error —
+	# a feedback loop that never converges (200 rounds) and amplifies a 3 mm
+	# drag into 30 mm of motion in unrelated-looking places. Worse, one of those
+	# endpoints is usually the point the user is physically dragging, so the
+	# correction fights the gesture directly.
+	#
+	# The centre is the free variable here: moving it satisfies tangency exactly
+	# without disturbing anything else, because nothing else references it. Only
+	# when the centre is genuinely pinned does the line move, and then only its
+	# endpoints that are themselves unpinned.
 	var center_mobile := not pin.has(cid)
-	if center_mobile and line_mobile:
-		moved = maxf(moved, _move(cid, cc - n * sgn * err * 0.5, pos, pin))
-		moved = maxf(moved, _move(ids[0], a + n * sgn * err * 0.5, pos, pin))
-		moved = maxf(moved, _move(ids[1], b + n * sgn * err * 0.5, pos, pin))
-	elif center_mobile:
+	if center_mobile:
+		# When a rim point is WELDED to the line (a tangent arc shares the
+		# line's endpoint outright), sliding the centre straight along the
+		# normal is wrong: the radius IS the centre-to-rim distance, so
+		# translating the centre changes the radius, which changes the tangency
+		# error, which asks for another translation — the centre marches off
+		# forever and the error converges to the radius rather than to zero.
+		#
+		# Rotate the arc about that shared rim point instead. The radius is
+		# preserved exactly (it is a rotation), and the centre lands where the
+		# tangency wants it, which is what "the arc pivots to stay tangent"
+		# means geometrically.
+		var hub := ""
+		for lid in ids:
+			if lid == _center_id(sk, circ_id):
+				continue
+			if _arc_has_rim(sk, circ_id, lid):
+				hub = lid
+				break
+		if hub != "":
+			var h: Vector2 = pos[hub]
+			var radius := (cc - h).length()
+			if radius > 1e-9:
+				# Target centre: on the line's NORMAL through the hub, at the
+				# arc's own radius. That IS the tangency condition for an arc
+				# touching the line at the hub, so it is solved outright rather
+				# than iterated towards.
+				#
+				# Both normal directions satisfy it, and the choice must be made
+				# by NEARNESS to where the centre already is. Choosing by the
+				# sign of the current offset looks equivalent but is not: when
+				# the line rotates past the centre that sign flips, the arc is
+				# thrown to the far side, and the next round throws it back —
+				# the centre ends up hundreds of mm away while tangency still
+				# reports ~0, because every position it visits IS tangent.
+				# Nearness has no such discontinuity.
+				var plus := h + n * radius
+				var minus := h - n * radius
+				var target := plus if cc.distance_squared_to(plus) \
+					<= cc.distance_squared_to(minus) else minus
+				moved = maxf(moved, _move(cid, cc.lerp(target, RELAX), pos, pin))
+				return moved
 		moved = maxf(moved, _move(cid, cc - n * sgn * err, pos, pin))
-	elif line_mobile:
-		moved = maxf(moved, maxf(_move(ids[0], a + n * sgn * err, pos, pin),
-			_move(ids[1], b + n * sgn * err, pos, pin)))
+	else:
+		var free_ends: Array[String] = []
+		for lid in ids:
+			if not pin.has(lid):
+				free_ends.append(lid)
+		# Spread the correction over whichever ends may actually move, so a line
+		# with one end held rotates about that end instead of translating.
+		if not free_ends.is_empty():
+			var share := err / float(free_ends.size())
+			for lid in free_ends:
+				moved = maxf(moved,
+					_move(lid, (pos[lid] as Vector2) + n * sgn * share, pos, pin))
 	return moved
+
+
+## Is `pid` one of this arc's rim points (its start or end)? False for circles,
+## which have no rim entities.
+static func _arc_has_rim(sk: Sketch, circ_id: String, pid: String) -> bool:
+	var arc := sk.entity(circ_id) as SketchArc
+	return arc != null and (arc.start == pid or arc.end == pid)
 
 
 static func _point_on(sk: Sketch, c: SketchConstraint, pos: Dictionary,
@@ -688,6 +974,56 @@ static func _set_radius(sk: Sketch, id: String, r: float, pos: Dictionary,
 	if e.kind() == "arc":
 		var arc := e as SketchArc
 		var cc: Vector2 = pos[arc.center]
+		# FILLET pattern: each rim welded to its own line. Pushing the rims
+		# radially off those lines makes the tangencies fight back — the whole
+		# neighbourhood drifts every round while the corner never lands. The
+		# radius change has an exact answer instead: slide the rims ALONG their
+		# lines to the new tangency points and re-seat the centre on the corner
+		# bisector, leaving the lines' directions (and everything beyond them)
+		# alone. Parallel lines (a slot's end cap) have no corner and fall
+		# through to the radial pathway, which is the behaviour the slot needs.
+		var l1 := _line_sharing_rim(sk, arc.start)
+		var l2 := _line_sharing_rim(sk, arc.end)
+		if l1 != null and l2 != null and l1 != l2:
+			var f1: String = l1.p1 if l1.p0 == arc.start else l1.p0
+			var f2: String = l2.p1 if l2.p0 == arc.end else l2.p0
+			var far1: Vector2 = pos.get(f1, Vector2.ZERO)
+			var far2: Vector2 = pos.get(f2, Vector2.ZERO)
+			var t1p: Vector2 = pos.get(arc.start, Vector2.ZERO)
+			var t2p: Vector2 = pos.get(arc.end, Vector2.ZERO)
+			var d1 := t1p - far1
+			var d2 := t2p - far2
+			var denom := d1.cross(d2)
+			if absf(denom) > 1e-9:
+				var corner := far1 + d1 * ((far2 - far1).cross(d2) / denom)
+				var u := (far1 - corner).normalized()
+				var w := (far2 - corner).normalized()
+				var cos_full := clampf(u.dot(w), -1.0, 1.0)
+				var theta := acos(cos_full)
+				# Only a REAL corner qualifies (>~8.6 deg). A slot's side
+				# lines are parallel by design but tilt slightly mid-solve;
+				# a near-degenerate theta then puts the "corner" hundreds of
+				# mm away and this path would tear the slot apart.
+				if theta > 0.15 and theta < PI - 0.15:
+					var leg := r / tan(theta * 0.5)
+					# Never push a rim past its line's far end: an over-large
+					# radius would flip the line's direction and the corner
+					# with it, and every following round chases the flip. The
+					# radius simply stops growing at what the lines can carry
+					# (the dimension shows unsatisfied, geometry stays sane).
+					var leg_max := 0.98 * minf(far1.distance_to(corner),
+						far2.distance_to(corner))
+					var r_eff := r
+					if leg > leg_max:
+						leg = leg_max
+						r_eff = leg * tan(theta * 0.5)
+					var center := corner \
+						+ (u + w).normalized() * (r_eff / sin(theta * 0.5))
+					var moved2 := 0.0
+					moved2 = maxf(moved2, _move(arc.start, corner + u * leg, pos, pin))
+					moved2 = maxf(moved2, _move(arc.end, corner + w * leg, pos, pin))
+					moved2 = maxf(moved2, _move(arc.center, center, pos, pin))
+					return moved2
 		var moved := 0.0
 		for pid: String in [arc.start, arc.end]:
 			var p: Vector2 = pos[pid]
@@ -699,9 +1035,23 @@ static func _set_radius(sk: Sketch, id: String, r: float, pos: Dictionary,
 	return 0.0
 
 
+## The one LINE whose endpoint IS `pid` (welded rim), or null when none or
+## when several share it (ambiguous — not the fillet pattern).
+static func _line_sharing_rim(sk: Sketch, pid: String) -> SketchLine:
+	var found: SketchLine = null
+	for e in sk.entities():
+		var l := e as SketchLine
+		if l == null or (l.p0 != pid and l.p1 != pid):
+			continue
+		if found != null:
+			return null
+		found = l
+	return found
+
+
 ## Arc implicit coupling: |start-c| == |end-c| (project to the mean).
 static func _project_arc_radius(sk: Sketch, arc: SketchArc, pos: Dictionary,
-		pin: Dictionary) -> float:
+		pin: Dictionary, anchored := {}) -> float:
 	if not (pos.has(arc.center) and pos.has(arc.start) and pos.has(arc.end)):
 		return 0.0
 	var cc: Vector2 = pos[arc.center]
@@ -709,12 +1059,35 @@ static func _project_arc_radius(sk: Sketch, arc: SketchArc, pos: Dictionary,
 	var re := (pos[arc.end] as Vector2).distance_to(cc)
 	if absf(rs - re) < 1e-9:
 		return 0.0
-	var sp := pin.has(arc.start)
-	var ep := pin.has(arc.end)
-	# The pinned rim point's radius is authoritative; both free -> meet mid.
+	# A rim held by a COINCIDENT counts as authoritative just as a pinned one
+	# does. Treating it as free lets this coupling drag it off the point it is
+	# coincident with — which the Coincident projection then undoes, so the two
+	# fight forever and the solve never converges.
+	var sp := pin.has(arc.start) or anchored.has(arc.start)
+	var ep := pin.has(arc.end) or anchored.has(arc.end)
+	# BOTH rims held (a fillet: each rim welded to its own line): the rims are
+	# where their lines put them, so the coupling must move the CENTRE onto the
+	# rims' perpendicular bisector instead — pushing held rims radially would
+	# drag them off their lines and the tangencies would fight back forever.
+	if sp and ep and not pin.has(arc.center):
+		var s: Vector2 = pos[arc.start]
+		var epos: Vector2 = pos[arc.end]
+		var d := s - epos
+		var len2 := d.length_squared()
+		if len2 < 1e-12:
+			return 0.0
+		# |s-c| == |e-c|  <=>  c . d == (|s|^2 - |e|^2) / 2 ; project c onto it.
+		var k := (s.length_squared() - epos.length_squared()) * 0.5
+		var target_c := cc - d * ((cc.dot(d) - k) / len2)
+		return _move(arc.center, target_c, pos, pin)
+	# The held rim point's radius is authoritative; both free (or both held ->
+	# nothing to choose between them) -> meet in the middle.
 	var target := rs if sp and not ep else (re if ep and not sp else (rs + re) * 0.5)
 	var moved := 0.0
 	for pid: String in [arc.start, arc.end]:
+		# Never move a held rim to satisfy the coupling — move the other one.
+		if (pid == arc.start and sp and not ep) or (pid == arc.end and ep and not sp):
+			continue
 		var dv := (pos[pid] as Vector2) - cc
 		if dv.length() < 1e-9:
 			continue

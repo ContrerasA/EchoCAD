@@ -12,13 +12,17 @@ var sketch: Sketch = null
 ## Sketch-plane basis in 3D world space (world units are mm, like the model).
 ## Columns: x = sketch +X, y = sketch +Y, z = plane normal. A sketch point
 ## (u, v) sits at world `plane_transform() * Vector3(u, v, 0)`.
+##
+## The world is Z-UP (Blender/Fusion convention): +Z is up, XY is the ground
+## plane, and each basis is right-handed so the normal follows +u x +v.
 static func plane_basis(plane_name: String) -> Basis:
 	match plane_name:
-		"XZ":
-			return Basis(Vector3(1, 0, 0), Vector3(0, 0, -1), Vector3(0, 1, 0))
-		"YZ":
+		"XZ":                                  # front: +u = +X, +v = +Z, n = -Y
+			return Basis(Vector3(1, 0, 0), Vector3(0, 0, 1), Vector3(0, -1, 0))
+		"YZ":                                  # right: +u = +Y, +v = +Z, n = +X
 			return Basis(Vector3(0, 1, 0), Vector3(0, 0, 1), Vector3(1, 0, 0))
-	return Basis(Vector3(1, 0, 0), Vector3(0, 1, 0), Vector3(0, 0, 1))   # XY
+	# XY = top/ground plane, normal +Z (up).
+	return Basis(Vector3(1, 0, 0), Vector3(0, 1, 0), Vector3(0, 0, 1))
 
 
 func plane_transform() -> Transform3D:

@@ -211,8 +211,15 @@ func _cmd_query_entities(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Varian
 		return null
 	var out: Array = []
 	for e in sk.entities():
-		out.append(e.to_dict())
-	return {"entities": out}
+		var d := e.to_dict()
+		# Flag the sketch's origin point. It is a real entity (snappable,
+		# dimensionable) but it is scaffolding every sketch has rather than
+		# something a tool drew, so callers counting authored geometry need to
+		# be able to tell it apart.
+		if sk.is_origin(e.id):
+			d["origin"] = true
+		out.append(d)
+	return {"entities": out, "origin": sk.origin_id()}
 
 
 func _cmd_query_constraints(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
@@ -364,6 +371,40 @@ func _cmd_query_screen_to_world(a: Dictionary, p: StreamPeerTCP, id: Variant) ->
 	return {"p": [w.x, w.y]}
 
 
+## Project a point ON a named origin plane to screen pixels, so automation can
+## CLICK that plane without hardcoding a pixel.
+##
+## `plane` is "XY"/"XZ"/"YZ"; `uv` is millimetres along that plane's own two
+## axes, defaulting to the middle of its quad. The origin planes are quads
+## running from the origin out along +u/+v, so the world origin is their shared
+## CORNER — the middle of the window (the obvious-looking click target) lands
+## exactly on that knife edge and hits a plane only by luck. Asking for a point
+## in the plane's own terms keeps a test correct across changes to the camera
+## home view or the quad size.
+##
+## Returns {"p": [x, y], "visible": bool} — `visible` is false when the point
+## is behind the camera or off-window, which a caller should treat as "do not
+## click there" rather than clicking anyway.
+func _cmd_query_plane_point(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
+	var plane := String(a.get("plane", "XY"))
+	if not SketchFeature.PLANES.has(plane):
+		_reply_err(p, id, "bad_args", "unknown plane '%s'" % plane)
+		return null
+	var half := CadWorld.PLANE_SIDE * 0.5
+	var uv := _vec2(a["uv"]) if a.has("uv") else Vector2(half, half)
+	var basis := SketchFeature.plane_basis(plane)
+	var world: Vector3 = basis.x * uv.x + basis.y * uv.y
+	var cam := app.rig.camera
+	var behind := cam.is_position_behind(world)
+	# unproject_position is in the SubViewport's pixels; the same offset the
+	# sketch-view queries apply puts it in window pixels, which is what the
+	# input commands take.
+	var rect := app.viewport_rect()
+	var s := cam.unproject_position(world) + rect.position
+	var on_screen := not behind and rect.has_point(s)
+	return {"p": [s.x, s.y], "visible": on_screen}
+
+
 ## Global rect of a named control under AppRoot (for driving real UI).
 func _cmd_query_control(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
 	var node := app.find_child(String(a.get("name", "")), true, false) as Control
@@ -398,7 +439,13 @@ func _cmd_query_active_tool(_a: Dictionary, _p: StreamPeerTCP, _id: Variant) -> 
 
 
 func _cmd_query_selection(_a: Dictionary, _p: StreamPeerTCP, _id: Variant) -> Dictionary:
-	return {"selection": Array(app.selection)}
+	# `selected_constraint` is a separate selection channel from `selection`
+	# (entities): clicking a dimension label selects the CONSTRAINT, which is
+	# what makes typing edit its value. Reporting only the entity list made a
+	# label click look like it had selected nothing at all.
+	return {"selection": Array(app.selection),
+		"constraint": app.selected_constraint,
+		"dim_hits": app.dim_hits.size()}
 
 
 ## --- action.* ----------------------------------------------------------------
@@ -468,6 +515,9 @@ func _cmd_action_set_pref(a: Dictionary, _p: StreamPeerTCP, _id: Variant) -> Dic
 		app.snap.grid_enabled = bool(a["grid_snap"])
 	if a.has("entity_snap"):
 		app.snap.entity_snap_enabled = bool(a["entity_snap"])
+	# The toolbar checkboxes show this same state — refresh them, or the hand
+	# path and the RPC path would disagree about what is on.
+	app.sync_pref_checks()
 	return {"inference": app.prefs["inference"],
 		"grid_snap": app.snap.grid_enabled,
 		"entity_snap": app.snap.entity_snap_enabled}

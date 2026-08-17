@@ -4,29 +4,120 @@ extends Node3D
 ## (pickable by math raycast, no physics), and line meshes for every live
 ## sketch. World units are mm.
 
-const PLANE_HALF := 120.0        # mm half-extent of the origin plane quads
+## Side length (mm) of each origin plane quad. Fusion-style, the quad occupies
+## the +u/+v quadrant with its corner on the origin, so this is a full side
+## rather than a half-extent — hit tests run 0..PLANE_SIDE, not ±.
+const PLANE_SIDE := 120.0
 const COLOR_PLANE := Color(0.55, 0.65, 0.85, 0.10)
 const COLOR_PLANE_HOVER := Color(0.55, 0.75, 1.0, 0.28)
 const COLOR_SKETCH := Color(0.30, 0.62, 0.96)
 const COLOR_CONSTRUCTION := Color(0.72, 0.55, 0.95)
+## The one background colour for BOTH modes. Model mode paints it as the 3D
+## environment's clear colour, sketch mode fills the 2D canvas with it, so
+## switching modes does not change the colour under the work.
+const COLOR_BG := Color(0.13, 0.14, 0.16)
+const COLOR_BODY := Color(0.62, 0.66, 0.72)
+const COLOR_BODY_SELECTED := Color(1.0, 0.72, 0.25)
+## Solid edge overlay — dark, Fusion-style, so silhouettes read at any angle.
+const COLOR_BODY_EDGE := Color(0.10, 0.11, 0.13)
 const AXIS_LEN := 150.0
+## Transparent draw order: the grid draws early among transparents.
+const GRID_RENDER_PRIORITY := -1
+## How far the grid quad sits BELOW its plane (mm). Enough to win/lose depth
+## tests cleanly against coplanar lines, far too small to see.
+const GRID_SINK_MM := 0.05
+
+## Ground grid, Fusion-style. Lines every `step` mm with a brighter line every
+## GRID_MAJOR_EVERY; the whole thing spans GRID_SPAN_MM each way from the
+## origin, so it reads as a plane rather than a fixed-size mat.
+## Grid line colours. Alpha 0.05 (the original) lands only ~11/255 above the
+## background at FULL pixel coverage, and a line viewed near edge-on covers a
+## fraction of a pixel, which quantises that away — so it must be higher than
+## it looks like it needs to be. These were briefly pushed to 0.22/0.40 while
+## the shader was multiplying two fades together and eating most of it; with
+## that corrected, the same values read as a glaring white mat, so they come
+## back down. The grid is scenery: present, legible, never competing with the
+## geometry drawn on it.
+const COLOR_GRID_MINOR := Color(1, 1, 1, 0.085)
+const COLOR_GRID_MAJOR := Color(1, 1, 1, 0.17)
+## Where lines have fully faded, as a fraction of the grid's own span. Under 1
+## so the fade always completes inside the mesh — the grid must end because it
+## faded out, never because the geometry stopped at a visible square edge.
+const GRID_FADE_FRAC := 0.85
+const GRID_MAJOR_EVERY := 5
+## How far the grid reaches, as a COUNT OF STEPS each way from the origin.
+##
+## Both directions get the identical count, which is what keeps the cells
+## square. Counting steps (rather than fixing a span in mm) means the grid
+## grows and shrinks with the zoom-driven step, so it always covers the view;
+## a fixed mm span would leave the grid ending mid-screen when zoomed out and
+## emit needless geometry when zoomed in. The fade is derived from the same
+## number, so the grid always ends by fading, never by the mesh running out.
+const GRID_SPAN_STEPS := 44
+## Upper bound on lines per direction, so a fine step over the fixed span
+## cannot emit a wall of geometry.
+const GRID_MAX_LINES := 400
+## Aim for one grid line per this fraction of the VIEW HEIGHT. The sketch
+## canvas aims for one line every ~48 px, so this is the same rule expressed as
+## a fraction of the visible span — which makes the two grids agree instead of
+## drifting apart. (It keyed off camera DISTANCE before; that is proportional to
+## view height under perspective but meaningless under an orthographic camera,
+## where the 3D grid ended up four times coarser than the canvas beneath it.)
+const GRID_TARGET_FRAC := 48.0 / 700.0
 
 var _plane_meshes := {}          # plane name -> MeshInstance3D
+var _axes: MeshInstance3D = null
 var _sketch_root: Node3D = null
+var _grid: MeshInstance3D = null
+
+## The plane the ground grid currently lies on. Model mode shows XY (the
+## ground); sketch mode moves it onto the sketch's own plane so the grid
+## reads as the surface being drawn on.
+var _grid_plane := "XY"
+var _grid_unit: UnitConverter.Unit = UnitConverter.Unit.IN
+var _grid_step := 0.0
+## Cross-fade state for the zoom transition: how far the next FINER ladder rung
+## has arrived (0..1) and the ratio between the two rungs. Both change
+## continuously as the view scales, which is what removes the pop.
+var _grid_blend := 0.0
+var _grid_ratio := 2.0
+var _grid_shown := true
+
+## Per-plane user visibility from the browser tree. The planes only actually
+## show when the user asks for them AND the current mode wants them shown
+## (`_planes_mode_visible`) — Fusion keeps them out of the way until a sketch
+## is being placed.
+var _plane_shown := {}           # plane name -> bool
+var _planes_mode_visible := false
+var _origin_shown := true
+## Feature id of the selected solid, "" for none.
+var _selected_body := ""
+## Feature id -> false for bodies the browser tree has hidden. Absent = shown,
+## so a newly created body is visible without needing an entry.
+var _body_hidden := {}
+## Feature id -> false for sketches the browser tree has hidden. Absent =
+## shown. Governs the 3D line mesh AND the sketch-mode reference geometry, so
+## one tick means the same thing in both modes.
+var _sketch_hidden := {}
 
 
 func _ready() -> void:
 	var light := DirectionalLight3D.new()
 	light.name = "Sun"
-	light.rotation = Vector3(-0.9, 0.6, 0)
+	# Z-up world: aim the key light down from above (-Z) and slightly to the
+	# side, so the ground plane and solid tops are the lit surfaces.
+	light.basis = Basis.looking_at(Vector3(-0.4, 0.6, -1.0), Vector3(0, 0, 1))
 	add_child(light)
 	var env := WorldEnvironment.new()
 	var e := Environment.new()
+	e.background_mode = Environment.BG_COLOR
+	e.background_color = COLOR_BG
 	e.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	e.ambient_light_color = Color(0.55, 0.57, 0.62)
 	e.ambient_light_energy = 0.6
 	env.environment = e
 	add_child(env)
+	_build_grid()
 	_build_axes()
 	_build_planes()
 	_sketch_root = Node3D.new()
@@ -45,18 +136,249 @@ func _build_axes() -> void:
 		im.surface_add_vertex(Vector3.ZERO)
 		im.surface_add_vertex(axis[0])
 		im.surface_end()
-	var mi := MeshInstance3D.new()
-	mi.name = "Axes"
-	mi.mesh = im
-	mi.material_override = _line_material(Color.WHITE)
-	add_child(mi)
+	_axes = MeshInstance3D.new()
+	_axes.name = "Axes"
+	_axes.mesh = im
+	# Plain depth-tested lines. They used to be `no_depth_test` to survive the
+	# grid painting over them, but that same flag drew them THROUGH solids —
+	# a blue axis skewering every extrude, which read as a transparent body.
+	# Now the grid depth-tests and sits GRID_SINK_MM below the plane, so the
+	# axes win against the grid honestly and hide behind solids like
+	# everything else.
+	var axis_mat := _line_material(Color.WHITE)
+	_axes.material_override = axis_mat
+	add_child(_axes)
+
+
+## Draws the grid ANALYTICALLY on a single quad, rather than as line
+## primitives.
+##
+## Line primitives were the root of the "missing grid lines" bug that survived
+## four attempted fixes. `PRIMITIVE_LINES` rasterises a hairline exactly one
+## pixel wide with no anti-aliasing, so at the grazing angles a ground plane is
+## normally viewed at, lines land between pixel centres and simply disappear —
+## in RUNS, which is why cells read as rectangles. Measuring a scanline across
+## the old screenshots showed gaps of 13, 52, 39, 51 px where a smooth
+## perspective ramp was expected: whole groups of lines absent. No amount of
+## alpha, span, fade or step arithmetic can fix that, because the geometry was
+## never the problem — the rasteriser was throwing it away.
+##
+## Computing coverage per fragment instead gives a line that is always at least
+## a pixel wide and antialiases itself, using screen-space derivatives to know
+## how wide a millimetre is at this pixel. Distant lines fade smoothly into the
+## background instead of flickering out, and the whole grid is two triangles.
+const GRID_SHADER := """
+shader_type spatial;
+// Depth-TESTED (but never written): solids must occlude the grid — painting
+// it over bodies made every solid read as transparent. The coplanar-fight
+// with sketch lines and axes is solved by sinking the quad GRID_SINK_MM
+// below its plane instead of disabling the test.
+render_mode unshaded, blend_mix, depth_draw_never,
+	cull_disabled, shadows_disabled;
+
+uniform float fade_mm = 2600.0;
+// The COARSE decade currently in play, in mm. The next finer level is this
+// divided by `level_ratio`, and `level_blend` says how far in it is.
+uniform float step_mm = 25.4;
+// Ratio between adjacent levels of the 1/2/5 ladder — not constant (1->2 is
+// x2, 2->5 is x2.5, 5->10 is x2), so the CPU supplies the live one.
+uniform float level_ratio = 2.0;
+// 0 = only the coarse level is drawn, 1 = the fine level has fully arrived and
+// has itself become the coarse one.
+uniform float level_blend = 0.0;
+uniform int major_every = 5;
+uniform vec4 minor_color : source_color = vec4(1.0, 1.0, 1.0, 0.085);
+uniform vec4 major_color : source_color = vec4(1.0, 1.0, 1.0, 0.17);
+
+// Fraction of `fade_mm` that stays at FULL strength; only the outer sliver
+// fades, so the working area is never dimmed.
+const float FADE_START = 0.55;
+
+varying vec3 local_pos;
+
+void vertex() {
+	local_pos = VERTEX;
+}
+
+// Coverage of the nearest gridline of spacing `sp`, antialiased. `w` is how
+// many millimetres this pixel spans, so a line never thins below one pixel and
+// never aliases away.
+float line_cover(vec2 p, float sp, vec2 w) {
+	vec2 d = abs(fract(p / sp - 0.5) - 0.5) * sp;
+	vec2 a = smoothstep(w * 1.5, w * 0.5, d);
+	return max(a.x, a.y);
+}
+
+void fragment() {
+	// The grid lies in the quad's own XY, so these are millimetres directly.
+	vec2 p = local_pos.xy;
+	// How much of the plane one pixel covers here — larger with distance, which
+	// is exactly what keeps far lines a pixel wide instead of vanishing.
+	vec2 w = fwidth(p) + 0.0001;
+
+	// TWO LEVELS AT ONCE, cross-faded — the Blender behaviour.
+	//
+	// Snapping the spacing to a ladder means that at some zoom the step jumps
+	// from one rung to the next and every intermediate line pops in or out on a
+	// single frame. Drawing the coarse level solidly AND the next finer level
+	// at `level_blend` opacity removes the pop entirely: the in-between lines
+	// arrive gradually as you zoom in, reach full strength exactly as the
+	// ladder clicks over, and the cycle repeats with no visible event.
+	float fine_mm = step_mm / max(level_ratio, 1.001);
+	float coarse = line_cover(p, step_mm, w);
+	float fine = line_cover(p, fine_mm, w);
+	// Majors ride the coarse level, so the every-fifth line stays put while the
+	// finer subdivisions come and go around it.
+	float major = line_cover(p, step_mm * float(major_every), w);
+
+	// Alpha per family; the fine level is the only one that fades.
+	float a_minor = coarse * minor_color.a;
+	float a_fine = fine * minor_color.a * level_blend;
+	float a_major = major * major_color.a;
+	float cover = max(max(a_minor, a_fine), a_major);
+	// Colour follows whichever family is strongest here, so a major reads as a
+	// major even where a minor crosses it.
+	vec4 col = mix(minor_color, major_color, step(max(a_minor, a_fine), a_major));
+
+	// Radial fade so the grid dissolves into the background rather than ending
+	// at a visible square edge.
+	float d = length(p) / max(fade_mm, 0.001);
+	cover *= 1.0 - smoothstep(FADE_START, 1.0, d);
+
+	ALBEDO = col.rgb;
+	ALPHA = cover;
+}
+"""
+
+
+func _build_grid() -> void:
+	_grid = MeshInstance3D.new()
+	_grid.name = "Grid"
+	# The grid is scenery: it must never occlude geometry sitting on it, and it
+	# should not fight the depth buffer with coplanar sketch lines — both are
+	# handled by the render_mode flags in GRID_SHADER.
+	var sh := Shader.new()
+	sh.code = GRID_SHADER
+	var mat := ShaderMaterial.new()
+	mat.shader = sh
+	_grid.material_override = mat
+	mat.render_priority = GRID_RENDER_PRIORITY
+	_grid.sorting_offset = -1.0
+	add_child(_grid)
+	_rebuild_grid()
+
+
+## Resize/reorient the grid quad and push the current step to the shader.
+##
+## The mesh is now two triangles that never change; only the transform and a
+## few uniforms move, so this is cheap enough to call whenever the step changes.
+func _rebuild_grid() -> void:
+	if _grid == null:
+		return
+	if _grid_step <= 0.0:
+		_grid_step = SketchView.step_for(_grid_unit, 25.0)
+	var basis := SketchFeature.plane_basis(_grid_plane)
+	# Reach, in millimetres. A whole number of steps keeps the fade landing on
+	# a grid line rather than mid-cell.
+	var half := _grid_step * mini(GRID_SPAN_STEPS, GRID_MAX_LINES)
+	# One quad, oriented onto the grid's plane. QuadMesh is built in its own XY
+	# with +Z as normal, which is exactly how the shader reads `local_pos`.
+	var quad := QuadMesh.new()
+	quad.size = Vector2(half * 2.0, half * 2.0)
+	_grid.mesh = quad
+	# A hair below the plane, so coplanar geometry (axes, sketch lines on the
+	# plane) wins the depth test instead of z-fighting the grid.
+	_grid.transform = Transform3D(basis, basis * Vector3(0, 0, -GRID_SINK_MM))
+	var mat := _grid.material_override as ShaderMaterial
+	if mat != null:
+		mat.set_shader_parameter("fade_mm", half * GRID_FADE_FRAC)
+		mat.set_shader_parameter("step_mm", _grid_step)
+		mat.set_shader_parameter("major_every", GRID_MAJOR_EVERY)
+		mat.set_shader_parameter("level_blend", _grid_blend)
+		mat.set_shader_parameter("level_ratio", _grid_ratio)
+		mat.set_shader_parameter("minor_color", COLOR_GRID_MINOR)
+		mat.set_shader_parameter("major_color", COLOR_GRID_MAJOR)
+	_grid.visible = _grid_shown
+
+
+## Point the grid at a plane ("XY" in model mode, the sketch's plane while
+## editing one). No-op when it is already there.
+func set_grid_plane(plane_name: String) -> void:
+	if _grid_plane == plane_name or not SketchFeature.PLANES.has(plane_name):
+		return
+	_grid_plane = plane_name
+	_rebuild_grid()
+
+
+func grid_plane() -> String:
+	return _grid_plane
+
+
+func set_grid_unit(unit: UnitConverter.Unit) -> void:
+	if _grid_unit == unit:
+		return
+	_grid_unit = unit
+	_grid_step = 0.0
+	_rebuild_grid()
+
+
+## Adapt grid density to how much world the view spans: the spacing follows the
+## same 1/2/5 ladder the sketch canvas uses, so zooming out thins the lines out
+## instead of collapsing them into a solid sheet.
+##
+## `view_height_mm` — the world height of the viewport (`OrbitCamera.
+## view_height_mm`), NOT the camera distance.
+func update_grid(view_height_mm: float) -> void:
+	var levels := SketchView.step_levels(
+		_grid_unit, view_height_mm * GRID_TARGET_FRAC)
+	var step: float = levels["step"]
+	# The BLEND changes continuously even when the step does not, and it is what
+	# makes zooming smooth, so it has to be pushed every time — an early-out on
+	# the step alone would leave the cross-fade frozen between rungs and bring
+	# the popping straight back.
+	_grid_blend = levels["blend"]
+	_grid_ratio = levels["ratio"]
+	if is_equal_approx(step, _grid_step):
+		_push_grid_uniforms()
+		return
+	_grid_step = step
+	_rebuild_grid()
+
+
+## Push only the per-frame uniforms (the cross-fade), leaving the mesh alone.
+func _push_grid_uniforms() -> void:
+	if _grid == null:
+		return
+	var mat := _grid.material_override as ShaderMaterial
+	if mat == null:
+		return
+	mat.set_shader_parameter("level_blend", _grid_blend)
+	mat.set_shader_parameter("level_ratio", _grid_ratio)
+
+
+func set_grid_shown(shown: bool) -> void:
+	_grid_shown = shown
+	if _grid != null:
+		_grid.visible = shown
+
+
+func grid_shown() -> bool:
+	return _grid_shown
+
+
+func grid_step() -> float:
+	return _grid_step
 
 
 func _build_planes() -> void:
 	for plane_name in SketchFeature.PLANES:
 		var basis := SketchFeature.plane_basis(plane_name)
+		# Fusion-style: the quad sits in ONE quadrant with its corner ON the
+		# origin, running out along +u/+v — not a sheet centred on the origin.
+		# QuadMesh is centred by construction, so shift it half a side each way.
 		var quad := QuadMesh.new()
-		quad.size = Vector2(PLANE_HALF * 2.0, PLANE_HALF * 2.0)
+		quad.size = Vector2(PLANE_SIDE, PLANE_SIDE)
+		quad.center_offset = Vector3(PLANE_SIDE * 0.5, PLANE_SIDE * 0.5, 0.0)
 		var mi := MeshInstance3D.new()
 		mi.name = "Plane" + plane_name
 		mi.mesh = quad
@@ -68,13 +390,146 @@ func _build_planes() -> void:
 		mat.albedo_color = COLOR_PLANE
 		mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 		mi.material_override = mat
+		mi.visible = false
 		add_child(mi)
 		_plane_meshes[plane_name] = mi
+		# Unticked on open: Fusion starts with a clean view, and the box now
+		# honestly reports that the plane is hidden.
+		_plane_shown[plane_name] = false
 
 
+## Plane-picking override: while true EVERY plane shows regardless of its
+## browser tick, because the user is being asked to click one. Turning it off
+## restores whatever the ticks say. The ticks themselves are untouched, so a
+## plane the user unticked comes back hidden once picking ends.
 func set_planes_visible(v: bool) -> void:
+	_planes_mode_visible = v
+	_apply_plane_visibility()
+
+
+## Browser-tree toggle for a single origin plane. Independent of the mode
+## gate: hiding "XY" here keeps it hidden even while picking a plane.
+func set_plane_shown(plane_name: String, shown: bool) -> void:
+	if not _plane_meshes.has(plane_name):
+		return
+	_plane_shown[plane_name] = shown
+	_apply_plane_visibility()
+
+
+func plane_shown(plane_name: String) -> bool:
+	return bool(_plane_shown.get(plane_name, false))
+
+
+## Browser-tree toggle for the origin axes. Unlike the planes these have no
+## mode gate — axes are cheap orientation cues, so they stay up by default.
+func set_origin_shown(shown: bool) -> void:
+	_origin_shown = shown
+	if _axes != null:
+		_axes.visible = shown
+
+
+func origin_shown() -> bool:
+	return _origin_shown
+
+
+func _apply_plane_visibility() -> void:
 	for k: String in _plane_meshes:
-		(_plane_meshes[k] as MeshInstance3D).visible = v
+		# A tick means "show it", full stop. Plane-picking additionally forces
+		# all three on for the duration of the pick.
+		(_plane_meshes[k] as MeshInstance3D).visible = \
+			_planes_mode_visible or bool(_plane_shown.get(k, false))
+
+
+func _body_shown(fid: String) -> bool:
+	return not bool(_body_hidden.get(fid, false))
+
+
+## Browser-tree toggle for one solid body.
+func set_body_shown(fid: String, shown: bool) -> void:
+	if shown:
+		_body_hidden.erase(fid)
+	else:
+		_body_hidden[fid] = true
+	var mi := _body_mesh(fid)
+	if mi != null:
+		mi.visible = shown
+
+
+func body_shown(fid: String) -> bool:
+	return _body_shown(fid)
+
+
+## Browser-tree toggle for one SKETCH's geometry. Absent = shown, so a newly
+## created sketch is visible without needing an entry. The same flag governs
+## the dimmed reference geometry drawn in sketch mode, so hiding a sketch hides
+## it in both modes rather than only in the 3D view.
+func set_sketch_shown(fid: String, shown: bool) -> void:
+	if shown:
+		_sketch_hidden.erase(fid)
+	else:
+		_sketch_hidden[fid] = true
+	var mi := _body_mesh(fid)   # keyed on feature_id; sketch meshes carry it too
+	if mi != null:
+		mi.visible = shown
+
+
+func sketch_shown(fid: String) -> bool:
+	return not bool(_sketch_hidden.get(fid, false))
+
+
+## Highlight the selected solid; "" clears. View state only — recolouring a
+## material is not a model mutation, so this never touches the command stack.
+func set_selected_body(fid: String) -> void:
+	if _selected_body == fid:
+		return
+	_selected_body = fid
+	if _sketch_root == null:
+		return
+	for c in _sketch_root.get_children():
+		var mi := c as MeshInstance3D
+		if mi == null or not mi.has_meta("feature_id"):
+			continue
+		# Bodies carry their shaded material on SURFACE 0 (surface 1 is the
+		# edge overlay); sketch line meshes have no surface override and are
+		# not bodies, so they fall through untouched.
+		var mat := mi.get_surface_override_material(0) as StandardMaterial3D
+		if mat == null:
+			continue
+		mat.albedo_color = COLOR_BODY_SELECTED \
+			if String(mi.get_meta("feature_id")) == fid else COLOR_BODY
+
+
+func selected_body() -> String:
+	return _selected_body
+
+
+func _body_mesh(fid: String) -> MeshInstance3D:
+	if _sketch_root == null:
+		return null
+	for c in _sketch_root.get_children():
+		var mi := c as MeshInstance3D
+		if mi != null and mi.has_meta("feature_id") \
+				and String(mi.get_meta("feature_id")) == fid:
+			return mi
+	return null
+
+
+## Which solid body does this ray hit first? Feature id, or "" on a miss.
+## Hidden bodies are not pickable — what you cannot see, you cannot click.
+func pick_body(origin: Vector3, dir: Vector3) -> String:
+	var best := ""
+	var best_t := INF
+	if _sketch_root == null:
+		return best
+	for c in _sketch_root.get_children():
+		var mi := c as MeshInstance3D
+		if mi == null or not mi.visible or not mi.has_meta("feature_id"):
+			continue
+		var t := _ray_mesh(mi, origin, dir)
+		if t >= 0.0 and t < best_t:
+			best_t = t
+			best = String(mi.get_meta("feature_id"))
+	return best
 
 
 func set_plane_hover(plane_name: String) -> void:
@@ -82,6 +537,14 @@ func set_plane_hover(plane_name: String) -> void:
 		var mat := (_plane_meshes[k] as MeshInstance3D).material_override \
 			as StandardMaterial3D
 		mat.albedo_color = COLOR_PLANE_HOVER if k == plane_name else COLOR_PLANE
+
+
+## Is a world point inside an origin plane's quad? The quad runs from the
+## origin out along +u/+v, so both coordinates must be in 0..PLANE_SIDE.
+func _on_quad(hit: Vector3, basis: Basis) -> bool:
+	var u := hit.dot(basis.x)
+	var v := hit.dot(basis.y)
+	return u >= 0.0 and u <= PLANE_SIDE and v >= 0.0 and v <= PLANE_SIDE
 
 
 ## Math raycast (no physics): which origin plane does the ray hit inside its
@@ -99,7 +562,7 @@ func pick_plane(origin: Vector3, dir: Vector3) -> String:
 		if t <= 0.0 or t >= best_t:
 			continue
 		var hit := origin + dir * t
-		if absf(hit.dot(basis.x)) <= PLANE_HALF and absf(hit.dot(basis.y)) <= PLANE_HALF:
+		if _on_quad(hit, basis):
 			best = plane_name
 			best_t = t
 	return best
@@ -117,11 +580,28 @@ func rebuild_sketches(doc: CadDocument) -> void:
 				var smi := MeshInstance3D.new()
 				smi.name = f.name
 				smi.mesh = mesh
+				# Feature id rides along so picks and the browser tree can map
+				# a mesh back to its feature — node names follow f.name, which
+				# the user can end up renaming.
+				smi.set_meta("feature_id", f.id)
 				var mat := StandardMaterial3D.new()
-				mat.albedo_color = Color(0.62, 0.66, 0.72)
+				mat.albedo_color = COLOR_BODY_SELECTED if f.id == _selected_body \
+					else COLOR_BODY
 				mat.metallic = 0.1
 				mat.roughness = 0.7
-				smi.material_override = mat
+				# Double-sided: with a closed outward-wound shell the back
+				# faces are depth-hidden anyway, so this costs nothing — and
+				# it guarantees a solid can NEVER render see-through even if
+				# some profile slips through with reversed winding.
+				mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+				# Per-surface, NOT material_override: surface 1 is the edge-line
+				# overlay and an override would shade the edges like the body.
+				smi.set_surface_override_material(0, mat)
+				if mesh.get_surface_count() > 1:
+					var emat := _line_material(COLOR_BODY_EDGE)
+					emat.albedo_color = COLOR_BODY_EDGE
+					smi.set_surface_override_material(1, emat)
+				smi.visible = _body_shown(f.id)
 				_sketch_root.add_child(smi)
 			continue
 		if not (f is SketchFeature):
@@ -143,8 +623,109 @@ func rebuild_sketches(doc: CadDocument) -> void:
 		var mi := MeshInstance3D.new()
 		mi.name = sf.name
 		mi.mesh = im
+		mi.set_meta("feature_id", sf.id)
 		mi.material_override = _line_material(COLOR_SKETCH)
+		mi.visible = sketch_shown(sf.id)
 		_sketch_root.add_child(mi)
+
+
+## World-space bounds of everything the model shows — solids and sketch
+## lines. Returns a zero-size AABB when there is nothing to frame, which the
+## camera reads as "no bodies".
+func model_bounds() -> AABB:
+	var out := AABB()
+	var any := false
+	if _sketch_root == null:
+		return out
+	for c in _sketch_root.get_children():
+		var mi := c as MeshInstance3D
+		if mi == null or mi.mesh == null or not mi.visible:
+			continue
+		var box := mi.transform * mi.mesh.get_aabb()
+		if not any:
+			out = box
+			any = true
+		else:
+			out = out.merge(box)
+	return out
+
+
+## Nearest surface point under a ray, across solids and the origin planes.
+## Returns {"ok": bool, "pos": Vector3}.
+func pick_point(origin: Vector3, dir: Vector3) -> Dictionary:
+	var best_t := INF
+	var best := Vector3.ZERO
+	# Solid meshes: triangle-exact so the pivot lands on the surface the user
+	# is actually looking at, not on its bounding box.
+	if _sketch_root != null:
+		for c in _sketch_root.get_children():
+			var mi := c as MeshInstance3D
+			if mi == null or mi.mesh == null or not mi.visible:
+				continue
+			var t := _ray_mesh(mi, origin, dir)
+			if t >= 0.0 and t < best_t:
+				best_t = t
+				best = origin + dir * t
+	# Origin planes, only where they are visible.
+	for k: String in _plane_meshes:
+		if not (_plane_meshes[k] as MeshInstance3D).visible:
+			continue
+		var basis := SketchFeature.plane_basis(k)
+		var n := basis.z
+		var denom := dir.dot(n)
+		if absf(denom) < 1e-6:
+			continue
+		var t2 := -origin.dot(n) / denom
+		if t2 <= 0.0 or t2 >= best_t:
+			continue
+		var hit := origin + dir * t2
+		if _on_quad(hit, basis):
+			best_t = t2
+			best = hit
+	if best_t == INF:
+		return {"ok": false, "pos": Vector3.ZERO}
+	return {"ok": true, "pos": best}
+
+
+## Ray vs a mesh instance's triangles; nearest positive t or -1. Only solids
+## (ArrayMesh) are pickable — sketches render as ImmediateMesh line strips,
+## which have no surface to land a pivot on.
+func _ray_mesh(mi: MeshInstance3D, origin: Vector3, dir: Vector3) -> float:
+	var mesh := mi.mesh as ArrayMesh
+	if mesh == null:
+		return -1.0
+	var xform := mi.transform
+	# Cheap reject before touching triangles.
+	if not (xform * mesh.get_aabb()).intersects_ray(origin, dir):
+		return -1.0
+	var best := -1.0
+	for s in mesh.get_surface_count():
+		if mesh.surface_get_primitive_type(s) != Mesh.PRIMITIVE_TRIANGLES:
+			continue
+		var arrays := mesh.surface_get_arrays(s)
+		var verts := arrays[Mesh.ARRAY_VERTEX] as PackedVector3Array
+		if verts.is_empty():
+			continue
+		# Index array is null for non-indexed surfaces (the extrude builder
+		# emits those), so fall back to reading vertices in triples.
+		var idx := PackedInt32Array()
+		if arrays[Mesh.ARRAY_INDEX] != null:
+			idx = arrays[Mesh.ARRAY_INDEX] as PackedInt32Array
+		var indexed := idx.size() > 0
+		var count := idx.size() if indexed else verts.size()
+		var i := 0
+		while i + 2 < count:
+			var a: Vector3 = verts[idx[i]] if indexed else verts[i]
+			var b: Vector3 = verts[idx[i + 1]] if indexed else verts[i + 1]
+			var c: Vector3 = verts[idx[i + 2]] if indexed else verts[i + 2]
+			var hit = Geometry3D.ray_intersects_triangle(
+				origin, dir, xform * a, xform * b, xform * c)
+			if hit != null:
+				var t := origin.distance_to(hit as Vector3)
+				if best < 0.0 or t < best:
+					best = t
+			i += 3
+	return best
 
 
 func _entity_polyline(sk: Sketch, e: SketchEntity) -> PackedVector2Array:

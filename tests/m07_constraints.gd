@@ -90,9 +90,33 @@ func _run() -> bool:
 	if absf(dc.value - measured) > 0.001:
 		return _fail("distance default not measured value")
 
-	# --- conflict: contradictory distance flags red, summary reports it.
+	# --- a SECOND, contradictory distance on the same pair cannot drive: the
+	# first one already determined it. Rather than let the two fight (which is
+	# what produced a "conflict" and jittering geometry), it is accepted as a
+	# DRIVEN reference dimension, Fusion-style. Geometry must not move.
 	var ops: Array[String] = [sk.point(l1.p0).id, sk.point(l1.p1).id]
+	var before_len := sk.point(l1.p0).pos.distance_to(sk.point(l1.p1).pos)
 	_root.add_constraint(SketchConstraint.make(T.DISTANCE, ops, measured * 2.0))
+	var added: SketchConstraint = sk.constraints[sk.constraints.size() - 1]
+	if not added.driven:
+		return _fail("redundant dimension was not demoted to driven")
+	var after_len := sk.point(l1.p0).pos.distance_to(sk.point(l1.p1).pos)
+	if absf(after_len - before_len) > 0.001:
+		return _fail("driven dimension moved geometry (%f -> %f)"
+			% [before_len, after_len])
+	# Demoted, so it is not a conflict — the sketch is still well-defined.
+	if not (_root.dof.get("conflicts", []) as Array).is_empty():
+		return _fail("driven dimension still reported as a conflict")
+	_root.delete_constraint(sk.constraints.size() - 1)
+
+	# --- a genuine conflict still IS reported: force the duplicate to drive
+	# (as a file written before the demotion existed would) and the analyzer
+	# must flag it rather than pretend the sketch is fine.
+	var forced := SketchConstraint.make(T.DISTANCE, ops, measured * 2.0)
+	var forced_after: Array = sk.constraints.duplicate()
+	forced_after.append(forced)
+	_root.stack.push(CmdSetConstraints.new(_root.active_sketch_id,
+		sk.constraints, forced_after))
 	if (_root.dof.get("conflicts", []) as Array).is_empty():
 		return _fail("conflict not detected")
 	if DofAnalyzer.summary(sk) != "Conflicting constraints":

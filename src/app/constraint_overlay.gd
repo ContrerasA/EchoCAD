@@ -37,29 +37,44 @@ const GLYPH := {
 }
 
 
-## Representative world position of a constraint (mean of operand reps).
+## Where one operand's badge sits, or null-ish (Vector2.INF) if it has none.
+static func _operand_anchor(sk: Sketch, op: String) -> Vector2:
+	var e := sk.entity(op)
+	if e == null:
+		return Vector2.INF
+	match e.kind():
+		"point":
+			return (e as SketchPoint).pos
+		"line":
+			var m := SketchGeometry.line_midpoint(sk, e as SketchLine)
+			return m["pos"] if m.get("ok", false) else Vector2.INF
+		"circle", "arc":
+			var cp := sk.point((e as SketchArc).center if e is SketchArc
+				else (e as SketchCircle).center)
+			return cp.pos if cp != null else Vector2.INF
+	return Vector2.INF
+
+
+## One anchor PER OPERAND — a Parallel between two lines gets a badge on each,
+## as Fusion does. Averaging them into a single point (the old behaviour) put
+## one badge floating in the space between the two lines, belonging visibly to
+## neither, which is useless for seeing what is constrained to what.
+static func anchors_of(sk: Sketch, c: SketchConstraint) -> Array:
+	var out: Array = []
+	for op in c.operands:
+		var p := _operand_anchor(sk, op)
+		if p != Vector2.INF:
+			out.append(p)
+	return out
+
+
+## Representative world position of a constraint (mean of operand reps). Used
+## where a SINGLE point is needed — dimension label anchoring — rather than for
+## badge placement, which wants one per operand (`anchors_of`).
 static func anchor_of(sk: Sketch, c: SketchConstraint) -> Vector2:
 	var sum := Vector2.ZERO
 	var n := 0
-	for op in c.operands:
-		var e := sk.entity(op)
-		if e == null:
-			continue
-		var p := Vector2.ZERO
-		match e.kind():
-			"point":
-				p = (e as SketchPoint).pos
-			"line":
-				var m := SketchGeometry.line_midpoint(sk, e as SketchLine)
-				if not m.get("ok", false):
-					continue
-				p = m["pos"]
-			"circle", "arc":
-				var cp := sk.point((e as SketchArc).center if e is SketchArc
-					else (e as SketchCircle).center)
-				if cp == null:
-					continue
-				p = cp.pos
+	for p: Vector2 in anchors_of(sk, c):
 		sum += p
 		n += 1
 	return sum / maxf(1.0, float(n))
@@ -77,12 +92,6 @@ static func draw(overlay: Control, view: SketchView, sk: Sketch,
 		var c := sk.constraints[i]
 		if c.is_dimensional():
 			continue   # DimensionOverlay draws those as real annotations
-		var world := anchor_of(sk, c)
-		var screen := view.world_to_screen(world) + Vector2(10, -10)
-		var cell := Vector2i(screen / 24.0)
-		var slot := int(used_slots.get(cell, 0))
-		used_slots[cell] = slot + 1
-		screen += Vector2(slot * 20.0, 0)
 		var color := COLOR_OK
 		if (analysis.get("conflicts", []) as Array).has(i):
 			color = COLOR_CONFLICT
@@ -92,11 +101,20 @@ static func draw(overlay: Control, view: SketchView, sk: Sketch,
 			color = COLOR_UNSOLVED
 		var label: String = GLYPH.get(c.type, "?")
 		var sz := font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 11)
-		var rect := Rect2(screen - Vector2(3, 10), sz + Vector2(7, 6))
-		overlay.draw_rect(rect, Color(0.10, 0.11, 0.13, 0.85))
-		overlay.draw_rect(rect, COLOR_SELECTED if i == selected else color,
-			false, 2.0 if i == selected else 1.0)
-		overlay.draw_string(font, screen, label, HORIZONTAL_ALIGNMENT_LEFT,
-			-1, 11, color)
-		hits.append({"index": i, "rect": rect})
+		# ONE BADGE PER OPERAND: a Parallel marks both lines, an Equal marks
+		# both entities. Each is independently clickable and all of them map
+		# back to the same constraint index, so clicking any one selects it.
+		for world: Vector2 in anchors_of(sk, c):
+			var screen := view.world_to_screen(world) + Vector2(10, -10)
+			var cell := Vector2i(screen / 24.0)
+			var slot := int(used_slots.get(cell, 0))
+			used_slots[cell] = slot + 1
+			screen += Vector2(slot * 20.0, 0)
+			var rect := Rect2(screen - Vector2(3, 10), sz + Vector2(7, 6))
+			overlay.draw_rect(rect, Color(0.10, 0.11, 0.13, 0.85))
+			overlay.draw_rect(rect, COLOR_SELECTED if i == selected else color,
+				false, 2.0 if i == selected else 1.0)
+			overlay.draw_string(font, screen, label, HORIZONTAL_ALIGNMENT_LEFT,
+				-1, 11, color)
+			hits.append({"index": i, "rect": rect})
 	return hits

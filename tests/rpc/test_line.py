@@ -32,7 +32,11 @@ def main():
           "toolbar click activates line tool")
 
     # Draw an L: exact horizontal then exact vertical, via world targets.
-    for p in [(0, 0), (50.8, 0.4), (50.3, 25.4)]:
+    # Starts clear of (0,0) so the census measures drawn geometry: the sketch
+    # origin is a real point at (0,0), and a first click landing on it WELDS
+    # to it (sharing the point rather than making a second one there), which
+    # would make the point count read one lower for the right reason.
+    for p in [(0, 20), (50.8, 20.4), (50.3, 45.4)]:
         app.click_world(p, steps=10)
     app.call("input.key", {"key": "escape"})
 
@@ -45,8 +49,8 @@ def main():
     check(types == ["HORIZONTAL", "VERTICAL"], f"inferred H+V (got {types})")
     by_id = {e["id"]: e for e in ents}
     corner = by_id[lines[0]["p1"]]
-    check(vec_near(corner["pos"], [50.8, 0.0], 1e-3),
-          "H inference snapped corner to y=0 (2in over)")
+    check(vec_near(corner["pos"], [50.8, 20.0], 1e-3),
+          "H inference snapped corner to the start's y (2in over)")
 
     # Draw with grid snap on: endpoints land on grid intersections.
     app.call("action.set_pref", {"grid_snap": True})
