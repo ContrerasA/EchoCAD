@@ -13,6 +13,9 @@ extends RefCounted
 const COLOR_FREE := Color(0.30, 0.62, 0.96)          # under-constrained (Fusion blue)
 const COLOR_CONSTRAINED := Color(0.42, 0.82, 0.55)   # fully constrained: green
 const COLOR_CONSTRUCTION := Color(0.72, 0.55, 0.95)  # construction: violet dashed
+## Projected (linked) geometry — Fusion's magenta. Solid stroke: it is real,
+## snappable, profile-forming geometry, just owned by its source.
+const COLOR_PROJECTED := Color(0.85, 0.45, 0.85)
 ## Geometry from OTHER sketches, drawn dim so it reads as context rather than
 ## as something the active sketch owns.
 const COLOR_REFERENCE := Color(0.45, 0.50, 0.58, 0.55)
@@ -95,7 +98,10 @@ func _add_entity(sketch: Sketch, e: SketchEntity, reference := false) -> void:
 		_canvas.set_stroke(handle, _stroke_mm * 0.75, COLOR_REFERENCE,
 			TVGCanvas.CAP_ROUND, TVGCanvas.JOIN_ROUND)
 		return
-	if e.construction:
+	if e.is_projected():
+		_canvas.set_stroke(handle, _stroke_mm, COLOR_PROJECTED,
+			TVGCanvas.CAP_ROUND, TVGCanvas.JOIN_ROUND)
+	elif e.construction:
 		_canvas.set_stroke(handle, _stroke_mm * 0.75, COLOR_CONSTRUCTION,
 			TVGCanvas.CAP_ROUND, TVGCanvas.JOIN_ROUND)
 		_canvas.set_stroke_dash(handle, PackedFloat32Array(

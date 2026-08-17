@@ -32,6 +32,11 @@ static func analyze(sk: Sketch) -> Dictionary:
 	# would never report "fully constrained".
 	if sk.origin_id() != "":
 		fixed[sk.origin_id()] = true
+	# Projected geometry is determined by its SOURCE sketch — its points (and
+	# a projected circle's radius) contribute no free variables here.
+	for e in sk.entities():
+		if e.is_projected() and (e.kind() == "point" or e.kind() == "circle"):
+			fixed[e.id] = true
 	for c in sk.constraints:
 		if c.type == SketchConstraint.Type.FIX:
 			for op in c.operands:
@@ -138,7 +143,11 @@ static func analyze(sk: Sketch) -> Dictionary:
 					constrained_circles.append(id)
 	# FIXed entities are constrained by definition (their vars were removed).
 	for id: String in fixed:
-		if not constrained_points.has(id):
+		var fe := sk.entity(id)
+		if fe != null and fe.kind() == "circle":
+			if not constrained_circles.has(id):
+				constrained_circles.append(id)
+		elif not constrained_points.has(id):
 			constrained_points.append(id)
 
 	var dof := nvars - rank
