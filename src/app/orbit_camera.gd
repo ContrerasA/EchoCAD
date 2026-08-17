@@ -283,6 +283,17 @@ func set_perspective() -> void:
 	camera.projection = Camera3D.PROJECTION_PERSPECTIVE
 
 
+## Leave orthographic for perspective without an apparent-size jump: the eye
+## moves to the distance where the perspective frustum spans the same world
+## height the ortho view did, so the switch is invisible until the camera moves.
+func to_perspective_preserving() -> void:
+	if camera == null:
+		return
+	if camera.projection == Camera3D.PROJECTION_ORTHOGONAL:
+		distance = camera.size / (2.0 * tan(deg_to_rad(camera.fov) * 0.5))
+	camera.projection = Camera3D.PROJECTION_PERSPECTIVE
+
+
 func is_orthographic() -> bool:
 	return camera != null \
 		and camera.projection == Camera3D.PROJECTION_ORTHOGONAL

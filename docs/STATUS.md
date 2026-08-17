@@ -23,6 +23,7 @@ signed off 2026-08-15/16.
 | M11 timeline | merged | chips, rollback marker drag, suppress |
 | M12 extrude | merged | profile finder, anchored replay, solids |
 | M13 Z-up + orbit pivots | merged | Z-up world, roll-free orbit, 3 pivot modes |
+| M14 sketch orbit | merged | off-axis orbit inside a sketch, cube-face return |
 
 ## Known limitations / phase-2 backlog
 
