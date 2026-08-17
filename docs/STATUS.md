@@ -1,22 +1,23 @@
 # EchoCAD — Status
 
-Updated: 2026-08-16. Milestones M0–M17 implemented and merged to `main` —
-every milestone in `docs/MILESTONES.md`, including the four deferred out of
-earlier QA passes (M14 sketch orbit, M15 project, M16 threaded solver, M17
-per-DOF drag). Automated coverage: 33 headless tests (`tools/run_tests.sh`)
-+ 12 RPC suites (`tools/run_rpc_tests.sh`), all green (run RPC suites
-HEADLESS=1 when unattended — windowed runs on a live desktop flake from
-real mouse interference). Manual QA sections in `docs/MANUAL_QA.md`:
-§M2–§M12 hand signed off 2026-08-15/16; §M13 folded into §M2; §M14–§M17
-hand-tested 2026-08-16 with three findings, all fixed (off-axis sketching
-now works Fusion-style — §M14 item 8; drag no longer pegs a core — §M16
-fix 1; point-on rails stay on the manifold — §M17 fix 5) and awaiting
-retest of just those items.
+Updated: 2026-08-17. Milestones M0–M21 implemented and merged to `main`.
+Automated coverage: 38 headless tests (`tools/run_tests.sh` /
+`tools\run_tests.ps1`) + 14 RPC suites (`tools/run_rpc_tests.sh` /
+`tools\run_rpc_tests.ps1`), all green on Windows (run RPC suites HEADLESS=1
+when unattended — windowed runs on a live desktop flake from real mouse
+interference).
 
-Windows: the repo is self-contained — vendored addons carry Linux and
-Windows x86_64 binaries; `tools/run_tests.ps1` + `tools/run_rpc_tests.ps1`
-mirror the bash runners, and `.gitattributes` keeps line endings sane
-across platforms. macOS/web binaries still pending in the sibling repos.
+Manual QA in `docs/MANUAL_QA.md`: §M2–§M12 signed off 2026-08-15/16;
+§M14–§M17 hand-tested 2026-08-16 — the remaining §M17 item-5 note (badge
+flashing "invalid" while dragging a point-on point) was root-caused and
+fixed 2026-08-17 (badge state now frozen during live gestures; applying
+Point-On no longer inflates the circle — see §M17 fix 5b) and awaits
+retest. §M18–§M21 (new) are PENDING sign-off.
+
+Windows: self-contained — vendored addons carry Linux + Windows x86_64
+binaries. The PS runners were hardened 2026-08-17 for stock PowerShell 5.1
+(encoding, stderr wrapping, Store-stub python resolution). macOS/web
+binaries still pending in the sibling repos.
 
 | Milestone | State | Notes |
 |---|---|---|
@@ -35,28 +36,32 @@ across platforms. macOS/web binaries still pending in the sibling repos.
 | M12 extrude | merged | profile finder, anchored replay, solids |
 | M13 Z-up + orbit pivots | merged | Z-up world, roll-free orbit, 3 pivot modes |
 | M14 sketch orbit | merged | off-axis orbit inside a sketch, cube-face return |
-| M15 project | merged | linked projections, source-follow, broken-link handling |
+| M15 project | merged | linked projections, source-follow, broken links |
 | M16 threaded solver | merged | drag re-solves on a worker thread, newest-only |
 | M17 per-DOF drag | merged | drags project onto remaining freedom (rails) |
+| M18 holes + booleans | merged | hole regions, extrude New Body/Join/Cut via CSG |
+| M19 modify upkeep | merged | chain offset + constraints, trim retarget, center rect |
+| M20 marquee + params | merged | window/crossing bands, Parameters dialog |
+| M21 DXF export | merged | R12 writer, layers, mm units, RPC action |
 
-## Known limitations / phase-2 backlog
+## Known limitations / backlog
 
-- Extrude has no hole support (nested loops are separate profiles); no
-  boolean joins/cuts between solids.
-- Offset creates unconstrained copies (no offset constraint yet); chains
-  offset one entity at a time.
-- Trim prunes constraints on split entities rather than remapping them.
-- Solver is damped iterative projection — adequate through slot-driving, but
-  planegcs (vendored via the godot-geometry SConstruct pattern) is the
-  designated fallback if convergence quality hits a wall.
-- Rectangle/center-rect don't yet emit a center point or symmetry; center
-  rect type-in measures full size (documented in tool).
-- No DXF/PDF export; no marquee (rubber-band) selection; parameters dialog
-  is RPC-only (action.set_parameter) — no editor window yet.
+- Extrude booleans pick their targets by AABB overlap (join/cut hit every
+  body whose bounds touch the prism) — no explicit target-body picker yet.
+- CSG-baked (boolean) bodies have no edge-line overlay surface; plain
+  new-body solids keep it.
+- Offset constraints are Fusion-lite: parallels + one driving gap dimension,
+  not a rigid whole-chain offset constraint; the copy keeps some freedom.
+- Trim drops length-type constraints (EQUAL/dimensions) on split lines by
+  design; only directional/radial/tangent constraints retarget.
+- Solver is damped iterative projection — adequate so far; planegcs
+  (vendored via the godot-geometry SConstruct pattern) remains the fallback
+  if convergence quality hits a wall.
+- No DXF *import*; export is R12 lines/arcs/circles/points (no splines,
+  no dimensions/annotations).
 - macOS/web builds need addon binaries built in the sibling repos first.
 
 ## Flakes to watch
 
-- One windowed RPC suite run failed once (unreproduced on the very next
-  runs); if it recurs, capture which test with
-  `tools/run_rpc_tests.sh 2>&1 | tee /tmp/rpc.log`.
+- One windowed RPC suite run failed once (unreproduced); if it recurs,
+  capture which test with `tools/run_rpc_tests.sh 2>&1 | tee /tmp/rpc.log`.
