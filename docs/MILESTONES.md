@@ -332,6 +332,28 @@ where it came from. Three upgrades:
 - **Manual**: §M19 — offset feel with the new pick, gap dimension editing,
   trim on constrained geometry, center-rect snap.
 
+## M20 — Marquee selection + Parameters dialog  (branch: `m20-marquee-params`)
+
+Phase-2 backlog: the two daily-driver gaps left in the UI.
+
+- **Marquee selection**: pressing empty space and dragging opens a band.
+  Fusion semantics — left-to-right is a WINDOW select (blue, solid edge:
+  only entities entirely inside), right-to-left is a CROSSING select
+  (green, dashed edge: touching counts). Ctrl/Shift adds to the current
+  selection; a plain empty click still deselects; Esc cancels a band.
+- **Parameters dialog**: a real window (toolbar "Parameters") over the
+  parameter model that action.set_parameter has driven since M8 — table of
+  name/expression/value, add/update with unit choice (in/mm/scalar),
+  expression errors surfaced inline, delete refused while a parameter is
+  still referenced by another parameter or a dimension. RPC gains
+  `action.delete_parameter` with the same protection.
+
+- **Automated**: `tests/m20_marquee_params.gd` — window/crossing/additive
+  band censuses, empty-click deselect, parameter upsert/drive/protected
+  delete, dialog commit + error surfacing. RPC `tests/rpc/test_marquee.py`
+  — the same through real pointer input and the RPC actions.
+- **Manual**: §M20 — band feel and colors, dialog UX.
+
 ---
 
 ## Milestone order rationale

@@ -110,6 +110,69 @@ static func entity_at(sk: Sketch, p: Vector2, tol: float) -> String:
 	return best
 
 
+## Entity tessellated as a polyline in sketch mm (a point is one vertex).
+static func entity_polyline(sk: Sketch, e: SketchEntity, segs := 32) -> PackedVector2Array:
+	var out := PackedVector2Array()
+	match e.kind():
+		"point":
+			out.append((e as SketchPoint).pos)
+		"line":
+			var l := e as SketchLine
+			var a := sk.point(l.p0)
+			var b := sk.point(l.p1)
+			if a != null and b != null:
+				out.append_array([a.pos, b.pos])
+		"circle":
+			var ci := e as SketchCircle
+			var c := sk.point(ci.center)
+			if c != null:
+				for k in segs + 1:
+					var ang := TAU * k / segs
+					out.append(c.pos + Vector2(cos(ang), sin(ang)) * ci.radius)
+		"arc":
+			var arc := e as SketchArc
+			var c2 := sk.point(arc.center)
+			var s := sk.point(arc.start)
+			if c2 != null and s != null:
+				var r := c2.pos.distance_to(s.pos)
+				var a0 := (s.pos - c2.pos).angle()
+				var sweep := arc_sweep(sk, arc)
+				var n := maxi(4, int(ceil(absf(sweep) / (TAU / segs))))
+				for k in n + 1:
+					var ang2 := a0 + sweep * k / float(n)
+					out.append(c2.pos + Vector2(cos(ang2), sin(ang2)) * r)
+	return out
+
+
+## Marquee hit test (M20). `crossing` false = window select: the entity must
+## lie ENTIRELY inside `rect`. `crossing` true = crossing select: touching
+## the rect anywhere is enough.
+static func entity_in_rect(sk: Sketch, e: SketchEntity, rect: Rect2,
+		crossing: bool) -> bool:
+	var poly := entity_polyline(sk, e)
+	if poly.is_empty():
+		return false
+	if not crossing:
+		for p in poly:
+			if not rect.has_point(p):
+				return false
+		return true
+	for p in poly:
+		if rect.has_point(p):
+			return true
+	# No vertex inside — a segment may still cut across the rect.
+	var corners: Array = [rect.position,
+		rect.position + Vector2(rect.size.x, 0),
+		rect.position + rect.size,
+		rect.position + Vector2(0, rect.size.y)]
+	for i in poly.size() - 1:
+		for k in 4:
+			if not intersect_segments(poly[i], poly[i + 1],
+					corners[k], corners[(k + 1) % 4]).is_empty():
+				return true
+	return false
+
+
 ## Segment-segment intersection points (0 or 1).
 static func intersect_segments(a1: Vector2, a2: Vector2, b1: Vector2,
 		b2: Vector2) -> Array:

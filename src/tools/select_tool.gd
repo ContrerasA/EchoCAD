@@ -8,8 +8,18 @@ const HIT_PX := 6.0
 const DEADZONE_PX := 4.0
 
 enum Drag { NONE, PENDING, MOVE }
+## Marquee (rubber-band) selection state (M20): a press on EMPTY space arms
+## it; dragging past the deadzone opens the band. Fusion semantics: dragging
+## left-to-right is a WINDOW select (only entities entirely inside), right-
+## to-left is a CROSSING select (touching counts).
+enum Marq { NONE, ARMED, ACTIVE }
 
 var _drag := Drag.NONE
+var _marq := Marq.NONE
+var _marq_start_screen := Vector2.ZERO
+var _marq_start := Vector2.ZERO      # world
+var _marq_cur := Vector2.ZERO        # world
+var _marq_add := false               # Ctrl/Shift held at press: add to selection
 var _down_world := Vector2.ZERO
 var _down_screen := Vector2.ZERO
 var _move_points: Array[String] = []   # point entity ids being dragged
@@ -39,12 +49,17 @@ func _init() -> void:
 func deactivate() -> void:
 	_drag = Drag.NONE
 	_pending = false
+	_marq = Marq.NONE
 	if app != null:
 		app.set_live_gesture(false)
 	clear_hover()
 
 
 func cancel() -> bool:
+	if _marq != Marq.NONE:
+		_marq = Marq.NONE
+		app.overlay.queue_redraw()
+		return true
 	if _drag != Drag.NONE:
 		_drag = Drag.NONE
 		app.set_live_gesture(false)
@@ -82,8 +97,13 @@ func pointer_down(world: Vector2, screen: Vector2, e: InputEventMouseButton) -> 
 	var sk := sketch()
 	var hit := SketchGeometry.entity_at(sk, world, HIT_PX / view().zoom())
 	if hit == "":
-		if not e.ctrl_pressed:
-			app.set_selection([])
+		# Arm a marquee; whether this was a band or a plain deselect-click is
+		# decided by whether the pointer moves before it releases.
+		_marq = Marq.ARMED
+		_marq_start_screen = screen
+		_marq_start = world
+		_marq_cur = world
+		_marq_add = e.ctrl_pressed or e.shift_pressed
 		return true
 	# Shift adds to the selection as well as Ctrl. Ctrl-click is the CAD
 	# convention and Shift-click is the everything-else convention; users reach
@@ -143,6 +163,14 @@ func _all_constrained(pids: Array) -> bool:
 
 
 func pointer_move(world: Vector2, screen: Vector2, _e: InputEventMouseMotion) -> bool:
+	if _marq != Marq.NONE:
+		if _marq == Marq.ARMED \
+				and screen.distance_to(_marq_start_screen) > DEADZONE_PX:
+			_marq = Marq.ACTIVE
+		_marq_cur = world
+		if _marq == Marq.ACTIVE:
+			app.overlay.queue_redraw()
+			return true
 	# Pre-highlight what a click would pick, Fusion-style. Deliberately the
 	# SAME hit test the click uses, so the highlight can never promise
 	# something the click would not deliver. Skipped mid-drag, where the
@@ -251,6 +279,18 @@ func _apply_drag(world: Vector2) -> void:
 func pointer_up(_world: Vector2, _screen: Vector2, e: InputEventMouseButton) -> bool:
 	if e.button_index != MOUSE_BUTTON_LEFT:
 		return false
+	if _marq == Marq.ACTIVE:
+		_apply_marquee()
+		_marq = Marq.NONE
+		app.overlay.queue_redraw()
+		return true
+	if _marq == Marq.ARMED:
+		# Never moved: this was a plain click on empty space — deselect
+		# (unless it was an additive click, which just misses).
+		if not _marq_add:
+			app.set_selection([])
+		_marq = Marq.NONE
+		return true
 	if _label_drag >= 0:
 		_label_drag = -1
 		return true
@@ -305,7 +345,47 @@ func key_input(e: InputEventKey) -> bool:
 	return _dim_fields.key_input(e)
 
 
+## Select everything the band covers. Window (L->R): entirely inside;
+## crossing (R->L): touching. The sketch origin is scaffolding, not
+## geometry — a band never selects it.
+func _apply_marquee() -> void:
+	var sk := sketch()
+	if sk == null:
+		return
+	var crossing := _marq_cur.x < _marq_start.x
+	var lo := Vector2(minf(_marq_start.x, _marq_cur.x),
+		minf(_marq_start.y, _marq_cur.y))
+	var hi := Vector2(maxf(_marq_start.x, _marq_cur.x),
+		maxf(_marq_start.y, _marq_cur.y))
+	var rect := Rect2(lo, hi - lo)
+	var sel: Array = app.selection.duplicate() if _marq_add else []
+	for e in sk.entities():
+		if e.id == sk.origin_id() or sel.has(e.id):
+			continue
+		if SketchGeometry.entity_in_rect(sk, e, rect, crossing):
+			sel.append(e.id)
+	app.set_selection(sel)
+
+
 func draw_overlay(overlay: Control) -> void:
+	if _marq == Marq.ACTIVE:
+		var v := view()
+		var a := v.world_to_screen(_marq_start)
+		var b := v.world_to_screen(_marq_cur)
+		var r := Rect2(a, b - a).abs()
+		var crossing := _marq_cur.x < _marq_start.x
+		# Fusion's cue: window select fills blue with a solid edge, crossing
+		# select fills green with a dashed edge.
+		var fill := Color(0.35, 0.55, 0.9, 0.12) if not crossing \
+			else Color(0.4, 0.85, 0.5, 0.12)
+		var edge := Color(0.55, 0.7, 1.0, 0.9) if not crossing \
+			else Color(0.5, 0.9, 0.6, 0.9)
+		overlay.draw_rect(r, fill)
+		if crossing:
+			for seg in _dashed_rect(r):
+				overlay.draw_line(seg[0], seg[1], edge, 1.0)
+		else:
+			overlay.draw_rect(r, edge, false, 1.0)
 	var sk := sketch()
 	if sk == null or app.selected_constraint < 0 or not _dim_fields.has_text(0):
 		return
@@ -317,6 +397,26 @@ func draw_overlay(overlay: Control) -> void:
 	var at := view().world_to_screen(
 		ConstraintOverlay.anchor_of(sk, c) + c.label_offset) + Vector2(0, 20)
 	_dim_fields.draw(overlay, at, app.doc.display_unit, [c.value])
+
+
+## The four rect edges chopped into short dashes (screen px).
+static func _dashed_rect(r: Rect2) -> Array:
+	var corners: Array = [r.position, r.position + Vector2(r.size.x, 0),
+		r.position + r.size, r.position + Vector2(0, r.size.y)]
+	var out: Array = []
+	for k in 4:
+		var a: Vector2 = corners[k]
+		var b: Vector2 = corners[(k + 1) % 4]
+		var run := a.distance_to(b)
+		if run < 1e-3:
+			continue
+		var dir := (b - a) / run
+		var t := 0.0
+		while t < run:
+			var t2 := minf(t + 5.0, run)
+			out.append([a + dir * t, a + dir * t2])
+			t = t2 + 4.0
+	return out
 
 
 func _moving_entity_ids() -> Array:
