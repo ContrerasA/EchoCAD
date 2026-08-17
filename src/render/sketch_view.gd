@@ -64,6 +64,10 @@ var _dirty := false
 ## Enter, digits) route here BEFORE viewport focus traversal can eat them.
 var key_handler: Callable = Callable()
 
+## Shift+MMB hook: Callable(screen: Vector2). Fusion's in-sketch orbit — the
+## owner swaps this canvas out for the 3D view and starts an orbit gesture.
+var orbit_request: Callable = Callable()
+
 
 func _ready() -> void:
 	clip_contents = true
@@ -128,7 +132,14 @@ func _gui_input(event: InputEvent) -> void:
 		return
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
-		if mb.pressed and mb.button_index == MOUSE_BUTTON_WHEEL_UP:
+		if mb.pressed and mb.button_index == MOUSE_BUTTON_MIDDLE \
+				and mb.shift_pressed and orbit_request.is_valid():
+			# Shift+MMB leaves the locked 2D view: hand the gesture to the 3D
+			# camera. The owner hides this canvas, so the rest of the drag's
+			# events route to the viewport underneath.
+			orbit_request.call(mb.position)
+			accept_event()
+		elif mb.pressed and mb.button_index == MOUSE_BUTTON_WHEEL_UP:
 			zoom_at(1.1, mb.position)
 			accept_event()
 		elif mb.pressed and mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:

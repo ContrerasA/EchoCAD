@@ -85,6 +85,23 @@ func _gui_input(event: InputEvent) -> void:
 	face_picked.emit(n, up)
 
 
+## Window-pixel position of a face's center, plus whether that face currently
+## faces the camera enough to click. Lets automation aim REAL clicks at the
+## cube instead of teleporting the camera behind the UI's back.
+func face_screen_px(normal: Vector3) -> Dictionary:
+	if _cam == null:
+		return {"ok": false, "x": 0.0, "y": 0.0}
+	var n := normal.normalized()
+	var world_pt: Vector3 = n * CUBE_HALF
+	var to_cam := (_cam.global_transform.origin - world_pt).normalized()
+	# Grazing faces are sliver-thin on screen; require a real facing angle.
+	var clickable := n.dot(to_cam) > 0.35
+	var vp := get_child(0) as SubViewport
+	var px := _cam.unproject_position(world_pt)
+	var g := get_global_rect().position + px * (size / Vector2(vp.size))
+	return {"ok": clickable, "x": g.x, "y": g.y}
+
+
 ## Ray vs axis-aligned cube; returns the hit face's outward normal or ZERO.
 func _pick_face(pos: Vector2) -> Vector3:
 	# Container pixels -> viewport pixels (stretch may scale).

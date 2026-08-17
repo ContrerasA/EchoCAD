@@ -191,7 +191,24 @@ func _cmd_query_mode(_a: Dictionary, _p: StreamPeerTCP, _id: Variant) -> Diction
 		"mode": "sketch" if app.mode == AppRoot.Mode.SKETCH else "model",
 		"active_sketch": app.active_sketch_id,
 		"picking_plane": app.picking_plane,
+		"sketch_orbit": app.sketch_orbit,
 	}
+
+
+## Where a view-cube face sits on screen, for aiming real clicks at it.
+## args: {"plane": "XY"} or {"normal": [x,y,z]} -> {ok, x, y}; `ok` is false
+## when that face is turned away from the cube camera.
+func _cmd_query_cube_face(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
+	var n: Vector3
+	if a.has("plane"):
+		n = SketchFeature.plane_basis(String(a["plane"])).z
+	elif a.has("normal"):
+		var arr: Array = a["normal"]
+		n = Vector3(float(arr[0]), float(arr[1]), float(arr[2]))
+	else:
+		_reply_err(p, id, "invalid", "need plane or normal")
+		return null
+	return app.view_cube.face_screen_px(n)
 
 
 func _cmd_query_document(_a: Dictionary, _p: StreamPeerTCP, _id: Variant) -> Dictionary:

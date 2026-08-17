@@ -40,6 +40,10 @@ var badge_hits: Array = []
 ## Dimension label hit rects from the last overlay draw: [{index, rect}].
 var dim_hits: Array = []
 var mode: Mode = Mode.MODEL
+## Sketch-mode sub-state: true while the camera has orbited OFF the sketch
+## plane (Fusion's in-sketch orbit). The sketch stays open but editing is
+## disabled; the plane's view-cube face (or Esc) flies back to locked 2D.
+var sketch_orbit := false
 ## Feature id of the sketch being edited ("" in model mode).
 var active_sketch_id := ""
 ## True while "Create Sketch" waits for a plane click.
@@ -128,7 +132,7 @@ func _ready() -> void:
 ## _process of their own, and gestures that must not run faster than the
 ## display (drag re-solves) rely on this — see `SketchTool.tick`.
 func _process(_dt: float) -> void:
-	if mode == Mode.SKETCH:
+	if mode == Mode.SKETCH and not sketch_orbit:
 		tools.handle_tick()
 
 
@@ -394,6 +398,7 @@ func load_document(new_doc: CadDocument) -> void:
 	active_sketch_id = ""
 	picking_plane = false
 	mode = Mode.MODEL
+	sketch_orbit = false
 	sketch_view.visible = false
 	world.set_planes_visible(false)
 	world.set_grid_plane("XY")
@@ -580,6 +585,7 @@ func _build_ui() -> void:
 	sketch_view.view_changed.connect(_on_sketch_view_changed)
 	sketch_view.tool_input = _on_tool_input
 	sketch_view.key_handler = handle_app_key
+	sketch_view.orbit_request = _on_sketch_orbit_request
 	stack_area.add_child(sketch_view)
 
 	overlay = Control.new()
@@ -658,6 +664,7 @@ func edit_sketch(feature_id: String) -> void:
 	active_sketch_id = feature_id
 	picking_plane = false
 	mode = Mode.SKETCH
+	sketch_orbit = false
 	sketch_view.grid_unit = doc.display_unit
 	sketch_view.set_view(Vector2.ZERO, 4.0)
 	sketch_view.show_sketch(feat.sketch, reference_sketches())
@@ -707,6 +714,8 @@ func finish_sketch() -> void:
 	set_selection([])
 	active_sketch_id = ""
 	mode = Mode.MODEL
+	sketch_orbit = false
+	rig.end_orbit()
 	# Drop the 2D canvas immediately so the 3D scene is what animates: the
 	# camera pulls back from the plane to the previous model view.
 	sketch_view.visible = false
@@ -935,13 +944,67 @@ func set_pivot_mode(m: OrbitCamera.PivotMode) -> void:
 			_pivot_pick.selected = idx
 
 
+## Shift+MMB pressed inside the locked 2D sketch view: orbit away from the
+## plane, Fusion-style. The canvas yields the screen and the active sketch
+## renders in 3D on its plane; editing stays disabled until the camera returns
+## square (see `return_to_sketch_plane`).
+func _on_sketch_orbit_request(screen: Vector2) -> void:
+	if mode != Mode.SKETCH or sketch_orbit:
+		return
+	sketch_orbit = true
+	sketch_view.visible = false
+	# The in-edit sketch gets the same 3D line-mesh treatment as every other
+	# live sketch — the world's meshes may be stale mid-edit, so rebuild now.
+	world.rebuild_sketches(doc)
+	rig.to_perspective_preserving()
+	rig.begin_orbit(screen)
+	_refresh_ui()
+
+
+## Fly back square onto the active sketch's plane and re-enter locked 2D
+## editing at the exact pan/zoom the user left (the canvas kept them).
+func return_to_sketch_plane() -> void:
+	if mode != Mode.SKETCH or not sketch_orbit:
+		return
+	var feat := doc.sketch_feature(active_sketch_id)
+	if feat == null:
+		return
+	rig.end_orbit()
+	var basis := SketchFeature.plane_basis(feat.plane)
+	var pan := sketch_view.pan()
+	rig.frame_view(basis.z, basis.y, basis * Vector3(pan.x, pan.y, 0.0),
+		rig.distance)
+	_after_camera_move(func() -> void:
+		if mode != Mode.SKETCH:
+			return
+		sketch_orbit = false
+		sketch_view.visible = true
+		sketch_view.grab_focus()
+		# Ortho + exact registration with the canvas, as on sketch entry.
+		_sync_camera_to_sketch_view()
+		_refresh_ui())
+	_refresh_ui()
+
+
 func _on_cube_face(normal: Vector3, up: Vector3) -> void:
 	if mode == Mode.MODEL:
 		rig.frame_view(normal, up)
+	elif sketch_orbit:
+		# The active plane's own face is the way home; any other face just
+		# reorients the off-axis view.
+		var feat := doc.sketch_feature(active_sketch_id)
+		if feat != null \
+				and normal.dot(SketchFeature.plane_basis(feat.plane).z) > 0.999:
+			return_to_sketch_plane()
+		else:
+			rig.frame_view(normal, up)
 
 
 func _on_viewport_input(event: InputEvent) -> void:
-	if mode != Mode.MODEL:
+	# Off-axis sketch orbit routes here too (the 2D canvas is hidden), but
+	# only for NAVIGATION — LMB picking stays a model-mode affair.
+	var nav_only := mode == Mode.SKETCH and sketch_orbit
+	if mode != Mode.MODEL and not nav_only:
 		return
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
@@ -956,6 +1019,8 @@ func _on_viewport_input(event: InputEvent) -> void:
 			rig.zoom(1.0 / 1.1)
 		elif mb.pressed and mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 			rig.zoom(1.1)
+		elif nav_only:
+			pass
 		elif mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT and picking_plane:
 			var ray := rig.pixel_ray(mb.position)
 			var plane := world.pick_plane(ray[0], ray[1])
@@ -1012,6 +1077,10 @@ func handle_app_key(k: InputEventKey) -> bool:
 		open_interactive()
 		return true
 	if k.keycode == KEY_ESCAPE:
+		if sketch_orbit:
+			# Same way home as the plane's view-cube face.
+			return_to_sketch_plane()
+			return true
 		if mode == Mode.SKETCH:
 			# Esc ends the gesture AND drops back to Select, Fusion-style —
 			# a cancelled draw should not leave the tool armed for another
@@ -1032,7 +1101,8 @@ func handle_app_key(k: InputEventKey) -> bool:
 			_refresh_ui()
 			return true
 		return false
-	if (k.keycode == KEY_ENTER or k.keycode == KEY_KP_ENTER) and mode == Mode.SKETCH:
+	if (k.keycode == KEY_ENTER or k.keycode == KEY_KP_ENTER) \
+			and mode == Mode.SKETCH and not sketch_orbit:
 		# Enter goes to the tool's TYPE-IN handler first, and only then counts
 		# as "finish the gesture". Routing it straight to handle_commit meant
 		# the tool's key_input never saw it, so a value typed into a selected
@@ -1044,7 +1114,7 @@ func handle_app_key(k: InputEventKey) -> bool:
 			overlay.queue_redraw()
 			return true
 		return tools.handle_commit()
-	if k.keycode == KEY_DELETE and mode == Mode.SKETCH:
+	if k.keycode == KEY_DELETE and mode == Mode.SKETCH and not sketch_orbit:
 		if selected_constraint >= 0:
 			delete_constraint(selected_constraint)
 			return true
@@ -1068,7 +1138,7 @@ func handle_app_key(k: InputEventKey) -> bool:
 			batch.seal()
 			return true
 		return false
-	if mode == Mode.SKETCH and not k.ctrl_pressed:
+	if mode == Mode.SKETCH and not k.ctrl_pressed and not sketch_orbit:
 		# Type-in fields get first claim on keys (digits, Tab, units...).
 		var active := tools.get_tool(tools.active_id())
 		if active != null and active.key_input(k):
@@ -1157,7 +1227,7 @@ func _on_sketch_view_changed() -> void:
 ## the 3D camera at the sketch's pan centre, from a distance that makes its
 ## on-screen scale match the 2D zoom, makes the two move as one.
 func _sync_camera_to_sketch_view() -> void:
-	if mode != Mode.SKETCH or rig == null:
+	if mode != Mode.SKETCH or sketch_orbit or rig == null:
 		return
 	var feat := doc.sketch_feature(active_sketch_id)
 	if feat == null:
@@ -1195,7 +1265,7 @@ func _sync_camera_to_sketch_view() -> void:
 ## Editor chrome: sketch points, selection highlights, then the active
 ## tool's own overlay. Screen space; artwork itself is the ThorVG raster.
 func _on_overlay_draw() -> void:
-	if mode != Mode.SKETCH:
+	if mode != Mode.SKETCH or sketch_orbit:
 		return
 	var sk := active_sketch()
 	if sk == null:
@@ -1309,6 +1379,10 @@ func _on_stack_changed() -> void:
 			_refresh_dof()
 			sketch_view.mark_dirty()
 			overlay.queue_redraw()
+			# Off-axis the 3D line meshes ARE the sketch display, so undo/redo
+			# must rebuild them just as model mode does.
+			if sketch_orbit:
+				world.rebuild_sketches(doc)
 	else:
 		world.rebuild_sketches(doc)
 	timeline.refresh()
@@ -1321,8 +1395,10 @@ func _refresh_ui() -> void:
 	_btn_create.visible = not in_sketch
 	_btn_extrude.visible = not in_sketch
 	_btn_finish.visible = in_sketch
-	_tool_bar.visible = in_sketch
-	_constraint_bar.visible = in_sketch
+	# Off-axis the sketch is view-only: the editing bars go away with the
+	# canvas, so a disabled tool cannot even be aimed at.
+	_tool_bar.visible = in_sketch and not sketch_orbit
+	_constraint_bar.visible = in_sketch and not sketch_orbit
 	if in_sketch and not dof.is_empty():
 		var sk := active_sketch()
 		_status_dof.text = DofAnalyzer.summary(sk) if sk != null else ""
@@ -1338,6 +1414,11 @@ func _refresh_ui() -> void:
 		_status_hint.text = "Select a plane (Esc to cancel)"
 	elif picking_profile:
 		_status_hint.text = "Select a closed profile (Esc to cancel)"
+	elif in_sketch and sketch_orbit:
+		var fo := doc.sketch_feature(active_sketch_id)
+		_status_hint.text = ("Orbiting — click the %s face on the view cube "
+			+ "(or press Esc) to return to the sketch") \
+			% (fo.plane if fo != null else "plane")
 	elif in_sketch:
 		var f := doc.sketch_feature(active_sketch_id)
 		_status_hint.text = "%s on %s" % [f.name, f.plane] if f != null else ""

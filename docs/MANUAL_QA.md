@@ -1115,3 +1115,24 @@ Fix log:
   refuse clicks there and in empty space; the status bar keeps asking for
   a closed profile until Esc.
 - **7** Save/Open UI added — see §M11 fix **6**.
+
+## §M14 — Orbitable sketch view
+
+Status: PENDING sign-off
+
+- [ ] 1. Enter a sketch (any plane), draw a rectangle, pan/zoom somewhere
+   deliberate. Shift+MMB drag. **Expect:** the view orbits away from the
+   plane; the sketch renders as lines in 3D on its plane; the toolbar and
+   constraint bar disappear; the status bar says how to get back.
+- [ ] 2. While off-axis: tool shortcuts (L, D...) and Delete do nothing;
+   LMB clicks create nothing; plain MMB pans, wheel zooms, Shift+MMB keeps
+   orbiting.
+- [ ] 3. Ctrl+Z / Ctrl+Shift+Z while off-axis: the 3D sketch lines update in
+   place; the app stays off-axis in the sketch.
+- [ ] 4. Click the sketch plane's face on the view cube. **Expect:** the
+   camera flies back square onto the plane (reads as a fly-back, not a
+   snap) and the 2D canvas returns at the exact pan/zoom you left.
+- [ ] 5. Orbit away again, click a DIFFERENT cube face: the view reorients
+   but stays off-axis. Esc flies home like the plane face does.
+- [ ] 6. Grid/axes stay legible at grazing angles while off-axis.
+- [ ] 7. Finish Sketch while off-axis returns to model mode cleanly.
