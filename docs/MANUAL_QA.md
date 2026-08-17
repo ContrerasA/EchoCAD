@@ -1160,3 +1160,17 @@ Status: PENDING sign-off
 - [ ] 8. Project all 4 edges into a sketch, Finish, Extrude inside the
    projected rectangle: the profile is found and extrudes.
 - [ ] 9. Save, reopen: projections still linked (edit source → copy follows).
+
+## §M16 — Threaded solver
+
+Status: PENDING sign-off
+
+- [ ] 1. Build a heavily constrained sketch (100+ entities: rects, slots,
+   fillets, dimensions). Drag an under-constrained point around fast.
+   **Expect:** the drag stays interactive — no stutter, no rubber-banding
+   lag; CPU load spread across cores rather than one pegged.
+- [ ] 2. Release the drag mid-motion. **Expect:** geometry lands exactly
+   where the cursor let go (final solve is exact), constraints hold.
+- [ ] 3. One Ctrl+Z reverts the entire drag including all re-solves.
+- [ ] 4. Drag a tangent-arc construction and a slot: tangency and
+   slot-shape survive fast dragging, same as before the threading.

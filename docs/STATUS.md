@@ -25,6 +25,7 @@ signed off 2026-08-15/16.
 | M13 Z-up + orbit pivots | merged | Z-up world, roll-free orbit, 3 pivot modes |
 | M14 sketch orbit | merged | off-axis orbit inside a sketch, cube-face return |
 | M15 project | merged | linked projections, source-follow, broken-link handling |
+| M16 threaded solver | merged | drag re-solves on a worker thread, newest-only |
 
 ## Known limitations / phase-2 backlog
 
