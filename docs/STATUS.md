@@ -1,9 +1,11 @@
 # EchoCAD — Status
 
-Updated: 2026-08-15. All planned milestones M0–M12 implemented and merged to
-`main`. Automated coverage: 20 headless tests (`tools/run_tests.sh`) + 10 RPC
-suites (`tools/run_rpc_tests.sh`), all green. Manual QA sections §M2–§M12 in
-`docs/MANUAL_QA.md` are written but PENDING hand sign-off.
+Updated: 2026-08-16. Milestones M0–M13 implemented and merged to `main`.
+Automated coverage: 29 headless tests (`tools/run_tests.sh`) + 10 RPC
+suites (`tools/run_rpc_tests.sh`), all green (run RPC suites HEADLESS=1
+when unattended — windowed runs on a live desktop flake from real mouse
+interference). Manual QA sections in `docs/MANUAL_QA.md`: §M2–§M12 hand
+signed off 2026-08-15/16.
 
 | Milestone | State | Notes |
 |---|---|---|
@@ -20,6 +22,7 @@ suites (`tools/run_rpc_tests.sh`), all green. Manual QA sections §M2–§M12 in
 | M10 modify | merged | trim, extend, offset, mirror, fillet |
 | M11 timeline | merged | chips, rollback marker drag, suppress |
 | M12 extrude | merged | profile finder, anchored replay, solids |
+| M13 Z-up + orbit pivots | merged | Z-up world, roll-free orbit, 3 pivot modes |
 
 ## Known limitations / phase-2 backlog
 

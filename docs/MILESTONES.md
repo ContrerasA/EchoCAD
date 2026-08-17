@@ -177,6 +177,22 @@ as timeline feature. Opens phase 2.
   sketch → extrude replays with new profile.
 - **Manual**: profile hover highlight; extrude preview drag; orbit the solid.
 
+## M13 — Z-up world + orbit pivot modes  (branch: `m13-zup-orbit`)
+
+Deferred out of the M2 QA pass. Switch the world to the Z-up convention used
+by Blender and Fusion (+Z up, XY ground); rebuild sketch plane bases
+right-handed around it. OrbitCamera stores yaw about world +Z plus pitch so
+the horizon never rolls; frame_view sweeps the short way around the yaw
+circle. Orbit pivot modes: BODY_CENTER (Fusion default), ORBIT_POINT
+(surface point under cursor), VIEW_CENTER — model-relative modes fall back
+to the world origin on an empty document. The MMB gesture is sticky
+(releasing Shift mid-drag keeps orbiting).
+
+- **Automated**: `tests/m13_zup_orbit.gd` — plane bases, roll-free orbit,
+  gesture stickiness, empty-document origin fallback, three pivot modes
+  distinct.
+- **Manual**: folded into §M2 (items 1, 3, 3a, 3a2).
+
 ## M14 — Orbitable sketch view  (branch: `m14-sketch-orbit`)
 
 Deferred out of the M2 QA pass. Today sketch mode is a locked 2D raster: the
