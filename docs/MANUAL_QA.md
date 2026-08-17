@@ -1180,7 +1180,7 @@ Status: PENDING sign-off
 
 Status: PENDING sign-off
 
-- [!] 1. Build a heavily constrained sketch (100+ entities: rects, slots,
+- [~] 1. Build a heavily constrained sketch (100+ entities: rects, slots,
    fillets, dimensions). Drag an under-constrained point around fast.
    **Expect:** the drag stays interactive — no stutter, no rubber-banding
    lag; CPU load spread across cores rather than one pegged.
@@ -1218,7 +1218,7 @@ Status: PENDING sign-off
    stays put. One Ctrl+Z reverts the whole drag.
 - [X] 4. Point with a Fix constraint (or the origin): dragging refuses with
    a reason in the status bar.
-- [!] 5. Point-On a circle: dragging the point slides it AROUND the circle.
+- [X] 5. Point-On a circle: dragging the point slides it AROUND the circle.
     When drgging point off circle most of the time the badge shows invalid constrain, sometimes its green valid. even with snap disabled
 - [X] 6. Drags feel like rails, not lurches: no geometry the cursor never
    touched jumps during any of the above.
