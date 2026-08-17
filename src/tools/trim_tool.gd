@@ -257,6 +257,10 @@ func _apply(sk: Sketch, id: String, span: Dictionary) -> void:
 	# kept piece the point actually lies on — deleting the entity would prune
 	# them, silently unhooking joints made by EARLIER trims/extends.
 	_retarget_point_ons(sk, id, adds)
+	# Likewise the entity-level constraints (M19): a kept line piece is
+	# collinear with its source, so directional constraints still hold; a
+	# kept arc keeps its circle's radius, so radial ones do too.
+	_retarget_entity_constraints(sk, id, adds)
 	# Points of the trimmed entity that nothing references any more (a bare
 	# endpoint whose span was removed) go with it — trim must not shed debris.
 	var doomed: Array[String] = [id]
@@ -264,6 +268,85 @@ func _apply(sk: Sketch, id: String, span: Dictionary) -> void:
 		app._with_orphaned_points(sk, doomed)))
 	batch.seal()
 	app.rebuild_snap_index()
+
+
+## Move the trimmed entity's other constraints onto its kept pieces instead
+## of letting the delete prune them (M19):
+## - a trimmed LINE's pieces lie on the same infinite line, so HORIZONTAL /
+##   VERTICAL / PARALLEL / PERPENDICULAR / COLLINEAR hold for EVERY piece —
+##   the first piece takes the constraint, further pieces get copies;
+## - a trimmed CIRCLE/ARC's pieces keep the radius, so CONCENTRIC / EQUAL /
+##   RADIUS / DIAMETER move to the kept arc;
+## - TANGENT moves to the piece that still touches the tangency (smallest
+##   live residual); when the tangent span itself was cut away, the
+##   constraint dies with the entity, which is the honest outcome.
+## Length-type constraints on a line (EQUAL, dimensions) die: a piece is
+## shorter than its source, so carrying them over would RESIZE the piece.
+func _retarget_entity_constraints(sk: Sketch, doomed_id: String,
+		adds: Array) -> void:
+	var doomed := sk.entity(doomed_id)
+	if doomed == null:
+		return
+	var line_pieces: Array = []
+	var curve_pieces: Array = []
+	for e in adds:
+		if e is SketchLine:
+			line_pieces.append(e)
+		elif e is SketchArc or e is SketchCircle:
+			curve_pieces.append(e)
+	var T := SketchConstraint.Type
+	var after: Array = []
+	var extra: Array = []
+	var changed := false
+
+	var swap := func(c: SketchConstraint, to: String) -> SketchConstraint:
+		var rc := c.duplicate_constraint()
+		for i in rc.operands.size():
+			if String(rc.operands[i]) == doomed_id:
+				rc.operands[i] = to
+		return rc
+
+	for c in sk.constraints:
+		if c.type == T.POINT_ON or not c.references(doomed_id):
+			after.append(c)
+			continue
+		var handled := false
+		if c.type == T.TANGENT:
+			var best: SketchEntity = null
+			var best_err := 0.05   # mm — beyond this no piece truly touches
+			for piece: SketchEntity in line_pieces + curve_pieces:
+				var err := ConstraintSolver.error_of(sk, swap.call(c, piece.id))
+				if err < best_err:
+					best_err = err
+					best = piece
+			if best != null:
+				after.append(swap.call(c, best.id))
+				changed = true
+				handled = true
+		elif doomed is SketchLine and c.type in [T.HORIZONTAL, T.VERTICAL,
+				T.PARALLEL, T.PERPENDICULAR, T.COLLINEAR]:
+			var first := true
+			for piece: SketchEntity in line_pieces:
+				var rc: SketchConstraint = swap.call(c, piece.id)
+				if first:
+					after.append(rc)
+					first = false
+				else:
+					extra.append(rc)
+				changed = true
+				handled = true
+		elif (doomed is SketchCircle or doomed is SketchArc) \
+				and c.type in [T.CONCENTRIC, T.EQUAL, T.RADIUS, T.DIAMETER] \
+				and not curve_pieces.is_empty():
+			after.append(swap.call(c, (curve_pieces[0] as SketchEntity).id))
+			changed = true
+			handled = true
+		if not handled:
+			after.append(c)   # untouched (or dies with the entity on delete)
+	if changed:
+		after.append_array(extra)
+		app.stack.push(CmdSetConstraints.new(app.active_sketch_id,
+			sk.constraints, after))
 
 
 ## Rewrite POINT_ON [p, doomed] to [p, kept piece under p] where such a piece

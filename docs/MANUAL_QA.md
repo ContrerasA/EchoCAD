@@ -1279,3 +1279,29 @@ Status: PENDING sign-off
    identically (operations persist in the file).
 - [ ] 8. A **Cut** whose profile touches no body. **Expect:** nothing is
    removed; the status bar explains what Cut does.
+
+## §M19 — Modify-tool constraint upkeep
+
+Status: PENDING sign-off
+
+- [ ] 1. Rectangle, then Offset (O) and a single click on ONE edge.
+   **Expect:** the whole rectangle offsets as a ring, not just that edge;
+   the preview follows the cursor to either side; a distance dimension
+   appears on the offset.
+- [ ] 2. Double-click that gap dimension and type a new value. **Expect:**
+   the offset copy re-drives to the new gap, staying parallel edge-for-edge.
+- [ ] 3. Drag a corner of the SOURCE rectangle. **Expect:** the offset copy
+   follows (parallel + gap hold); nothing explodes.
+- [ ] 4. Draw a horizontal line (H badge), cross it with two verticals, Trim
+   the middle span. **Expect:** BOTH kept pieces still carry the H badge and
+   stay horizontal when dragged.
+- [ ] 5. Circle with a radius dimension, crossed by a line; trim half the
+   circle away. **Expect:** the kept arc still carries the radius dimension,
+   and editing it resizes the arc.
+- [ ] 6. Tangent line on a circle; trim the circle's far side. **Expect:**
+   the tangency survives on the kept arc (drag the line — the arc follows).
+- [ ] 7. Center Rectangle: **Expect:** a construction diagonal + center point
+   appear; drag a corner — the center point stays centered; the Line tool
+   snaps to the center point.
+- [ ] 8. Each of the above is ONE undo step (offset+constraints, trim+
+   retargets, center rect+scaffolding).

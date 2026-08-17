@@ -307,6 +307,31 @@ on every settled change — undo/redo and rollback need no special handling.
 - **Manual**: §M18 — hover/click regions with holes, cut and join by hand,
   orbit the carved solid.
 
+## M19 — Modify-tool constraint upkeep  (branch: `m19-modify-upkeep`)
+
+Phase-2 backlog: the modify tools produced geometry that immediately forgot
+where it came from. Three upgrades:
+
+- **Offset**: a single click picks the WHOLE connected chain (one edge of a
+  rectangle offsets the rectangle, Fusion-style). The copies are constrained:
+  each offset line is PARALLEL to its source and one driving point-to-line
+  dimension holds the gap — editing it re-drives the offset; arcs/circles
+  reuse the source center, concentric by construction.
+- **Trim**: constraints on the trimmed entity move to its kept pieces
+  instead of dying — directional constraints (H/V/parallel/perpendicular/
+  collinear) to every kept line piece, radial ones (concentric/equal/radius/
+  diameter) to the kept arc, TANGENT to whichever piece still touches the
+  tangency. Length-type constraints still die (a piece is shorter).
+- **Center rectangle**: emits Fusion's center scaffolding — a construction
+  diagonal and a construction center point MIDPOINTed onto it, so the center
+  stays the center through drags and is snappable/dimensionable.
+
+- **Automated**: `tests/m19_modify_upkeep.gd` — chain census + parallels +
+  gap-dim drive; H and RADIUS surviving trims; center point riding a corner
+  drag. All existing modify suites unchanged.
+- **Manual**: §M19 — offset feel with the new pick, gap dimension editing,
+  trim on constrained geometry, center-rect snap.
+
 ---
 
 ## Milestone order rationale

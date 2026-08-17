@@ -1,9 +1,11 @@
 class_name CenterRectTool
 extends RectTool
 ## Center rectangle: first click is the CENTER, second the corner. Emits the
-## same 4-point/4-line/2H/2V geometry plus a construction center point tied
-## by symmetry-in-position (center point placed exactly; symmetry constraint
-## arrives with the constraint milestone). W/H fields measure full size.
+## same 4-point/4-line/2H/2V geometry plus Fusion's center scaffolding (M19):
+## a construction diagonal corner-to-corner and a construction CENTER POINT
+## held at its midpoint — so the center stays the center through drags and
+## dimensions, and geometry can snap/dimension to it. W/H fields measure
+## full size.
 
 
 func _init() -> void:
@@ -35,6 +37,23 @@ func _commit_rect(second: Vector2) -> void:
 	_anchor = center * 2.0 - second
 	super._commit_rect(second)
 	_anchor = center
+
+
+## Center scaffolding: construction diagonal p00->p11 plus a construction
+## point MIDPOINTed onto it. One diagonal only — the second's midpoint is
+## geometrically the same spot (H/V make this a true rectangle), so a second
+## MIDPOINT would only add a redundant row and an amber badge.
+func _extras(sk: Sketch, corners: Array) -> Dictionary:
+	var p00: SketchPoint = corners[0]
+	var p11: SketchPoint = corners[2]
+	var cp := SketchPoint.make((p00.pos + p11.pos) * 0.5)
+	cp.id = sk.next_id()
+	cp.construction = true
+	var diag := SketchLine.make(p00.id, p11.id)
+	diag.id = sk.next_id()
+	diag.construction = true
+	return {"entities": [cp, diag], "cons": [SketchConstraint.make(
+		SketchConstraint.Type.MIDPOINT, [cp.id, diag.id])]}
 
 
 func draw_overlay(overlay: Control) -> void:
