@@ -57,7 +57,8 @@ func pointer_down(world: Vector2, _screen: Vector2, e: InputEventMouseButton) ->
 	cp.id = sk.next_id()
 	var ci := SketchCircle.make(cp.id, float(cc["radius"]))
 	ci.id = sk.next_id()
-	app.stack.push_no_merge(CmdAddEntities.new(app.active_sketch_id, [cp, ci]))
+	app.stack.push_no_merge(CmdAddEntities.new(app.active_sketch_id,
+		stamp_construction([cp, ci])))
 	app.rebuild_snap_index()
 	_reset()
 	return true

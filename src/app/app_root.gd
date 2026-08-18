@@ -82,6 +82,10 @@ var _tool_bar: HFlowContainer
 ## Snap/inference toggles — kept so RPC-driven pref changes can refresh them.
 var _snap_check: CheckBox = null
 var _infer_check: CheckBox = null
+var _construction_check: CheckBox = null
+## While true, drawing tools mint CONSTRUCTION curves (Fusion's sticky
+## construction toggle). See stamp_construction in the tool base.
+var construction_mode := false
 var _constraint_bar: HFlowContainer
 var _tool_buttons := {}
 var _btn_create: Button
@@ -742,6 +746,18 @@ func _build_ui() -> void:
 	_tool_bar.add_child(infer_box)
 	_infer_check = infer_box
 
+	# Construction MODE: newly drawn curves come out as construction geometry
+	# while this is on (M21 QA fix). X with nothing selected toggles it too,
+	# so X mid-line-chain flips the segments still to come.
+	var cons_box := CheckBox.new()
+	cons_box.name = "ConstructionChk"
+	cons_box.text = "Construction"
+	cons_box.focus_mode = Control.FOCUS_NONE
+	cons_box.button_pressed = construction_mode
+	cons_box.toggled.connect(func(on: bool) -> void: construction_mode = on)
+	_tool_bar.add_child(cons_box)
+	_construction_check = cons_box
+
 	_constraint_bar = HFlowContainer.new()
 	_constraint_bar.name = "ConstraintBar"
 	vbox.add_child(_constraint_bar)
@@ -1298,6 +1314,7 @@ func open_from(path: String) -> bool:
 ## --- DXF export (M21) ----------------------------------------------------------
 
 var _dxf_dialog: FileDialog
+var _dxf_include_cons: CheckBox = null
 ## Sketch feature chosen when the export dialog opened, so a selection
 ## change while the file dialog is up cannot swap the target underneath it.
 var _dxf_export_id := ""
@@ -1346,9 +1363,16 @@ func export_dxf_interactive(target_id := "") -> void:
 		_dxf_dialog.access = FileDialog.ACCESS_FILESYSTEM
 		_dxf_dialog.filters = ["*.dxf ; DXF drawings"]
 		_dxf_dialog.file_mode = FileDialog.FILE_MODE_SAVE_FILE
-		_dxf_dialog.size = Vector2i(640, 420)
+		_dxf_dialog.size = Vector2i(640, 440)
 		_dxf_dialog.file_selected.connect(
 			func(path: String) -> void: export_dxf(path))
+		# Export option rides inside the file dialog (M21 QA request):
+		# construction geometry in or out, remembered between exports.
+		_dxf_include_cons = CheckBox.new()
+		_dxf_include_cons.name = "DxfConstructionChk"
+		_dxf_include_cons.text = "Include construction geometry (CONSTRUCTION layer)"
+		_dxf_include_cons.button_pressed = true
+		_dxf_dialog.get_vbox().add_child(_dxf_include_cons)
 		add_child(_dxf_dialog)
 	var named := doc.sketch_feature(target_id)
 	_dxf_dialog.title = "Export DXF — %s" % (named.name if named != null else "?")
@@ -1367,7 +1391,9 @@ func export_dxf(path: String) -> bool:
 		return false
 	if not path.to_lower().ends_with(".dxf"):
 		path += ".dxf"
-	var why := DxfExporter.save(sf.sketch, path)
+	var include_cons: bool = _dxf_include_cons == null \
+		or _dxf_include_cons.button_pressed
+	var why := DxfExporter.save(sf.sketch, path, include_cons)
 	set_status_hint(("Exported " + path) if why == ""
 		else ("DXF export failed: " + why))
 	return why == ""
@@ -1659,6 +1685,10 @@ func handle_app_key(k: InputEventKey) -> bool:
 ## skipped — construction has no meaning for a bare point here. The whole
 ## toggle is one undo step, and mixed selections normalize to the OPPOSITE
 ## of the first curve's state, so repeated presses flip cleanly.
+## With NOTHING selected, X toggles construction MODE instead: geometry
+## drawn from now on comes out construction — which is what makes X work
+## in the middle of a line chain (the committed segments keep their state,
+## the segments still to come flip).
 func toggle_construction() -> void:
 	var sk := active_sketch()
 	if sk == null:
@@ -1675,8 +1705,18 @@ func toggle_construction() -> void:
 			first = false
 		targets[id] = to
 	if targets.is_empty():
-		set_status_hint("Construction toggle (X): select lines, arcs, or "
-			+ "circles first.")
+		if not selection.is_empty():
+			# A points-only selection: neither meaningful to convert nor a
+			# clear "toggle the mode" intent — explain instead of guessing.
+			set_status_hint("Construction toggle (X): select lines, arcs, "
+				+ "or circles (points cannot be construction).")
+			return
+		construction_mode = not construction_mode
+		if _construction_check != null:
+			_construction_check.set_pressed_no_signal(construction_mode)
+		set_status_hint(("Construction mode ON — new geometry draws dashed "
+			+ "and is excluded from profiles. X (or the checkbox) turns it "
+			+ "off.") if construction_mode else "Construction mode off.")
 		return
 	stack.push_no_merge(CmdSetConstruction.new(active_sketch_id, targets))
 	set_status_hint(("Construction geometry (dashed, excluded from profiles)"
@@ -1856,6 +1896,10 @@ func _on_overlay_draw() -> void:
 ## disagree about where an entity is.
 func _draw_entity_outline(sk: Sketch, e: SketchEntity, c: Color, w: float) -> void:
 	var v := sketch_view
+	# A CONSTRUCTION entity keeps its dashes even while highlighted — a solid
+	# selection stroke used to paint right over them, so a selected
+	# construction line was indistinguishable from a normal one (M21 QA).
+	var dashed := e.construction
 	match e.kind():
 		"point":
 			# Points are drawn as small 5 px squares in the pass above, so an
@@ -1872,14 +1916,18 @@ func _draw_entity_outline(sk: Sketch, e: SketchEntity, c: Color, w: float) -> vo
 			var a := sk.point(l.p0)
 			var b := sk.point(l.p1)
 			if a != null and b != null:
-				overlay.draw_line(v.world_to_screen(a.pos),
-					v.world_to_screen(b.pos), c, w)
+				if dashed:
+					overlay.draw_dashed_line(v.world_to_screen(a.pos),
+						v.world_to_screen(b.pos), c, w, 8.0)
+				else:
+					overlay.draw_line(v.world_to_screen(a.pos),
+						v.world_to_screen(b.pos), c, w)
 		"circle":
 			var ci := e as SketchCircle
 			var cp := sk.point(ci.center)
 			if cp != null:
-				overlay.draw_arc(v.world_to_screen(cp.pos),
-					ci.radius * v.zoom(), 0, TAU, 64, c, w)
+				_draw_arc_outline(v.world_to_screen(cp.pos),
+					ci.radius * v.zoom(), 0.0, TAU, c, w, dashed)
 		"arc":
 			var arc := e as SketchArc
 			var cp := sk.point(arc.center)
@@ -1896,8 +1944,30 @@ func _draw_entity_outline(sk: Sketch, e: SketchEntity, c: Color, w: float) -> vo
 				# arc leaves the window either way, so nothing is lost.
 				var rs := minf(r * v.zoom(), ARC_DRAW_MAX_PX)
 				# Screen space is Y-down: angles negate.
-				overlay.draw_arc(v.world_to_screen(cp.pos), rs,
-					-a0, -(a0 + sweep), 48, c, w)
+				_draw_arc_outline(v.world_to_screen(cp.pos), rs,
+					-a0, -(a0 + sweep), c, w, dashed)
+
+
+## draw_arc with an optional dashed rendering (there is no draw_dashed_arc):
+## the sweep is chopped into ~8 px dashes with ~6 px gaps.
+func _draw_arc_outline(center: Vector2, radius: float, from: float,
+		to: float, c: Color, w: float, dashed: bool) -> void:
+	if not dashed or radius < 1.0:
+		overlay.draw_arc(center, radius, from, to, 48, c, w)
+		return
+	var arc_len := absf(to - from) * radius
+	var dash_ang := 8.0 / radius
+	var gap_ang := 6.0 / radius
+	var dir := signf(to - from)
+	var a := from
+	var guard := int(ceil(arc_len / 8.0)) + 4
+	while dir * (to - a) > 0.0 and guard > 0:
+		guard -= 1
+		var a2 := a + dir * dash_ang
+		if dir * (to - a2) < 0.0:
+			a2 = to
+		overlay.draw_arc(center, radius, a, a2, 6, c, w)
+		a = a2 + dir * gap_ang
 
 
 ## A gesture started/ended. Ending one runs the derived work its frames

@@ -11,7 +11,7 @@ extends RefCounted
 ## needs no class dictionaries or handles.
 
 
-static func to_dxf(sk: Sketch) -> String:
+static func to_dxf(sk: Sketch, include_construction := true) -> String:
 	var out := PackedStringArray()
 	var w := func(code: int, value: Variant) -> void:
 		out.append(str(code))
@@ -22,18 +22,39 @@ static func to_dxf(sk: Sketch) -> String:
 	w.call(9, "$INSUNITS")
 	w.call(70, 4)
 	w.call(0, "ENDSEC")
-	# --- TABLES: the two layers, so strict importers see them declared.
+	# --- TABLES: linetypes first (a layer may reference them), then layers.
 	w.call(0, "SECTION")
 	w.call(2, "TABLES")
 	w.call(0, "TABLE")
+	w.call(2, "LTYPE")
+	w.call(70, 2)
+	w.call(0, "LTYPE")
+	w.call(2, "CONTINUOUS")
+	w.call(70, 0)
+	w.call(3, "Solid line")
+	w.call(72, 65)
+	w.call(73, 0)
+	w.call(40, 0.0)
+	# The dash pattern construction geometry renders with (mm): 2 on, 1 off.
+	w.call(0, "LTYPE")
+	w.call(2, "DASHED")
+	w.call(70, 0)
+	w.call(3, "Dashed __ __ __")
+	w.call(72, 65)
+	w.call(73, 2)
+	w.call(40, 3.0)
+	w.call(49, 2.0)
+	w.call(49, -1.0)
+	w.call(0, "ENDTAB")
+	w.call(0, "TABLE")
 	w.call(2, "LAYER")
 	w.call(70, 2)
-	for lname: String in ["0", "CONSTRUCTION"]:
+	for spec: Array in [["0", "CONTINUOUS"], ["CONSTRUCTION", "DASHED"]]:
 		w.call(0, "LAYER")
-		w.call(2, lname)
+		w.call(2, spec[0])
 		w.call(70, 0)
 		w.call(62, 7)
-		w.call(6, "CONTINUOUS")
+		w.call(6, spec[1])
 	w.call(0, "ENDTAB")
 	w.call(0, "ENDSEC")
 	# --- ENTITIES.
@@ -44,6 +65,8 @@ static func to_dxf(sk: Sketch) -> String:
 		for pid in e.point_refs():
 			referenced[pid] = true
 	for e in sk.entities():
+		if e.construction and not include_construction:
+			continue
 		var layer := "CONSTRUCTION" if e.construction else "0"
 		match e.kind():
 			"line":
@@ -105,11 +128,12 @@ static func to_dxf(sk: Sketch) -> String:
 
 
 ## Write `sk` to `path`. Returns "" on success or the failure reason.
-static func save(sk: Sketch, path: String) -> String:
+static func save(sk: Sketch, path: String,
+		include_construction := true) -> String:
 	var f := FileAccess.open(path, FileAccess.WRITE)
 	if f == null:
 		return "cannot write %s: %s" % [path,
 			error_string(FileAccess.get_open_error())]
-	f.store_string(to_dxf(sk))
+	f.store_string(to_dxf(sk, include_construction))
 	f.close()
 	return ""

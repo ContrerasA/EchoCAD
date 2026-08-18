@@ -89,7 +89,7 @@ func _commit() -> void:
 		cons.append(SketchConstraint.make(SketchConstraint.Type.COINCIDENT,
 			[end.id, _picked_snap[1]]))
 	app.stack.push_no_merge(CmdAddEntities.new(app.active_sketch_id,
-		[center, start, end, arc], cons))
+		stamp_construction([center, start, end, arc]), cons))
 	app.rebuild_snap_index()
 	_reset()
 

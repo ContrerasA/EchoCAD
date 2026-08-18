@@ -1562,20 +1562,28 @@ Status: PENDING sign-off
    "Export DXF", save somewhere. **Expect:** file dialog defaults to .dxf;
    status bar confirms the path.
    	~~Does work, however don't know how to create a construction line~~
+   	~~now construction line is made, but when selected, can't tell it's
+   	constructino line because outline is non dashed.~~ (fix 4)
+   	~~Also toggling x during line drawing should turn it into construction
+   	line. right now only way is creating the line, selecting it, then
+   	pressing x~~ (fix 5)
 - [ ] 2. Open the exported file in any DXF viewer (eMachineShop viewer,
    LibreCAD, an online viewer, or Fusion insert-DXF). **Expect:** geometry
    matches the sketch exactly — arc directions included; construction
-   geometry sits on its own CONSTRUCTION layer.
+   geometry sits on its own CONSTRUCTION layer and renders DASHED.
    ~~Does work, with exception that i don't know how to test construction line~~
+   	~~Works as inteded, however construction line in DXF is not dashed.~~
+	~~We also need a way to export / not export construction lines during
+	dxf export~~ (both fix 6)
 - [X] 3. Check units in the viewer: a 1 in line measures 25.4 (mm).
-- [ ] 4. In model mode with several sketches: click a sketch in the browser,
+- [X] 4. In model mode with several sketches: click a sketch in the browser,
    then "Export DXF". **Expect:** the dialog opens titled with THAT
    sketch's name and exports it. With NO sketch selected, the status bar
    explains how to pick one.
    	~~It does state it, however i don't see a way to select what sketch to
    	export. if i click on a sketch and click export button, it still
    	reports same error.~~ (fix 2)
-- [ ] 5. Right-click a sketch in the browser. **Expect:** a context menu
+- [X] 5. Right-click a sketch in the browser. **Expect:** a context menu
    with "Edit Sketch" and "Export DXF..." — export writes the right-clicked
    sketch even if another row was selected. Double-clicking a sketch row
    opens it for editing. (fix 3)
@@ -1583,6 +1591,23 @@ Status: PENDING sign-off
    violet/dashed and stops counting for profiles (extrude ignores it);
    X again restores it; each press is one undo step. NOTE: the Extend
    tool's shortcut moved from X to **E** to make room for this.
+   ~~Construction line doesn't appear as construction (dotted / purple) in
+   the 3d view. only when editing that sketch~~ (fix 7)
+- [ ] 7. Selected/hovered construction geometry keeps its dashes: click a
+   construction line — the yellow highlight is DASHED, so it still reads
+   as construction while selected. Same for construction circles/arcs.
+- [ ] 8. Construction MODE: with nothing selected press X (or tick the new
+   "Construction" checkbox in the toolbar) — the status bar announces the
+   mode, and every line/circle/arc drawn from then on comes out
+   construction. Works mid line-chain: segments clicked after the toggle
+   are construction, earlier ones untouched. X again (nothing selected)
+   turns it off.
+- [ ] 9. Export dialog: an "Include construction geometry" checkbox sits in
+   the file dialog. Untick it — the exported DXF contains no construction
+   entities; tick it — they export on the dashed CONSTRUCTION layer.
+- [ ] 10. Finish the sketch and orbit in model mode: construction geometry
+   shows violet and dashed in the 3D view, clearly distinct from normal
+   sketch lines.
 
 Fix log:
 - **1** (2026-08-18, "don't know how to create a construction line") There
@@ -1600,3 +1625,25 @@ Fix log:
   sketch rows now carry a context menu (Edit Sketch / Export DXF...), and
   double-click opens the sketch for editing, as the code always claimed.
   `tests/m21_qa_fixes.gd` covers all three.
+- **4** (2026-08-18 retest, "when selected, can't tell it's construction")
+  The selection/hover highlight painted a SOLID stroke over the entity, so
+  the dashes vanished exactly when the user was looking at it. Highlights
+  on construction geometry now draw dashed (lines via draw_dashed_line;
+  circles/arcs via a dashed-arc helper — item 7).
+- **5** ("toggling x during line drawing should turn it into construction")
+  X with nothing selected now toggles construction MODE (also a
+  "Construction" toolbar checkbox): drawing tools stamp new curves with it,
+  so X mid-chain flips the segments still to come — Fusion's sticky toggle.
+  Copy tools (offset/mirror/trim/project) deliberately ignore the mode and
+  preserve their source's flags (item 8).
+- **6** ("construction line in DXF is not dashed" + "way to export / not
+  export construction lines") The DXF now declares a DASHED linetype in its
+  LTYPE table and the CONSTRUCTION layer references it, so viewers render
+  it dashed. The export file dialog gained an "Include construction
+  geometry" checkbox (default on); `action.export_dxf` takes
+  `construction: false` for the same (item 9).
+- **7** ("doesn't appear as construction in the 3d view") The 3D sketch
+  mesh drew every entity with one material. Each entity is now its own
+  surface: construction entities render violet with real dashed segments
+  (3D lines have no dash support, so the dashes are geometry — item 10).
+  All covered by `tests/m21_qa_fixes.gd`.

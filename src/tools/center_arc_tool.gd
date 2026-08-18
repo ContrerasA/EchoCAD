@@ -84,7 +84,7 @@ func _commit() -> void:
 	var arc := SketchArc.make(center.id, start.id, end.id, _sweep > 0.0)
 	arc.id = sk.next_id()
 	app.stack.push_no_merge(CmdAddEntities.new(app.active_sketch_id,
-		[center, start, end, arc]))
+		stamp_construction([center, start, end, arc])))
 	app.rebuild_snap_index()
 	_reset()
 

@@ -45,6 +45,20 @@ func clear_hover() -> bool:
 	return true
 
 
+## Stamp the app's construction mode onto freshly DRAWN curves (M21 QA:
+## X while drawing). Drawing tools pass their new entities through this
+## right before pushing; copy/derive tools (offset, mirror, trim, project)
+## do NOT — they preserve their source's flags. Points are left alone and
+## already-construction scaffolding (a center-rect diagonal) stays as-is.
+func stamp_construction(ents: Array) -> Array:
+	if app != null and app.construction_mode:
+		for e in ents:
+			var se := e as SketchEntity
+			if se != null and se.kind() != "point":
+				se.construction = true
+	return ents
+
+
 func activate() -> void:
 	pass
 

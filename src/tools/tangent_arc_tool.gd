@@ -141,7 +141,7 @@ func _commit(end_pos: Vector2, geo: Dictionary, snapped_end_id := "") -> void:
 		SketchConstraint.make(SketchConstraint.Type.TANGENT, [_line_id, arc.id]),
 	]
 	app.stack.push_no_merge(CmdAddEntities.new(app.active_sketch_id,
-		entities, cons))
+		stamp_construction(entities), cons))
 	app.rebuild_snap_index()
 	_reset()
 

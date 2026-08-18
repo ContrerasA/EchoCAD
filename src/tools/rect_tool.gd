@@ -121,7 +121,8 @@ func _commit_rect(second: Vector2) -> void:
 	var extra := _extras(sk, [p00, p10, p11, p01])
 	ents.append_array(extra.get("entities", []))
 	cons.append_array(extra.get("cons", []))
-	app.stack.push_no_merge(CmdAddEntities.new(app.active_sketch_id, ents, cons))
+	app.stack.push_no_merge(CmdAddEntities.new(app.active_sketch_id,
+		stamp_construction(ents), cons))
 	app.rebuild_snap_index()
 	_reset()
 

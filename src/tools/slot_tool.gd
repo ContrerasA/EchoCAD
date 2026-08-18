@@ -161,7 +161,8 @@ func _commit_slot(width: float) -> void:
 		SketchConstraint.make(SketchConstraint.Type.EQUAL, [arc_a.id, arc_b.id]),
 	]
 	app.stack.push_no_merge(CmdAddEntities.new(app.active_sketch_id,
-		[pa, pb, p1, p2, p3, p4, side1, side2, arc_a, arc_b], cons))
+		stamp_construction([pa, pb, p1, p2, p3, p4, side1, side2, arc_a, arc_b]),
+		cons))
 	app.rebuild_snap_index()
 	_reset()
 

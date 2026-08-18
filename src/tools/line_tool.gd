@@ -156,7 +156,7 @@ func _commit_segment(pos: Vector2) -> void:
 				SketchConstraint.Type.VERTICAL, [line.id]))
 
 	app.stack.push_no_merge(CmdAddEntities.new(app.active_sketch_id,
-		entities, constraints))
+		stamp_construction(entities), constraints))
 	app.rebuild_snap_index()
 
 	if closing:

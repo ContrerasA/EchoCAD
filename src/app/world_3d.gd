@@ -616,23 +616,40 @@ func rebuild_sketches(doc: CadDocument) -> void:
 			continue
 		var sf := f as SketchFeature
 		var im := ImmediateMesh.new()
-		var has_any := false
+		# One surface per entity so CONSTRUCTION geometry can carry its own
+		# violet dashed look (M21 QA: it rendered exactly like normal
+		# geometry in the 3D view). Normal entities stay solid line strips.
+		var mats: Array = []
+		var mat_normal := _line_material(COLOR_SKETCH)
+		var mat_cons := _line_material(COLOR_CONSTRUCTION)
 		for e in sf.sketch.entities():
 			var pts := _entity_polyline(sf.sketch, e)
 			if pts.size() < 2:
 				continue
-			has_any = true
-			im.surface_begin(Mesh.PRIMITIVE_LINE_STRIP)
-			for p in pts:
-				im.surface_add_vertex(sf.to_world(p))
-			im.surface_end()
-		if not has_any:
+			if e.construction:
+				var dashes := _dash_polyline(pts)
+				if dashes.is_empty():
+					continue
+				im.surface_begin(Mesh.PRIMITIVE_LINES)
+				for seg: Array in dashes:
+					im.surface_add_vertex(sf.to_world(seg[0]))
+					im.surface_add_vertex(sf.to_world(seg[1]))
+				im.surface_end()
+				mats.append(mat_cons)
+			else:
+				im.surface_begin(Mesh.PRIMITIVE_LINE_STRIP)
+				for p in pts:
+					im.surface_add_vertex(sf.to_world(p))
+				im.surface_end()
+				mats.append(mat_normal)
+		if mats.is_empty():
 			continue
 		var mi := MeshInstance3D.new()
 		mi.name = sf.name
 		mi.mesh = im
 		mi.set_meta("feature_id", sf.id)
-		mi.material_override = _line_material(COLOR_SKETCH)
+		for i in mats.size():
+			mi.set_surface_override_material(i, mats[i])
 		mi.visible = sketch_shown(sf.id)
 		_sketch_root.add_child(mi)
 		# Closed regions get a translucent face so the sketch reads as
@@ -648,6 +665,35 @@ func rebuild_sketches(doc: CadDocument) -> void:
 			fmi.visible = sketch_shown(sf.id)
 			_sketch_root.add_child(fmi)
 	_rebuild_bodies(doc)
+
+
+## Chop a polyline into dash segments (2 mm dash / 1.5 mm gap, sketch mm) —
+## 3D line rendering has no dash support, so the dashes are real segments.
+## -> Array of [Vector2, Vector2] pairs.
+static func _dash_polyline(pts: PackedVector2Array) -> Array:
+	const DASH := 2.0
+	const GAP := 1.5
+	var out: Array = []
+	var drawing := true
+	var left := DASH
+	for i in pts.size() - 1:
+		var a := pts[i]
+		var b := pts[i + 1]
+		var seg_len := a.distance_to(b)
+		if seg_len < 1e-9:
+			continue
+		var t := 0.0
+		while t < seg_len - 1e-9:
+			var step := minf(left, seg_len - t)
+			if drawing:
+				out.append([a.lerp(b, t / seg_len),
+					a.lerp(b, (t + step) / seg_len)])
+			t += step
+			left -= step
+			if left <= 1e-9:
+				drawing = not drawing
+				left = DASH if drawing else GAP
+	return out
 
 
 ## Triangulated faces of every closed region in a sketch, sunk FILL_SINK_MM

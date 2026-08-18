@@ -653,7 +653,7 @@ func _cmd_action_export_dxf(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Var
 			return null
 	if not path.to_lower().ends_with(".dxf"):
 		path += ".dxf"
-	var why := DxfExporter.save(sk, path)
+	var why := DxfExporter.save(sk, path, bool(a.get("construction", true)))
 	if why != "":
 		_reply_err(p, id, "io", why)
 		return null
