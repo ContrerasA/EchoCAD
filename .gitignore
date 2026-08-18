@@ -5,3 +5,4 @@ tests/*.ecad
 __pycache__/
 *.py[co]
 *.swp
+tests/M21*.dxf

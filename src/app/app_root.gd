@@ -59,6 +59,15 @@ var active_sketch_id := ""
 var picking_plane := false
 ## True while "Extrude" waits for a profile click.
 var picking_profile := false
+## Revolve (M23): profile pick, then axis pick, then the dialog.
+var picking_revolve := false
+var picking_revolve_axis := false
+var _pending_revolve := {}
+var _btn_revolve: Button
+var _revolve_dialog: Window
+var _revolve_angle: LineEdit
+var _revolve_op: OptionButton
+var _revolve_axis := ""
 ## True while "Offset Plane" waits for a BASE plane click (M22).
 var picking_offset_base := false
 var _btn_offset_plane: Button
@@ -686,6 +695,8 @@ func _build_ui() -> void:
 	_btn_create.name = "CreateSketchBtn"
 	_btn_extrude = _button(top, "Extrude", _on_extrude_pressed)
 	_btn_extrude.name = "ExtrudeBtn"
+	_btn_revolve = _button(top, "Revolve", _on_revolve_pressed)
+	_btn_revolve.name = "RevolveBtn"
 	_btn_offset_plane = _button(top, "Offset Plane", _on_offset_plane_pressed)
 	_btn_offset_plane.name = "OffsetPlaneBtn"
 	var pbtn := _button(top, "Parameters", _open_params_dialog)
@@ -1074,7 +1085,22 @@ func _on_extrude_pressed() -> void:
 	picking_profile = true
 	picking_plane = false
 	picking_offset_base = false
+	picking_revolve = false
+	picking_revolve_axis = false
 	world.clear_face_hover()
+	_refresh_ui()
+
+
+## "Revolve" (M23): pick a region, then an axis line, then the dialog.
+func _on_revolve_pressed() -> void:
+	picking_revolve = true
+	picking_revolve_axis = false
+	picking_profile = false
+	picking_plane = false
+	picking_offset_base = false
+	_pending_revolve = {}
+	world.clear_face_hover()
+	world.clear_profile_hover()
 	_refresh_ui()
 
 
@@ -1087,6 +1113,29 @@ func _on_offset_plane_pressed() -> void:
 	world.clear_face_hover()
 	world.set_planes_visible(true)
 	_refresh_ui()
+
+
+## Create a revolve feature (M23, undoable). `axis` is "x"/"y" or a line
+## entity id in the sketch. "" when the region or axis is invalid (missing,
+## or the region straddles the axis).
+func revolve(sketch_id: String, at: Vector2, axis: String, angle: float,
+		operation := SolidFeature.OP_NEW_BODY) -> String:
+	var sf := doc.sketch_feature(sketch_id)
+	if sf == null:
+		return ""
+	var f := RevolveFeature.make(sketch_id, at, axis, angle, operation)
+	# Dry-run the mesher against the current sketch: it returns null for a
+	# missing region/axis or a straddling profile, which we refuse up front
+	# rather than committing a feature that builds nothing.
+	if f.build_mesh(doc) == null:
+		return ""
+	f.name = doc.auto_name("Revolve")
+	f.id = doc.next_feature_id()
+	stack.push_no_merge(CmdAddFeature.new(f))
+	if operation == SolidFeature.OP_CUT:
+		set_status_hint("Cut revolve: carves its solid out of the bodies "
+			+ "it touches.")
+	return f.id
 
 
 ## Create an extrude feature from a profile hit (undoable). Returns the
@@ -1195,6 +1244,107 @@ func _commit_extrude() -> void:
 
 func _on_finish_sketch() -> void:
 	finish_sketch()
+
+
+## --- revolve (M23) -------------------------------------------------------------
+
+## The axis-pick ray: nearest LINE entity of the pending revolve's sketch
+## within a screen-ish tolerance. "" on a miss.
+func _axis_line_under_ray(origin: Vector3, dir: Vector3) -> String:
+	var sf := doc.sketch_feature(String(_pending_revolve.get("sketch_id", "")))
+	if sf == null:
+		return ""
+	var xf := sf.plane_transform()
+	var n: Vector3 = xf.basis.z
+	var denom := dir.dot(n)
+	if absf(denom) < 1e-9:
+		return ""
+	var t := (xf.origin - origin).dot(n) / denom
+	if t <= 0.0:
+		return ""
+	var local := xf.affine_inverse() * (origin + dir * t)
+	var uv := Vector2(local.x, local.y)
+	# ~8 px worth of world millimetres at the current model-view zoom.
+	var tol := rig.view_height_mm() * 8.0 / maxf(float(_viewport.size.y), 1.0)
+	var best := ""
+	var best_d := tol
+	for e in sf.sketch.entities():
+		if e.kind() != "line":
+			continue
+		var l := e as SketchLine
+		var p0 := sf.sketch.point(l.p0)
+		var p1 := sf.sketch.point(l.p1)
+		if p0 == null or p1 == null:
+			continue
+		var dd := Geometry2D.get_closest_point_to_segment(
+			uv, p0.pos, p1.pos).distance_to(uv)
+		if dd < best_d:
+			best_d = dd
+			best = e.id
+	return best
+
+
+func _open_revolve_dialog() -> void:
+	if _revolve_dialog == null:
+		_revolve_dialog = Window.new()
+		_revolve_dialog.name = "RevolveDialog"
+		_revolve_dialog.title = "Revolve"
+		_revolve_dialog.size = Vector2i(220, 118)
+		_revolve_dialog.exclusive = false
+		_revolve_dialog.close_requested.connect(
+			func() -> void:
+				_revolve_dialog.hide()
+				world.clear_profile_hover())
+		var box := VBoxContainer.new()
+		box.set_anchors_preset(Control.PRESET_FULL_RECT)
+		_revolve_dialog.add_child(box)
+		_revolve_angle = LineEdit.new()
+		_revolve_angle.name = "RevolveAngleEdit"
+		_revolve_angle.placeholder_text = "Angle (deg, default 360)"
+		box.add_child(_revolve_angle)
+		_revolve_op = OptionButton.new()
+		_revolve_op.name = "RevolveOpPick"
+		_revolve_op.add_item("New Body", 0)
+		_revolve_op.add_item("Join", 1)
+		_revolve_op.add_item("Cut", 2)
+		_revolve_op.focus_mode = Control.FOCUS_NONE
+		box.add_child(_revolve_op)
+		var okb := Button.new()
+		okb.name = "RevolveOkBtn"
+		okb.text = "OK"
+		okb.pressed.connect(_commit_revolve)
+		box.add_child(okb)
+		_revolve_angle.text_submitted.connect(
+			func(_t: String) -> void: _commit_revolve())
+		add_child(_revolve_dialog)
+	_revolve_angle.text = ""
+	_revolve_dialog.popup_centered()
+	_revolve_angle.grab_focus()
+
+
+func _commit_revolve() -> void:
+	var txt := _revolve_angle.text.strip_edges()
+	var ang := 360.0
+	if txt != "":
+		if not txt.is_valid_float():
+			_status_hint.text = "Revolve: angle must be a number of degrees"
+			return
+		ang = txt.to_float()
+	if ang <= 0.0 or ang > 360.0:
+		_status_hint.text = "Revolve: angle must be in (0, 360]"
+		return
+	_revolve_dialog.hide()
+	world.clear_profile_hover()
+	if not _pending_revolve.is_empty():
+		var ops := [SolidFeature.OP_NEW_BODY, SolidFeature.OP_JOIN,
+			SolidFeature.OP_CUT]
+		var rid := revolve(_pending_revolve["sketch_id"], _pending_revolve["at"],
+			_revolve_axis, ang, ops[_revolve_op.selected])
+		if rid == "":
+			set_status_hint("Revolve refused: the region must lie entirely on "
+				+ "one side of the axis")
+	_pending_revolve = {}
+	_revolve_axis = ""
 
 
 ## --- construction planes (M22) -------------------------------------------------
@@ -1710,6 +1860,24 @@ func _on_viewport_input(event: InputEvent) -> void:
 				_pending_extrude = hit
 				_open_extrude_dialog()
 				_refresh_ui()
+		elif mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT and picking_revolve:
+			var rayr := rig.pixel_ray(mb.position)
+			var rhit := _profile_under_ray(rayr[0], rayr[1])
+			if not rhit.is_empty():
+				picking_revolve = false
+				picking_revolve_axis = true
+				_pending_revolve = rhit
+				_refresh_ui()
+		elif mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT \
+				and picking_revolve_axis:
+			var raya := rig.pixel_ray(mb.position)
+			var line_id := _axis_line_under_ray(raya[0], raya[1])
+			if line_id != "":
+				_revolve_axis = line_id
+				picking_revolve_axis = false
+				world.clear_profile_hover()
+				_open_revolve_dialog()
+				_refresh_ui()
 		elif mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT:
 			# Plain click in model mode: pick a body, or clear on a miss.
 			var ray3 := rig.pixel_ray(mb.position)
@@ -1746,8 +1914,8 @@ func _on_viewport_input(event: InputEvent) -> void:
 		elif picking_offset_base:
 			var rayb := rig.pixel_ray(mm.position)
 			world.set_plane_hover(world.pick_plane(rayb[0], rayb[1]))
-		elif picking_profile:
-			# Pre-highlight the region the click would extrude (QA §M18.1).
+		elif picking_profile or picking_revolve:
+			# Pre-highlight the region the click would extrude/revolve.
 			var rayp := rig.pixel_ray(mm.position)
 			var hitp := _profile_under_ray(rayp[0], rayp[1])
 			if hitp.is_empty():
@@ -1780,6 +1948,16 @@ func handle_app_key(k: InputEventKey) -> bool:
 	if k.keycode == KEY_O and k.ctrl_pressed:
 		open_interactive()
 		return true
+	# Axis shortcut while revolve waits for one: X/Y pick the sketch axes.
+	if picking_revolve_axis and not k.ctrl_pressed \
+			and (k.keycode == KEY_X or k.keycode == KEY_Y):
+		_revolve_axis = RevolveFeature.AXIS_X if k.keycode == KEY_X \
+			else RevolveFeature.AXIS_Y
+		picking_revolve_axis = false
+		world.clear_profile_hover()
+		_open_revolve_dialog()
+		_refresh_ui()
+		return true
 	if k.keycode == KEY_ESCAPE:
 		if mode == Mode.SKETCH:
 			# Esc ends the gesture AND drops back to Select, Fusion-style —
@@ -1798,10 +1976,14 @@ func handle_app_key(k: InputEventKey) -> bool:
 			if sketch_orbit:
 				return_to_sketch_plane()
 				return true
-		if picking_plane or picking_profile or picking_offset_base:
+		if picking_plane or picking_profile or picking_offset_base \
+				or picking_revolve or picking_revolve_axis:
 			picking_plane = false
 			picking_profile = false
 			picking_offset_base = false
+			picking_revolve = false
+			picking_revolve_axis = false
+			_pending_revolve = {}
 			world.set_plane_hover("")
 			world.clear_profile_hover()
 			world.clear_face_hover()
@@ -2211,6 +2393,7 @@ func _refresh_ui() -> void:
 	var in_sketch := mode == Mode.SKETCH
 	_btn_create.visible = not in_sketch
 	_btn_extrude.visible = not in_sketch
+	_btn_revolve.visible = not in_sketch
 	_btn_offset_plane.visible = not in_sketch
 	_btn_finish.visible = in_sketch
 	_tool_bar.visible = in_sketch
@@ -2232,6 +2415,11 @@ func _refresh_ui() -> void:
 		_status_hint.text = "Select the plane to offset from (Esc to cancel)"
 	elif picking_profile:
 		_status_hint.text = "Select a closed profile (Esc to cancel)"
+	elif picking_revolve:
+		_status_hint.text = "Select the profile to revolve (Esc to cancel)"
+	elif picking_revolve_axis:
+		_status_hint.text = ("Select the axis: click a sketch line, or press "
+			+ "X / Y for the sketch axes (Esc to cancel)")
 	elif in_sketch and sketch_orbit:
 		var fo := doc.sketch_feature(active_sketch_id)
 		_status_hint.text = ("Off-axis — sketching continues on %s; click its "
