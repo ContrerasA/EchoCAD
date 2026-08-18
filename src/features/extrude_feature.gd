@@ -1,21 +1,14 @@
 class_name ExtrudeFeature
-extends Feature
+extends SolidFeature
 ## Extrude a sketch profile into a solid. The profile is remembered by an
 ## ANCHOR POINT inside it (sketch uv, mm) rather than by entity ids — the
 ## sketch can be edited and the extrude re-finds the enclosing loop on
 ## replay, Fusion-style. Distance in mm along the sketch plane normal.
-
-## Boolean role of this extrude in the timeline (M18, Fusion's operation
-## dropdown): NEW_BODY starts a solid of its own, JOIN unions into the
-## bodies it touches, CUT carves its prism out of them.
-const OP_NEW_BODY := "new_body"
-const OP_JOIN := "join"
-const OP_CUT := "cut"
+## The boolean `operation` (M18) comes from SolidFeature.
 
 var sketch_id := ""
 var anchor := Vector2.ZERO
 var distance := 10.0
-var operation := OP_NEW_BODY
 
 
 static func make(p_sketch_id: String, p_anchor: Vector2,
@@ -162,6 +155,94 @@ func build_mesh(doc: CadDocument) -> ArrayMesh:
 	earr[Mesh.ARRAY_VERTEX] = edges
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_LINES, earr)
 	return mesh
+
+
+## Resolve this extrude's prism: region + plane transform + world AABB.
+func solid_part(doc: CadDocument) -> Dictionary:
+	var sf := doc.sketch_feature(sketch_id)
+	if sf == null:
+		return {}
+	var prof := ProfileFinder.profile_at(sf.sketch, anchor)
+	if prof.is_empty():
+		return {}
+	var xf := sf.plane_transform()
+	var outer := (prof["polygon"] as PackedVector2Array).duplicate()
+	var aabb := AABB()
+	var first := true
+	for z in [0.0, distance]:
+		for p in outer:
+			var w: Vector3 = xf * Vector3(p.x, p.y, 0.0) + xf.basis.z * float(z)
+			if first:
+				aabb = AABB(w, Vector3.ZERO)
+				first = false
+			else:
+				aabb = aabb.expand(w)
+	return {"feature": self, "prof": prof, "xf": xf,
+		"aabb": aabb.grow(0.001)}
+
+
+## The prism as a CSG node: the region's outer loop extruded `distance`
+## along the plane normal, holes subtracted with a little overhang.
+## CSGPolygon3D extrudes its local-XY polygon toward LOCAL -Z; for a
+## positive distance the node is rotated PI about X (and the polygon
+## y-mirrored to compensate) so -Z lands on +normal.
+func csg_node(part: Dictionary) -> CSGShape3D:
+	var prof: Dictionary = part["prof"]
+	var xf: Transform3D = part["xf"]
+	var outer := (prof["polygon"] as PackedVector2Array).duplicate()
+	var holes: Array = prof.get("holes", [])
+	var d := absf(distance)
+	var up := distance >= 0.0
+	# CUT prisms extend EPS_MM past BOTH caps (the same trick the hole prisms
+	# below use): a cut face coplanar with the target's cap leaves the CSG
+	# classifier undecided and a zero-thickness cap skin behind (QA §M18.8).
+	var cut := operation == OP_CUT
+	var z0 := EPS_MM if cut else 0.0
+	var depth := maxf(d, 0.001) + (2.0 * EPS_MM if cut else 0.0)
+	var lift := Transform3D(Basis.IDENTITY, Vector3(0, 0, z0))
+	if cut:
+		# LATERAL coplanarity leaves skins too: a cut flush with the target's
+		# outer face (QA §M18.3 follow-up — the roof over the notch) puts a
+		# cut wall exactly ON a body wall. Grow the cut profile sideways by
+		# the same hair; kept islands (holes) shrink by it.
+		var grown := offset_ring(outer, EPS_MM)
+		if grown.size() >= 3:
+			outer = grown
+		var kept: Array = []
+		for h in holes:
+			var hh := offset_ring(h as PackedVector2Array, -EPS_MM)
+			if hh.size() >= 3:
+				kept.append(hh)
+		holes = kept
+	var local := Transform3D(Basis.from_euler(Vector3(PI, 0, 0)), Vector3.ZERO) \
+		if up else Transform3D.IDENTITY
+
+	var map_poly := func(p_poly: PackedVector2Array) -> PackedVector2Array:
+		if not up:
+			return p_poly.duplicate()
+		var out_p := PackedVector2Array()
+		for p in p_poly:
+			out_p.append(Vector2(p.x, -p.y))
+		return out_p
+
+	var outer_node := CSGPolygon3D.new()
+	outer_node.polygon = map_poly.call(outer)
+	outer_node.depth = depth
+	if holes.is_empty():
+		outer_node.transform = xf * local * lift
+		return outer_node
+	var c := CSGCombiner3D.new()
+	c.transform = xf * local
+	outer_node.transform = lift
+	c.add_child(outer_node)
+	for h in holes:
+		var hn := CSGPolygon3D.new()
+		hn.polygon = map_poly.call(h)
+		hn.depth = depth + 2.0 * EPS_MM
+		hn.position = Vector3(0, 0, z0 + EPS_MM)
+		hn.operation = CSGShape3D.OPERATION_SUBTRACTION
+		c.add_child(hn)
+	return c
 
 
 static func _signed_area(poly: PackedVector2Array) -> float:

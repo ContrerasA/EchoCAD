@@ -108,7 +108,7 @@ func refresh() -> void:
 	bodies.collapsed = not expanded.get("Bodies", true)
 	var selected := app.world.selected_body()
 	for f in app.doc.live_features():
-		if not (f is ExtrudeFeature):
+		if not (f is SolidFeature):
 			continue
 		var row := _add_row(bodies, "body", f.id, f.name,
 			app.world.body_shown(f.id))

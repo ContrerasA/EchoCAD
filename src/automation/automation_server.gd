@@ -530,6 +530,36 @@ func _cmd_action_extrude(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Varian
 	return null
 
 
+## Revolve a region (M23). args: {sketch, at:[u,v], axis: "x"|"y"|line id,
+## angle (deg, default 360), operation}. Same response contract as extrude.
+func _cmd_action_revolve(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
+	var fid := String(a.get("sketch", ""))
+	var at := _vec2(a.get("at", [0, 0]))
+	var axis := String(a.get("axis", "x"))
+	var angle := float(a.get("angle", 360.0))
+	var op := String(a.get("operation", SolidFeature.OP_NEW_BODY))
+	if not op in [SolidFeature.OP_NEW_BODY, SolidFeature.OP_JOIN,
+			SolidFeature.OP_CUT]:
+		_reply_err(p, id, "bad_args", "unknown operation %s" % op)
+		return null
+	var rid := app.revolve(fid, at, axis, angle, op)
+	if rid == "":
+		_reply_err(p, id, "invalid",
+			"no region/axis there, or the region straddles the axis")
+		return null
+	var f := app.doc.feature_by_id(rid) as RevolveFeature
+	var mesh := f.build_mesh(app.doc)
+	var body_volume := 0.0
+	for b: Dictionary in await BodyBuilder.build(app.doc, app):
+		if (b["feature_ids"] as Array).has(rid):
+			body_volume = BodyBuilder.mesh_volume(b["mesh"])
+			break
+	_reply(p, id, {"feature": rid, "name": f.name, "operation": op,
+		"volume": BodyBuilder.mesh_volume(mesh) if mesh != null else 0.0,
+		"body_volume": body_volume})
+	return null
+
+
 ## Boolean-resolved solid bodies (M18): id/name/features/volume/aabb each.
 func _cmd_query_bodies(_a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
 	var out: Array = []

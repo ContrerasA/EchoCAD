@@ -71,3 +71,46 @@ Status: PENDING sign-off
 ### §M22 fix log
 
 (empty)
+
+---
+
+## §M23 — Revolve
+
+Status: PENDING sign-off
+
+- [ ] 1. Sketch on XY: a rectangle from about (20,0) to (30,10) — off to the
+   right of the origin. Finish. Press **Revolve**, hover the rectangle —
+   the region highlights amber like Extrude's pick; click it. **Expect:**
+   the status bar now asks for the axis: "click a sketch line, or press
+   X / Y for the sketch axes".
+- [ ] 2. Press **Y**. **Expect:** the Revolve dialog opens (angle box,
+   operation dropdown). Leave the angle empty (=360), OK. A RING (donut
+   with a square cross-section) appears around the vertical axis; the
+   timeline gains a "Revolve1" chip; the browser lists the body.
+- [ ] 3. Orbit the ring. **Expect:** shaded like extruded solids, with edge
+   lines on the four sharp circles; no seams on the smooth walls; no
+   see-through faces.
+- [ ] 4. Undo. Revolve the same rectangle again, angle **90**. **Expect:** a
+   quarter of the ring with two flat end caps; the caps carry outline edges.
+- [ ] 5. Draw a sketch with a rectangle straddling the vertical axis (e.g.
+   (-5,20) to (5,30)) and try to revolve it about Y. **Expect:** refused
+   with a status message about the region straddling the axis; no feature
+   is added.
+- [ ] 6. In a sketch, draw a rectangle plus a separate vertical CONSTRUCTION
+   line (X toggle) to its left. Revolve the rectangle and CLICK THE LINE as
+   the axis. **Expect:** the ring forms around the line, not the sketch
+   axis.
+- [ ] 7. Booleans: extrude a plate, then sketch a small rectangle over it
+   and revolve it 360° about a line through the plate with operation
+   **Cut**. **Expect:** a round groove/trough carved out of the plate;
+   undo restores the plate in one step.
+- [ ] 8. Edit the ring's source sketch (drag the rectangle a little),
+   finish. **Expect:** the revolve replays — the ring follows the profile.
+- [ ] 9. Save and reopen. **Expect:** revolves rebuild identically; the
+   timeline order and names survive.
+- [ ] 10. Suppress the Revolve chip. **Expect:** the ring disappears;
+   unsuppress brings it back.
+
+### §M23 fix log
+
+(empty)

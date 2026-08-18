@@ -1,22 +1,24 @@
 class_name BodyBuilder
 extends RefCounted
-## Builds the document's BODIES from its live extrude features (M18).
-## A body is the boolean result of one NEW_BODY extrude plus every later
-## JOIN/CUT extrude whose prism touches it (AABB test), evaluated in
-## timeline order — Fusion's operation dropdown semantics:
+## Builds the document's BODIES from its live SOLID features (M18 extrudes,
+## M23 revolves). A body is the boolean result of one NEW_BODY feature plus
+## every later JOIN/CUT feature whose solid touches it (AABB test),
+## evaluated in timeline order — Fusion's operation dropdown semantics:
 ##   new_body — starts a solid of its own,
 ##   join     — unions into every body it touches (none touched: new body),
-##   cut      — carves its prism out of every body it touches (none: no-op).
+##   cut      — carves its shape out of every body it touches (none: no-op).
 ##
-## Single-part bodies mesh through ExtrudeFeature.build_mesh (synchronous,
+## Single-part bodies mesh through the feature's build_mesh (synchronous,
 ## exact, carries the edge-line overlay surface). Multi-part bodies bake
 ## through the engine's CSG, whose brushes update deferred — the scratch
 ## nodes must sit in the tree across one frame, so `build` is a COROUTINE
-## and takes a host node. Callers await it.
+## and takes a host node. Callers await it. Each feature supplies its own
+## exact mesh, CSG node and AABB (SolidFeature interface).
 
-## Coplanar boolean faces z-fight and confuse the CSG classifier; cut/hole
-## prisms are extended by this much past both caps.
-const EPS_MM := 0.05
+
+## The CSG coplanarity margin lives on SolidFeature now; re-exported here
+## because tests and older call sites read it off BodyBuilder.
+const EPS_MM := SolidFeature.EPS_MM
 
 
 ## -> Array of {id: String (root feature id), name: String,
@@ -24,14 +26,14 @@ const EPS_MM := 0.05
 static func build(doc: CadDocument, host: Node) -> Array:
 	var bodies: Array = []
 	for f in doc.live_features():
-		if not (f is ExtrudeFeature):
+		if not (f is SolidFeature):
 			continue
-		var ef := f as ExtrudeFeature
-		var part := _part_of(doc, ef)
+		var ef := f as SolidFeature
+		var part := ef.solid_part(doc)
 		if part.is_empty():
 			continue
 		match ef.operation:
-			ExtrudeFeature.OP_JOIN:
+			SolidFeature.OP_JOIN:
 				var targets := _touching(bodies, part["aabb"])
 				if targets.is_empty():
 					bodies.append(_new_body(part))
@@ -49,7 +51,7 @@ static func build(doc: CadDocument, host: Node) -> Array:
 					(merged["parts"] as Array).append(part)
 					(merged["feature_ids"] as Array).append(ef.id)
 					merged["aabb"] = (merged["aabb"] as AABB).merge(part["aabb"])
-			ExtrudeFeature.OP_CUT:
+			SolidFeature.OP_CUT:
 				for bi in _touching(bodies, part["aabb"]):
 					var b: Dictionary = bodies[bi]
 					(b["parts"] as Array).append(part)
@@ -63,7 +65,7 @@ static func build(doc: CadDocument, host: Node) -> Array:
 	for b: Dictionary in bodies:
 		var parts: Array = b["parts"]
 		if parts.size() == 1:
-			var ef0: ExtrudeFeature = parts[0]["feature"]
+			var ef0: SolidFeature = parts[0]["feature"]
 			b["mesh"] = ef0.build_mesh(doc)
 		else:
 			var combiner := CSGCombiner3D.new()
@@ -73,9 +75,9 @@ static func build(doc: CadDocument, host: Node) -> Array:
 			# QA §M18.6, round two).
 			combiner.visible = false
 			for part: Dictionary in parts:
-				var node := _prism_node(part)
-				var ef_p: ExtrudeFeature = part["feature"]
-				if ef_p.operation == ExtrudeFeature.OP_CUT:
+				var ef_p: SolidFeature = part["feature"]
+				var node := ef_p.csg_node(part)
+				if ef_p.operation == SolidFeature.OP_CUT:
 					node.operation = CSGShape3D.OPERATION_SUBTRACTION
 				combiner.add_child(node)
 			host.add_child(combiner)
@@ -111,44 +113,20 @@ static func build(doc: CadDocument, host: Node) -> Array:
 	return out
 
 
-## True when the document needs no CSG pass — every live extrude is a plain
-## NEW_BODY. Callers may then mesh synchronously (no frame wait).
+## True when the document needs no CSG pass — every live solid feature is a
+## plain NEW_BODY. Callers may then mesh synchronously (no frame wait).
 static func all_new_body(doc: CadDocument) -> bool:
 	for f in doc.live_features():
-		if f is ExtrudeFeature \
-				and (f as ExtrudeFeature).operation != ExtrudeFeature.OP_NEW_BODY:
+		if f is SolidFeature \
+				and (f as SolidFeature).operation != SolidFeature.OP_NEW_BODY:
 			return false
 	return true
 
 
 static func _new_body(part: Dictionary) -> Dictionary:
-	var ef: ExtrudeFeature = part["feature"]
+	var ef: SolidFeature = part["feature"]
 	return {"id": ef.id, "name": ef.name, "parts": [part],
 		"feature_ids": [ef.id], "aabb": part["aabb"], "mesh": null}
-
-
-## Resolve a feature's prism: region + plane transform + world AABB.
-static func _part_of(doc: CadDocument, ef: ExtrudeFeature) -> Dictionary:
-	var sf := doc.sketch_feature(ef.sketch_id)
-	if sf == null:
-		return {}
-	var prof := ProfileFinder.profile_at(sf.sketch, ef.anchor)
-	if prof.is_empty():
-		return {}
-	var xf := sf.plane_transform()
-	var outer := (prof["polygon"] as PackedVector2Array).duplicate()
-	var aabb := AABB()
-	var first := true
-	for z in [0.0, ef.distance]:
-		for p in outer:
-			var w: Vector3 = xf * Vector3(p.x, p.y, 0.0) + xf.basis.z * float(z)
-			if first:
-				aabb = AABB(w, Vector3.ZERO)
-				first = false
-			else:
-				aabb = aabb.expand(w)
-	return {"feature": ef, "prof": prof, "xf": xf,
-		"aabb": aabb.grow(0.001)}
 
 
 ## Rebuild a CSG-baked mesh into the same shape single-part bodies use:
@@ -241,96 +219,6 @@ static func _touching(bodies: Array, box: AABB) -> Array:
 		if ((bodies[i] as Dictionary)["aabb"] as AABB).intersects(box):
 			out.append(i)
 	return out
-
-
-## A prism as a CSG node: the region's outer loop extruded `distance` along
-## the plane normal, holes subtracted with a little overhang. CSGPolygon3D
-## extrudes its local-XY polygon toward LOCAL -Z; for a positive distance
-## the node is rotated PI about X (and the polygon y-mirrored to compensate)
-## so -Z lands on +normal.
-static func _prism_node(part: Dictionary) -> CSGShape3D:
-	var prof: Dictionary = part["prof"]
-	var ef: ExtrudeFeature = part["feature"]
-	var xf: Transform3D = part["xf"]
-	var outer := (prof["polygon"] as PackedVector2Array).duplicate()
-	var holes: Array = prof.get("holes", [])
-	var d := absf(ef.distance)
-	var up := ef.distance >= 0.0
-	# CUT prisms extend EPS_MM past BOTH caps (the same trick the hole prisms
-	# below use): a cut face coplanar with the target's cap leaves the CSG
-	# classifier undecided and a zero-thickness cap skin behind (QA §M18.8).
-	var cut := ef.operation == ExtrudeFeature.OP_CUT
-	var z0 := EPS_MM if cut else 0.0
-	var depth := maxf(d, 0.001) + (2.0 * EPS_MM if cut else 0.0)
-	var lift := Transform3D(Basis.IDENTITY, Vector3(0, 0, z0))
-	if cut:
-		# LATERAL coplanarity leaves skins too: a cut flush with the target's
-		# outer face (QA §M18.3 follow-up — the roof over the notch) puts a
-		# cut wall exactly ON a body wall. Grow the cut profile sideways by
-		# the same hair; kept islands (holes) shrink by it.
-		var grown := _offset_ring(outer, EPS_MM)
-		if grown.size() >= 3:
-			outer = grown
-		var kept: Array = []
-		for h in holes:
-			var hh := _offset_ring(h as PackedVector2Array, -EPS_MM)
-			if hh.size() >= 3:
-				kept.append(hh)
-		holes = kept
-	var local := Transform3D(Basis.from_euler(Vector3(PI, 0, 0)), Vector3.ZERO) \
-		if up else Transform3D.IDENTITY
-
-	var map_poly := func(p_poly: PackedVector2Array) -> PackedVector2Array:
-		if not up:
-			return p_poly.duplicate()
-		var out_p := PackedVector2Array()
-		for p in p_poly:
-			out_p.append(Vector2(p.x, -p.y))
-		return out_p
-
-	var outer_node := CSGPolygon3D.new()
-	outer_node.polygon = map_poly.call(outer)
-	outer_node.depth = depth
-	if holes.is_empty():
-		outer_node.transform = xf * local * lift
-		return outer_node
-	var c := CSGCombiner3D.new()
-	c.transform = xf * local
-	outer_node.transform = lift
-	c.add_child(outer_node)
-	for h in holes:
-		var hn := CSGPolygon3D.new()
-		hn.polygon = map_poly.call(h)
-		hn.depth = depth + 2.0 * EPS_MM
-		hn.position = Vector3(0, 0, z0 + EPS_MM)
-		hn.operation = CSGShape3D.OPERATION_SUBTRACTION
-		c.add_child(hn)
-	return c
-
-
-## Offset a ccw ring by `by` mm (positive grows, negative shrinks; verified
-## convention of Geometry2D.offset_polygon for ccw input). Offsetting can
-## split a ring into several or collapse it entirely — the largest surviving
-## ring wins, and an empty result comes back empty (callers skip the ring).
-static func _offset_ring(poly: PackedVector2Array, by: float) -> PackedVector2Array:
-	var res := Geometry2D.offset_polygon(poly, by, Geometry2D.JOIN_MITER)
-	if res.is_empty():
-		return PackedVector2Array()
-	var best: PackedVector2Array = res[0]
-	var best_a := absf(_ring_area(best))
-	for r: PackedVector2Array in res:
-		var a := absf(_ring_area(r))
-		if a > best_a:
-			best = r
-			best_a = a
-	return best
-
-
-static func _ring_area(poly: PackedVector2Array) -> float:
-	var a := 0.0
-	for i in poly.size():
-		a += poly[i].cross(poly[(i + 1) % poly.size()])
-	return a * 0.5
 
 
 ## Volume of a body list entry's mesh — indexed or not.

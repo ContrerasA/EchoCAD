@@ -836,7 +836,7 @@ func rebuild_sketches(doc: CadDocument) -> void:
 			c.queue_free()
 	_rebuild_cplanes(doc)
 	for f in doc.live_features():
-		if f is ExtrudeFeature:
+		if f is SolidFeature:
 			continue   # bodies are rebuilt below, boolean-aware
 		if not (f is SketchFeature):
 			continue
