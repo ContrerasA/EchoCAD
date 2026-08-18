@@ -114,3 +114,32 @@ Status: PENDING sign-off
 ### §M23 fix log
 
 (empty)
+
+---
+
+## §M24 — STL export
+
+Status: PENDING sign-off
+
+- [ ] 1. Empty document: press **Export STL**. **Expect:** no dialog; the
+   status bar says there are no solid bodies to export.
+- [ ] 2. Extrude a box (with a hole in it for interest). Export STL.
+   **Expect:** file dialog defaults to .stl with an "ASCII STL" checkbox
+   (unticked); saving reports the triangle count in the status bar.
+- [ ] 3. Open the exported file in an external viewer/slicer (PrusaSlicer,
+   Cura, Windows 3D Viewer...). **Expect:** the part loads at the right
+   SIZE in mm (a 40 x 30 x 10 sketch box measures 40 x 30 x 10 mm), is
+   watertight (no slicer repair warnings), and shows no inverted faces.
+- [ ] 4. A boolean body (box with a revolved groove cut, from §M23.7):
+   export and open externally. **Expect:** the carved shape survives the
+   round trip; still manifold.
+- [ ] 5. Two bodies: right-click a body row in the browser → "Export
+   STL...". **Expect:** only that body lands in the file.
+- [ ] 6. Hide one body (browser eye), Export STL from the toolbar.
+   **Expect:** only the visible body exports.
+- [ ] 7. Tick "ASCII STL" and export. **Expect:** the file opens in a text
+   editor as `solid echocad` / `facet normal ...`; a viewer still loads it.
+
+### §M24 fix log
+
+(empty)
