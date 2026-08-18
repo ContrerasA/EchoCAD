@@ -143,3 +143,37 @@ Status: PENDING sign-off
 ### §M24 fix log
 
 (empty)
+
+---
+
+## §M25 — DXF import
+
+Status: PENDING sign-off
+
+- [ ] 1. Export a sketch (rect + circle + a construction line) to DXF, then
+   press **Import DXF** and pick that file. **Expect:** a NEW sketch
+   appears in the timeline/browser with the same geometry in the same
+   place; the construction line comes back violet-dashed; the status bar
+   reports the entity census.
+- [ ] 2. Hover the imported rectangle in Extrude picking. **Expect:** the
+   region highlights (endpoints welded into a closed profile); extruding it
+   works.
+- [ ] 3. Ctrl+Z after an import. **Expect:** the entire imported sketch
+   disappears in ONE step.
+- [ ] 4. Import a DXF exported from another CAD (Fusion, LibreCAD,
+   QCAD...): a 2D drawing with lines, arcs, circles, and a polyline.
+   **Expect:** geometry lands correctly (polylines become lines+arcs);
+   unsupported entities (text, dimensions, splines) are skipped and the
+   status bar says how many.
+- [ ] 5. Import a file drawn in INCHES ($INSUNITS=1). **Expect:** the
+   geometry lands at the right physical size (1in line measures 25.4 mm /
+   1.000 in with Smart Dimension).
+- [ ] 6. Open the imported sketch and edit: drag points, add constraints,
+   dimension it. **Expect:** imported geometry behaves like drawn geometry
+   (snap, solver, DOF all work).
+- [ ] 7. Pick a garbage file (a .txt renamed .dxf). **Expect:** refused with
+   a status message; the document is untouched.
+
+### §M25 fix log
+
+(empty)

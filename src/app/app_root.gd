@@ -712,6 +712,8 @@ func _build_ui() -> void:
 	var stlb := _button(top, "Export STL",
 		func() -> void: export_stl_interactive())
 	stlb.name = "ExportStlBtn"
+	var dxfi := _button(top, "Import DXF", import_dxf_interactive)
+	dxfi.name = "ImportDxfBtn"
 	var dxfb := _button(top, "Export DXF", export_dxf_interactive)
 	dxfb.name = "ExportDxfBtn"
 	_btn_open = _button(top, "Open", open_interactive)
@@ -1610,6 +1612,53 @@ func open_from(path: String) -> bool:
 	stack.mark_saved()
 	set_status_hint("Opened " + path)
 	return true
+
+
+## --- DXF import (M25) ----------------------------------------------------------
+
+var _dxf_import_dialog: FileDialog
+
+
+## Import a DXF file as a NEW sketch on `plane` (an origin-plane name or a
+## construction plane id). One undo step — the sketch is built complete and
+## then added with a single CmdAddFeature. Returns the feature id, "" on
+## failure (status bar says why).
+func import_dxf(path: String, plane := "XY") -> String:
+	if not SketchFeature.PLANES.has(plane) and doc.plane_feature(plane) == null:
+		set_status_hint("Import DXF: unknown plane %s" % plane)
+		return ""
+	if not FileAccess.file_exists(path):
+		set_status_hint("Import DXF: no such file: " + path)
+		return ""
+	var parsed := DxfImporter.parse(FileAccess.get_file_as_string(path))
+	if not bool(parsed["ok"]):
+		set_status_hint("Import DXF failed: " + String(parsed["error"]))
+		return ""
+	var sf := SketchFeature.make(doc.auto_name("Sketch"), plane)
+	sf.id = doc.next_feature_id()
+	var census := DxfImporter.populate(sf.sketch, parsed["ents"] as Array)
+	stack.push_no_merge(CmdAddFeature.new(sf))
+	var msg := "Imported %d lines, %d arcs, %d circles, %d points into %s" \
+		% [census["lines"], census["arcs"], census["circles"],
+		census["points"], sf.name]
+	if int(parsed["skipped"]) > 0:
+		msg += " (%d unsupported entities skipped)" % int(parsed["skipped"])
+	set_status_hint(msg)
+	return sf.id
+
+
+func import_dxf_interactive() -> void:
+	if _dxf_import_dialog == null:
+		_dxf_import_dialog = FileDialog.new()
+		_dxf_import_dialog.name = "DxfImportDialog"
+		_dxf_import_dialog.access = FileDialog.ACCESS_FILESYSTEM
+		_dxf_import_dialog.filters = ["*.dxf ; DXF drawings"]
+		_dxf_import_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
+		_dxf_import_dialog.size = Vector2i(640, 440)
+		_dxf_import_dialog.file_selected.connect(
+			func(path: String) -> void: import_dxf(path))
+		add_child(_dxf_import_dialog)
+	_dxf_import_dialog.popup_centered()
 
 
 ## --- STL export (M24) ----------------------------------------------------------

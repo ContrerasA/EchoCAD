@@ -726,6 +726,30 @@ func _cmd_action_export_stl(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Var
 	return null
 
 
+## Import a DXF as a new sketch (M25). args: {path, plane?}.
+func _cmd_action_import_dxf(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
+	var path := String(a.get("path", ""))
+	if path == "":
+		_reply_err(p, id, "bad_args", "missing path")
+		return null
+	var fid := app.import_dxf(path, String(a.get("plane", "XY")))
+	if fid == "":
+		_reply_err(p, id, "invalid", "import failed (see status hint)")
+		return null
+	var sf := app.doc.sketch_feature(fid)
+	var census := {"lines": 0, "arcs": 0, "circles": 0, "points": 0}
+	for e in sf.sketch.entities():
+		match e.kind():
+			"line":
+				census["lines"] += 1
+			"arc":
+				census["arcs"] += 1
+			"circle":
+				census["circles"] += 1
+	return {"feature": fid, "name": sf.name, "lines": census["lines"],
+		"arcs": census["arcs"], "circles": census["circles"]}
+
+
 func _cmd_action_export_dxf(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
 	var path := String(a.get("path", ""))
 	if path == "":
