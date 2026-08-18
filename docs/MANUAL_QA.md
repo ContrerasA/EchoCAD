@@ -1557,7 +1557,7 @@ Status: Signed off 2026-08-17
 
 Status: PENDING sign-off
 
-- [ ] 1. Sketch with a line, circle, arc, slot, and a construction line
+- [X] 1. Sketch with a line, circle, arc, slot, and a construction line
    (select any curve and press **X** to toggle it construction — fix 1).
    "Export DXF", save somewhere. **Expect:** file dialog defaults to .dxf;
    status bar confirms the path.
@@ -1598,7 +1598,7 @@ Status: PENDING sign-off
 - [X] 7. Selected/hovered construction geometry keeps its dashes: click a
    construction line — the yellow highlight is DASHED, so it still reads
    as construction while selected. Same for construction circles/arcs.
-- [ ] 8. Construction MODE: with nothing selected press X (or tick the new
+- [X] 8. Construction MODE: with nothing selected press X (or tick the new
    "Construction" checkbox in the toolbar) — the status bar announces the
    mode, and every line/circle/arc drawn from then on comes out
    construction. Works mid line-chain: segments clicked after the toggle
@@ -1606,10 +1606,10 @@ Status: PENDING sign-off
    turns it off. While the mode is on, the drawing PREVIEW itself renders
    violet and dashed (line rubber band, rect/circle/arc/slot ghosts), so
    what you see is what will commit.
-- [ ] 9. Export dialog: an "Include construction geometry" checkbox sits in
+- [X] 9. Export dialog: an "Include construction geometry" checkbox sits in
    the file dialog. Untick it — the exported DXF contains no construction
    entities; tick it — they export on the dashed CONSTRUCTION layer.
-- [ ] 10. Finish the sketch and orbit in model mode: construction geometry
+- [X] 10. Finish the sketch and orbit in model mode: construction geometry
    shows violet and dashed in the 3D view, clearly distinct from normal
    sketch lines.
 
