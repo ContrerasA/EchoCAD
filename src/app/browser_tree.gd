@@ -65,6 +65,23 @@ func refresh() -> void:
 		_add_row(origin, "plane", plane_name, plane_name,
 			app.world.plane_shown(plane_name))
 
+	# Construction planes (M22): their own folder, Fusion-style. Eye ticks map
+	# to the same plane-visibility store the origin planes use (keyed by
+	# feature id); double-click edits an offset plane's distance.
+	var live_planes: Array = []
+	for f in app.doc.live_features():
+		if f is PlaneFeature:
+			live_planes.append(f)
+	if not live_planes.is_empty():
+		var cons := create_item(root)
+		cons.set_text(COL_NAME, "Construction")
+		cons.set_selectable(COL_EYE, false)
+		cons.set_selectable(COL_NAME, false)
+		cons.collapsed = not expanded.get("Construction", true)
+		for pf: PlaneFeature in live_planes:
+			_add_row(cons, "cplane", pf.id, pf.name,
+				app.world.plane_shown(pf.id))
+
 	# Sketches get their own folder, named and individually hideable, the way
 	# Fusion lists them. Without it there is no way to tell which sketch is
 	# which, nor to get a finished sketch out of the way — and reference
@@ -107,7 +124,8 @@ func _add_row(parent: TreeItem, kind: String, id: String, label: String,
 	row.set_editable(COL_EYE, true)
 	row.set_selectable(COL_EYE, false)
 	row.set_text(COL_NAME, label)
-	row.set_selectable(COL_NAME, kind == "body" or kind == "sketch")
+	row.set_selectable(COL_NAME,
+		kind == "body" or kind == "sketch" or kind == "cplane")
 	_rows[row] = {"kind": kind, "id": id}
 	return row
 
@@ -137,7 +155,7 @@ func _on_item_edited() -> void:
 			app.world.set_origin_shown(shown)
 		"grid":
 			app.world.set_grid_shown(shown)
-		"plane":
+		"plane", "cplane":
 			app.world.set_plane_shown(String(meta["id"]), shown)
 		"body":
 			app.world.set_body_shown(String(meta["id"]), shown)
@@ -171,11 +189,17 @@ func selected_sketch_id() -> String:
 	return String(meta["id"])
 
 
-## Double-click on a sketch row opens it for editing, Fusion-style.
+## Double-click on a sketch row opens it for editing, Fusion-style; on a
+## construction plane it opens the offset editor.
 func _on_item_activated() -> void:
 	var sid := selected_sketch_id()
 	if sid != "":
 		app.edit_sketch(sid)
+		return
+	var row := get_selected()
+	if row != null and _rows.has(row) \
+			and String((_rows[row] as Dictionary)["kind"]) == "cplane":
+		app.edit_plane_offset(String((_rows[row] as Dictionary)["id"]))
 
 
 func _on_item_mouse_selected(pos: Vector2, mouse_button_index: int) -> void:

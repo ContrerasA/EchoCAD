@@ -580,12 +580,49 @@ func _cmd_action_set_pref(a: Dictionary, _p: StreamPeerTCP, _id: Variant) -> Dic
 		"entity_snap": app.snap.entity_snap_enabled}
 
 func _cmd_action_enter_sketch(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
+	# An origin-plane name or a construction plane's feature id (M22).
 	var plane := String(a.get("plane", "XY"))
-	if not SketchFeature.PLANES.has(plane):
+	if not SketchFeature.PLANES.has(plane) \
+			and app.doc.plane_feature(plane) == null:
 		_reply_err(p, id, "bad_args", "unknown plane %s" % plane)
 		return null
 	var fid := app.create_sketch(plane)
 	return {"feature": fid}
+
+
+## Create an offset construction plane (M22). args: {base, offset} — base an
+## origin-plane name or plane feature id, offset in mm.
+func _cmd_action_create_offset_plane(a: Dictionary, p: StreamPeerTCP,
+		id: Variant) -> Variant:
+	var base := String(a.get("base", "XY"))
+	var fid := app.create_offset_plane(base, float(a.get("offset", 0.0)))
+	if fid == "":
+		_reply_err(p, id, "bad_args", "unknown base plane %s" % base)
+		return null
+	var pf := app.doc.plane_feature(fid)
+	return {"feature": fid, "name": pf.name}
+
+
+## Edit an offset plane's distance (M22). args: {plane, offset(mm)}.
+func _cmd_action_set_plane_offset(a: Dictionary, p: StreamPeerTCP,
+		id: Variant) -> Variant:
+	var fid := String(a.get("plane", ""))
+	var pf := app.doc.plane_feature(fid)
+	if pf == null or pf.plane_kind != PlaneFeature.KIND_OFFSET:
+		_reply_err(p, id, "bad_args", "no offset plane %s" % fid)
+		return null
+	app.stack.push_no_merge(CmdSetPlaneOffset.new(fid, float(a.get("offset", 0.0))))
+	return {"feature": fid, "offset": pf.offset}
+
+
+## Resolved world transform of any plane ref (origin name or feature id).
+func _cmd_query_plane_transform(a: Dictionary, _p: StreamPeerTCP,
+		_id: Variant) -> Dictionary:
+	var xf: Transform3D = app.doc.plane_transform(String(a.get("plane", "XY")))
+	return {"basis": [xf.basis.x.x, xf.basis.x.y, xf.basis.x.z,
+		xf.basis.y.x, xf.basis.y.y, xf.basis.y.z,
+		xf.basis.z.x, xf.basis.z.y, xf.basis.z.z],
+		"origin": [xf.origin.x, xf.origin.y, xf.origin.z]}
 
 
 func _cmd_action_edit_sketch(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:

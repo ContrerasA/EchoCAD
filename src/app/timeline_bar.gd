@@ -72,6 +72,8 @@ func _on_chip_input(fid: String, ev: InputEvent) -> void:
 		var f := app.doc.feature_by_id(fid)
 		if f is SketchFeature and app.doc.features.find(f) < app.doc.timeline_marker:
 			app.edit_sketch(fid)
+		elif f is PlaneFeature:
+			app.edit_plane_offset(fid)
 	elif mb.pressed and mb.button_index == MOUSE_BUTTON_RIGHT:
 		_menu_feature = fid
 		_menu.clear()
@@ -91,13 +93,17 @@ func _on_menu(id: int) -> void:
 			var f := app.doc.feature_by_id(fid)
 			if f is SketchFeature:
 				app.edit_sketch(fid)
+			elif f is PlaneFeature:
+				app.edit_plane_offset(fid)
 		1:
 			var f := app.doc.feature_by_id(fid)
 			if f != null:
 				app.stack.push_no_merge(CmdSetFeatureFlag.new(fid,
 					"suppressed", not f.suppressed))
 		2:
-			app.stack.push_no_merge(CmdDeleteFeature.new(fid))
+			# Routed through the app so a construction plane that is still
+			# referenced refuses deletion instead of orphaning its sketches.
+			app.request_delete_feature(fid)
 
 
 ## Marker drag: while held, motion anywhere maps the pointer x to a slot.

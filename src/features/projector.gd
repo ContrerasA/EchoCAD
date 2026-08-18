@@ -19,17 +19,19 @@ extends RefCounted
 
 
 ## Map a point from `src`'s plane onto `tgt`'s plane (both sketch mm).
+## Projection is along the target normal: express the world point in the
+## target plane's local frame and drop the normal component. Uses the full
+## plane transforms, so offset/custom planes (M22) map correctly.
 static func map_point(src: SketchFeature, tgt: SketchFeature, p: Vector2) -> Vector2:
-	var w := src.to_world(p)
-	var b := SketchFeature.plane_basis(tgt.plane)
-	return Vector2(w.dot(b.x), w.dot(b.y))
+	var local := tgt.plane_transform().affine_inverse() * src.to_world(p)
+	return Vector2(local.x, local.y)
 
 
 ## Does projecting from `src` onto `tgt` preserve circles? True when the
 ## planes are parallel (normals aligned up to sign).
 static func planes_parallel(src: SketchFeature, tgt: SketchFeature) -> bool:
-	var ns := SketchFeature.plane_basis(src.plane).z
-	var nt := SketchFeature.plane_basis(tgt.plane).z
+	var ns := src.plane_transform().basis.z
+	var nt := tgt.plane_transform().basis.z
 	return absf(ns.dot(nt)) > 0.999999
 
 

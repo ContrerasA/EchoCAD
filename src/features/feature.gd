@@ -10,6 +10,19 @@ var id: String = ""
 var name: String = ""
 var suppressed := false
 
+## Weak back-reference to the owning document (set by CadDocument.attach),
+## so features that reference OTHER features — a sketch on a construction
+## plane, an offset plane chained on another — can resolve them. Weak to
+## avoid a RefCounted cycle. Null for a feature never added to a document
+## (origin-plane sketches keep working without one).
+var doc_ref: WeakRef = null
+
+
+func document() -> CadDocument:
+	if doc_ref == null:
+		return null
+	return doc_ref.get_ref() as CadDocument
+
 
 func kind() -> String:
 	return ""

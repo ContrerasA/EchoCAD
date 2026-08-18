@@ -33,6 +33,39 @@ func sketch_feature(fid: String) -> SketchFeature:
 	return feature_by_id(fid) as SketchFeature
 
 
+func plane_feature(fid: String) -> PlaneFeature:
+	return feature_by_id(fid) as PlaneFeature
+
+
+## Give a feature its weak back-reference to this document. Every code path
+## that puts a feature into `features` must call this (from_dict here,
+## CmdAddFeature/CmdDeleteFeature in the command layer, tests directly).
+func attach(f: Feature) -> void:
+	f.doc_ref = weakref(self)
+
+
+## Resolve a plane reference — an origin-plane name ("XY"/"XZ"/"YZ") or a
+## PlaneFeature id — to its world transform. Unknown refs warn and fall back
+## to XY so a broken file degrades visibly rather than crashing.
+func plane_transform(ref: String) -> Transform3D:
+	if SketchFeature.PLANES.has(ref):
+		return Transform3D(SketchFeature.plane_basis(ref), Vector3.ZERO)
+	var pf := plane_feature(ref)
+	if pf == null:
+		push_warning("[CadDocument] plane ref %s not found — using XY" % ref)
+		return Transform3D(SketchFeature.plane_basis("XY"), Vector3.ZERO)
+	return pf.transform()
+
+
+## Display label for a plane reference: the origin-plane name itself, or the
+## construction plane's feature name.
+func plane_label(ref: String) -> String:
+	if SketchFeature.PLANES.has(ref):
+		return ref
+	var pf := plane_feature(ref)
+	return pf.name if pf != null else ref
+
+
 ## Features up to the rollback marker, skipping suppressed — what replay,
 ## rendering, and profile detection walk.
 func live_features() -> Array[Feature]:
@@ -82,6 +115,7 @@ static func from_dict(d: Dictionary) -> CadDocument:
 	for fd in d.get("features", []):
 		var f := feature_from_dict(fd as Dictionary)
 		if f != null:
+			doc.attach(f)
 			doc.features.append(f)
 	doc.timeline_marker = clampi(
 		int(d.get("timeline_marker", doc.features.size())), 0, doc.features.size())
@@ -96,6 +130,8 @@ static func feature_from_dict(d: Dictionary) -> Feature:
 			return SketchFeature.from_dict(d)
 		"extrude":
 			return ExtrudeFeature.from_dict(d)
+		"plane":
+			return PlaneFeature.from_dict(d)
 	push_error("[CadDocument] unknown feature kind in file: %s"
 		% String(d.get("kind", "?")))
 	return null

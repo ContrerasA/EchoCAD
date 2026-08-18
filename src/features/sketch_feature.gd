@@ -1,7 +1,8 @@
 class_name SketchFeature
 extends Feature
-## A sketch on a plane. Phase 1 planes are the three origin planes by name;
-## face/offset planes come with phase 2.
+## A sketch on a plane. `plane` names one of the three origin planes — or,
+## since M22, holds a PlaneFeature id (construction planes, face planes),
+## resolved through the owning document.
 
 const PLANES := ["XY", "XZ", "YZ"]
 
@@ -26,7 +27,20 @@ static func plane_basis(plane_name: String) -> Basis:
 
 
 func plane_transform() -> Transform3D:
-	return Transform3D(plane_basis(plane), Vector3.ZERO)
+	if PLANES.has(plane):
+		return Transform3D(plane_basis(plane), Vector3.ZERO)
+	var d := document()
+	if d == null:
+		push_warning("[SketchFeature] %s references plane %s but has no "
+			% [id, plane] + "document — using XY")
+		return Transform3D(plane_basis("XY"), Vector3.ZERO)
+	return d.plane_transform(plane)
+
+
+## Human-readable plane name for status bars ("XY" or "Plane1").
+func plane_label() -> String:
+	var d := document()
+	return d.plane_label(plane) if d != null else plane
 
 
 ## Sketch (u, v) mm -> world position.

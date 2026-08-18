@@ -57,7 +57,7 @@ var _pan := Vector2.ZERO
 ## workflow). Set via `set_projection_3d` / `clear_projection_3d`.
 var _project_3d := false
 var _cam_3d: Camera3D = null
-var _plane_basis := Basis.IDENTITY
+var _plane_xf := Transform3D.IDENTITY
 var _raster: TextureRect = null
 var _texture: ImageTexture = null
 var _sketch: Sketch = null
@@ -100,10 +100,12 @@ func _ready() -> void:
 
 ## Route the mapping through the 3D camera: sketch (u,v) projects along the
 ## plane transform and the camera; clicks ray-cast back onto the plane.
-func set_projection_3d(cam: Camera3D, plane_basis: Basis) -> void:
+## Takes the FULL plane transform — offset/custom planes (M22) carry an
+## origin as well as a basis.
+func set_projection_3d(cam: Camera3D, plane_xf: Transform3D) -> void:
 	_project_3d = true
 	_cam_3d = cam
-	_plane_basis = plane_basis
+	_plane_xf = plane_xf
 
 
 func clear_projection_3d() -> void:
@@ -139,7 +141,7 @@ func set_view(p_pan: Vector2, p_zoom: float) -> void:
 func world_to_screen(p: Vector2) -> Vector2:
 	if _project_3d and _cam_3d != null:
 		return _cam_3d.unproject_position(
-			_plane_basis * Vector3(p.x, p.y, 0.0))
+			_plane_xf * Vector3(p.x, p.y, 0.0))
 	var c := size * 0.5
 	var d := p - _pan
 	return c + Vector2(d.x, -d.y) * _zoom
@@ -149,12 +151,13 @@ func screen_to_world(s: Vector2) -> Vector2:
 	if _project_3d and _cam_3d != null:
 		var o := _cam_3d.project_ray_origin(s)
 		var dir := _cam_3d.project_ray_normal(s)
-		var n := _plane_basis.z
+		var n := _plane_xf.basis.z
 		var denom := dir.dot(n)
 		if absf(denom) < 1e-9:
 			return _pan   # grazing ray: no meaningful plane point
-		var hit := o - dir * (o.dot(n) / denom)
-		return Vector2(hit.dot(_plane_basis.x), hit.dot(_plane_basis.y))
+		var hit := o + dir * ((_plane_xf.origin - o).dot(n) / denom)
+		var local := _plane_xf.affine_inverse() * hit
+		return Vector2(local.x, local.y)
 	var c := size * 0.5
 	var d := (s - c) / _zoom
 	return _pan + Vector2(d.x, -d.y)

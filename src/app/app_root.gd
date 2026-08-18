@@ -59,6 +59,13 @@ var active_sketch_id := ""
 var picking_plane := false
 ## True while "Extrude" waits for a profile click.
 var picking_profile := false
+## True while "Offset Plane" waits for a BASE plane click (M22).
+var picking_offset_base := false
+var _btn_offset_plane: Button
+var _plane_dialog: Window
+var _plane_dist: LineEdit
+var _plane_dialog_base := ""    # base plane ref while creating
+var _plane_dialog_edit := ""    # plane feature id while editing (else "")
 ## Pending extrude target set by the profile click: {sketch_id, at}.
 var _pending_extrude := {}
 ## Camera state captured on entering sketch mode, so Finish Sketch animates
@@ -631,6 +638,7 @@ func load_document(new_doc: CadDocument) -> void:
 	Projector.refresh(doc)
 	active_sketch_id = ""
 	picking_plane = false
+	picking_offset_base = false
 	mode = Mode.MODEL
 	sketch_orbit = false
 	sketch_view.clear_projection_3d()
@@ -678,6 +686,8 @@ func _build_ui() -> void:
 	_btn_create.name = "CreateSketchBtn"
 	_btn_extrude = _button(top, "Extrude", _on_extrude_pressed)
 	_btn_extrude.name = "ExtrudeBtn"
+	_btn_offset_plane = _button(top, "Offset Plane", _on_offset_plane_pressed)
+	_btn_offset_plane.name = "OffsetPlaneBtn"
 	var pbtn := _button(top, "Parameters", _open_params_dialog)
 	pbtn.name = "ParametersBtn"
 	_btn_finish = _button(top, "Finish Sketch", _on_finish_sketch)
@@ -919,6 +929,9 @@ func edit_sketch(feature_id: String) -> void:
 		_model_view_before_sketch = rig.capture_view()
 	active_sketch_id = feature_id
 	picking_plane = false
+	picking_offset_base = false
+	world.clear_face_hover()
+	world.set_plane_hover("")
 	mode = Mode.SKETCH
 	sketch_orbit = false
 	sketch_view.grid_unit = doc.display_unit
@@ -929,10 +942,10 @@ func edit_sketch(feature_id: String) -> void:
 	# what made the transition read as an instant snap.
 	# The grid moves onto the plane being drawn on, so the 3D scene behind the
 	# canvas agrees with it — and so it is already right for the fly-in.
-	world.set_grid_plane(feat.plane)
+	var xf := feat.plane_transform()
+	world.set_grid_plane(feat.plane, xf)
 	world.set_grid_unit(doc.display_unit)
-	var basis := SketchFeature.plane_basis(feat.plane)
-	rig.frame_view(basis.z, basis.y, Vector3.ZERO, 500.0)
+	rig.frame_view(xf.basis.z, xf.basis.y, xf.origin, 500.0)
 	_after_camera_move(func() -> void:
 		if mode == Mode.SKETCH:
 			sketch_view.visible = true
@@ -1018,9 +1031,15 @@ func reference_features() -> Array:
 	var feat := doc.sketch_feature(active_sketch_id)
 	if feat == null:
 		return out
+	# Coplanarity is judged on the RESOLVED transforms (M22): two different
+	# plane refs can land on the same plane (a face plane over an offset
+	# plane), and reference rendering reuses the sketch's own uv mapping, so
+	# the whole transform must match — not just the plane.
+	var my_xf := feat.plane_transform()
 	for f in doc.live_features():
 		var sf := f as SketchFeature
-		if sf == null or sf.id == feat.id or sf.plane != feat.plane:
+		if sf == null or sf.id == feat.id \
+				or not sf.plane_transform().is_equal_approx(my_xf):
 			continue
 		# A sketch unticked in the browser stays hidden here too — one tick,
 		# one meaning, whichever mode you are in.
@@ -1044,6 +1063,7 @@ func set_sketch_shown(fid: String, shown: bool) -> void:
 func _on_create_sketch() -> void:
 	picking_plane = true
 	picking_profile = false
+	picking_offset_base = false
 	world.clear_profile_hover()
 	# Planes stay out of sight until there is a reason to aim at one.
 	world.set_planes_visible(true)
@@ -1053,6 +1073,19 @@ func _on_create_sketch() -> void:
 func _on_extrude_pressed() -> void:
 	picking_profile = true
 	picking_plane = false
+	picking_offset_base = false
+	world.clear_face_hover()
+	_refresh_ui()
+
+
+## "Offset Plane" (M22): pick the base plane, then type the distance.
+func _on_offset_plane_pressed() -> void:
+	picking_offset_base = true
+	picking_plane = false
+	picking_profile = false
+	world.clear_profile_hover()
+	world.clear_face_hover()
+	world.set_planes_visible(true)
 	_refresh_ui()
 
 
@@ -1094,11 +1127,12 @@ func _profile_under_ray(origin: Vector3, dir: Vector3) -> Dictionary:
 		var denom := dir.dot(n)
 		if absf(denom) < 1e-9:
 			continue
-		var t := -origin.dot(n) / denom
+		# Plane through xf.origin, not the world origin (offset planes, M22).
+		var t := (xf.origin - origin).dot(n) / denom
 		if t <= 0.0 or t > best_t + 1e-6:
 			continue
-		var hit := origin + dir * t
-		var uv := Vector2(hit.dot(xf.basis.x), hit.dot(xf.basis.y))
+		var local := xf.affine_inverse() * (origin + dir * t)
+		var uv := Vector2(local.x, local.y)
 		if ProfileFinder.profile_at(sf.sketch, uv).is_empty():
 			continue
 		best = {"sketch_id": sf.id, "at": uv}
@@ -1161,6 +1195,120 @@ func _commit_extrude() -> void:
 
 func _on_finish_sketch() -> void:
 	finish_sketch()
+
+
+## --- construction planes (M22) -------------------------------------------------
+
+## Create an offset construction plane (undoable). `base` is an origin-plane
+## name or an existing plane feature id; offset in mm. "" when base is bad.
+func create_offset_plane(base: String, offset_mm: float) -> String:
+	if not SketchFeature.PLANES.has(base) and doc.plane_feature(base) == null:
+		return ""
+	var pf := PlaneFeature.make_offset(base, offset_mm)
+	pf.name = doc.auto_name("Plane")
+	pf.id = doc.next_feature_id()
+	stack.push_no_merge(CmdAddFeature.new(pf))
+	return pf.id
+
+
+## Face pick while creating a sketch: mint a CUSTOM plane on the face and the
+## sketch on it, as ONE undo step.
+func create_sketch_on_face(point: Vector3, normal: Vector3) -> String:
+	var pf := PlaneFeature.make_custom(PlaneFeature.face_transform(point, normal))
+	pf.name = doc.auto_name("Plane")
+	pf.id = doc.next_feature_id()
+	var sf := SketchFeature.make(doc.auto_name("Sketch"), pf.id)
+	sf.id = doc.next_feature_id()
+	stack.push_no_merge(CmdBatch.new("Sketch on Face",
+		[CmdAddFeature.new(pf), CmdAddFeature.new(sf)]))
+	edit_sketch(sf.id)
+	return sf.id
+
+
+## Open the offset editor for an existing plane (browser/timeline
+## double-click). Custom (face) planes have no offset to edit.
+func edit_plane_offset(fid: String) -> void:
+	var pf := doc.plane_feature(fid)
+	if pf == null:
+		return
+	if pf.plane_kind != PlaneFeature.KIND_OFFSET:
+		set_status_hint("%s is a face plane — it has no offset to edit" % pf.name)
+		return
+	_open_plane_dialog(pf.base, fid)
+
+
+## Is this plane feature still referenced (by a sketch on it, or as another
+## plane's base)? Referenced planes refuse deletion, like referenced
+## parameters — the sketch would silently fall to XY otherwise.
+func plane_referenced(fid: String) -> bool:
+	for f in doc.features:
+		if f is SketchFeature and (f as SketchFeature).plane == fid:
+			return true
+		if f is PlaneFeature and (f as PlaneFeature).base == fid:
+			return true
+	return false
+
+
+## Feature deletion with the plane guard — the timeline menu routes here.
+func request_delete_feature(fid: String) -> void:
+	var f := doc.feature_by_id(fid)
+	if f is PlaneFeature and plane_referenced(fid):
+		set_status_hint("Cannot delete %s: a sketch or plane still uses it"
+			% f.name)
+		return
+	stack.push_no_merge(CmdDeleteFeature.new(fid))
+
+
+func _open_plane_dialog(base: String, edit_fid: String) -> void:
+	_plane_dialog_base = base
+	_plane_dialog_edit = edit_fid
+	if _plane_dialog == null:
+		_plane_dialog = Window.new()
+		_plane_dialog.name = "PlaneDialog"
+		_plane_dialog.size = Vector2i(240, 84)
+		_plane_dialog.exclusive = false
+		_plane_dialog.close_requested.connect(
+			func() -> void: _plane_dialog.hide())
+		var box := VBoxContainer.new()
+		box.set_anchors_preset(Control.PRESET_FULL_RECT)
+		_plane_dialog.add_child(box)
+		_plane_dist = LineEdit.new()
+		_plane_dist.name = "PlaneOffsetEdit"
+		_plane_dist.placeholder_text = "Offset (e.g. 0.5in)"
+		box.add_child(_plane_dist)
+		var okb := Button.new()
+		okb.name = "PlaneOkBtn"
+		okb.text = "OK"
+		okb.pressed.connect(_commit_plane_dialog)
+		box.add_child(okb)
+		_plane_dist.text_submitted.connect(
+			func(_t: String) -> void: _commit_plane_dialog())
+		add_child(_plane_dialog)
+	if edit_fid == "":
+		_plane_dialog.title = "Offset Plane from %s" % doc.plane_label(base)
+		_plane_dist.text = ""
+	else:
+		var pf := doc.plane_feature(edit_fid)
+		_plane_dialog.title = "Edit %s" % (pf.name if pf != null else "plane")
+		_plane_dist.text = UnitConverter.format(pf.offset, doc.display_unit) \
+			if pf != null else ""
+	_plane_dialog.popup_centered()
+	_plane_dist.grab_focus()
+
+
+func _commit_plane_dialog() -> void:
+	var r := UnitConverter.parse(_plane_dist.text, doc.display_unit)
+	if not r["ok"]:
+		_status_hint.text = "Offset plane: enter a distance"
+		return
+	_plane_dialog.hide()
+	if _plane_dialog_edit != "":
+		stack.push_no_merge(CmdSetPlaneOffset.new(_plane_dialog_edit,
+			float(r["mm"])))
+	else:
+		create_offset_plane(_plane_dialog_base, float(r["mm"]))
+	_plane_dialog_base = ""
+	_plane_dialog_edit = ""
 
 
 ## --- Parameters dialog (M20) ---------------------------------------------------
@@ -1457,8 +1605,7 @@ func _on_sketch_orbit_request(screen: Vector2) -> void:
 	# ORIGINAL sketch plane (Fusion's workflow — M14 QA).
 	var feat := doc.sketch_feature(active_sketch_id)
 	if feat != null:
-		sketch_view.set_projection_3d(rig.camera,
-			SketchFeature.plane_basis(feat.plane))
+		sketch_view.set_projection_3d(rig.camera, feat.plane_transform())
 	# The in-edit sketch gets the same 3D line-mesh treatment as every other
 	# live sketch — the world's meshes may be stale mid-edit, so rebuild now.
 	world.rebuild_sketches(doc)
@@ -1476,9 +1623,9 @@ func return_to_sketch_plane() -> void:
 	if feat == null:
 		return
 	rig.end_orbit()
-	var basis := SketchFeature.plane_basis(feat.plane)
+	var xf := feat.plane_transform()
 	var pan := sketch_view.pan()
-	rig.frame_view(basis.z, basis.y, basis * Vector3(pan.x, pan.y, 0.0),
+	rig.frame_view(xf.basis.z, xf.basis.y, xf * Vector3(pan.x, pan.y, 0.0),
 		rig.distance)
 	_after_camera_move(func() -> void:
 		if mode != Mode.SKETCH:
@@ -1501,7 +1648,7 @@ func _on_cube_face(normal: Vector3, up: Vector3) -> void:
 		# reorients the off-axis view.
 		var feat := doc.sketch_feature(active_sketch_id)
 		if feat != null \
-				and normal.dot(SketchFeature.plane_basis(feat.plane).z) > 0.999:
+				and normal.dot(feat.plane_transform().basis.z) > 0.999:
 			return_to_sketch_plane()
 		else:
 			rig.frame_view(normal, up)
@@ -1536,7 +1683,25 @@ func _on_viewport_input(event: InputEvent) -> void:
 			var ray := rig.pixel_ray(mb.position)
 			var plane := world.pick_plane(ray[0], ray[1])
 			if plane != "":
+				world.clear_face_hover()
 				create_sketch(plane)
+			else:
+				# No quad under the click — a flat body face will do (M22):
+				# mint a snapshot plane on it and sketch there.
+				var face := world.pick_face(ray[0], ray[1])
+				if not face.is_empty():
+					world.clear_face_hover()
+					create_sketch_on_face(face["point"], face["normal"])
+		elif mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT \
+				and picking_offset_base:
+			var rayo := rig.pixel_ray(mb.position)
+			var base := world.pick_plane(rayo[0], rayo[1])
+			if base != "":
+				picking_offset_base = false
+				world.set_plane_hover("")
+				world.set_planes_visible(false)
+				_open_plane_dialog(base, "")
+				_refresh_ui()
 		elif mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT and picking_profile:
 			var ray2 := rig.pixel_ray(mb.position)
 			var hit := _profile_under_ray(ray2[0], ray2[1])
@@ -1565,7 +1730,22 @@ func _on_viewport_input(event: InputEvent) -> void:
 				mm.position, mm)
 		elif picking_plane:
 			var ray := rig.pixel_ray(mm.position)
-			world.set_plane_hover(world.pick_plane(ray[0], ray[1]))
+			var hov := world.pick_plane(ray[0], ray[1])
+			world.set_plane_hover(hov)
+			# A flat body face is a sketch target too (M22) — highlight it
+			# whenever no plane quad is in the way.
+			if hov == "":
+				var face := world.pick_face(ray[0], ray[1])
+				if face.is_empty():
+					world.clear_face_hover()
+				else:
+					world.set_face_hover(String(face["body"]),
+						face["point"], face["normal"])
+			else:
+				world.clear_face_hover()
+		elif picking_offset_base:
+			var rayb := rig.pixel_ray(mm.position)
+			world.set_plane_hover(world.pick_plane(rayb[0], rayb[1]))
 		elif picking_profile:
 			# Pre-highlight the region the click would extrude (QA §M18.1).
 			var rayp := rig.pixel_ray(mm.position)
@@ -1618,11 +1798,13 @@ func handle_app_key(k: InputEventKey) -> bool:
 			if sketch_orbit:
 				return_to_sketch_plane()
 				return true
-		if picking_plane or picking_profile:
+		if picking_plane or picking_profile or picking_offset_base:
 			picking_plane = false
 			picking_profile = false
+			picking_offset_base = false
 			world.set_plane_hover("")
 			world.clear_profile_hover()
+			world.clear_face_hover()
 			world.set_planes_visible(false)
 			_refresh_ui()
 			return true
@@ -1808,17 +1990,17 @@ func _sync_camera_to_sketch_view() -> void:
 	# camera, and this would snap it to the destination mid-animation.
 	if rig.active_tween() != null:
 		return
-	var basis := SketchFeature.plane_basis(feat.plane)
+	var xf := feat.plane_transform()
 	# Square onto the plane. The fly-in leaves the camera here, but a
 	# view-cube click or a stray orbit can leave it off-axis, and then the
 	# model behind the canvas is a skewed projection that no longer lines up
 	# with the 2D geometry drawn over it.
-	var yp := OrbitCamera.yaw_pitch_for(basis.z, basis.y)
+	var yp := OrbitCamera.yaw_pitch_for(xf.basis.z, xf.basis.y)
 	rig.yaw = yp.x
 	rig.pitch = yp.y
 	# The sketch point at the panel centre, in world space.
 	var pan := sketch_view.pan()
-	rig.target = basis * Vector3(pan.x, pan.y, 0.0)
+	rig.target = xf * Vector3(pan.x, pan.y, 0.0)
 	# ORTHOGRAPHIC, sized so one world mm covers exactly `zoom` pixels — the
 	# same mapping `SketchView.world_to_screen` uses. Under perspective the two
 	# could only ever agree at the centre of the screen: everything else was
@@ -2029,6 +2211,7 @@ func _refresh_ui() -> void:
 	var in_sketch := mode == Mode.SKETCH
 	_btn_create.visible = not in_sketch
 	_btn_extrude.visible = not in_sketch
+	_btn_offset_plane.visible = not in_sketch
 	_btn_finish.visible = in_sketch
 	_tool_bar.visible = in_sketch
 	_constraint_bar.visible = in_sketch
@@ -2044,17 +2227,20 @@ func _refresh_ui() -> void:
 	_btn_redo.disabled = not stack.can_redo()
 	_status_mode.text = "Sketch" if in_sketch else "Model"
 	if picking_plane:
-		_status_hint.text = "Select a plane (Esc to cancel)"
+		_status_hint.text = "Select a plane or a flat body face (Esc to cancel)"
+	elif picking_offset_base:
+		_status_hint.text = "Select the plane to offset from (Esc to cancel)"
 	elif picking_profile:
 		_status_hint.text = "Select a closed profile (Esc to cancel)"
 	elif in_sketch and sketch_orbit:
 		var fo := doc.sketch_feature(active_sketch_id)
 		_status_hint.text = ("Off-axis — sketching continues on %s; click its "
 			+ "view-cube face (or press Esc) to square up") \
-			% (fo.plane if fo != null else "the plane")
+			% (fo.plane_label() if fo != null else "the plane")
 	elif in_sketch:
 		var f := doc.sketch_feature(active_sketch_id)
-		_status_hint.text = "%s on %s" % [f.name, f.plane] if f != null else ""
+		_status_hint.text = "%s on %s" % [f.name, f.plane_label()] \
+			if f != null else ""
 	else:
 		_status_hint.text = ""
 	_status_zoom.text = "%d%%" % roundi(sketch_view.zoom() * 25.0) if in_sketch else ""

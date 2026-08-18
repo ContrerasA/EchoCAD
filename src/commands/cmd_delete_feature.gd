@@ -29,6 +29,7 @@ func do_() -> void:
 func undo() -> void:
 	if _at < 0:
 		return
+	doc.attach(_feature)
 	doc.features.insert(_at, _feature)
 	doc.timeline_marker = _marker_before
 
