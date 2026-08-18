@@ -202,6 +202,12 @@ func _on_item_activated() -> void:
 		app.edit_plane_offset(String((_rows[row] as Dictionary)["id"]))
 
 
+var _body_menu: PopupMenu = null
+var _body_menu_target := ""
+
+const BODY_MENU_EXPORT_STL := 0
+
+
 func _on_item_mouse_selected(pos: Vector2, mouse_button_index: int) -> void:
 	if mouse_button_index != MOUSE_BUTTON_RIGHT:
 		return
@@ -209,6 +215,18 @@ func _on_item_mouse_selected(pos: Vector2, mouse_button_index: int) -> void:
 	if row == null or not _rows.has(row):
 		return
 	var meta: Dictionary = _rows[row]
+	if String(meta["kind"]) == "body":
+		# Body rows get their own context menu (M24: per-body STL export).
+		_body_menu_target = String(meta["id"])
+		if _body_menu == null:
+			_body_menu = PopupMenu.new()
+			_body_menu.name = "BodyContextMenu"
+			_body_menu.add_item("Export STL...", BODY_MENU_EXPORT_STL)
+			_body_menu.id_pressed.connect(_on_body_menu_pressed)
+			add_child(_body_menu)
+		_body_menu.position = Vector2i(get_screen_position() + pos)
+		_body_menu.popup()
+		return
 	if String(meta["kind"]) != "sketch":
 		return
 	_menu_target = String(meta["id"])
@@ -229,3 +247,9 @@ func _on_menu_pressed(id: int) -> void:
 			app.edit_sketch(_menu_target)
 		MENU_EXPORT_DXF:
 			app.export_dxf_interactive(_menu_target)
+
+
+func _on_body_menu_pressed(id: int) -> void:
+	match id:
+		BODY_MENU_EXPORT_STL:
+			app.export_stl_interactive(_body_menu_target)

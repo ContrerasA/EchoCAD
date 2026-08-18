@@ -701,6 +701,31 @@ func _cmd_action_open(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
 
 ## Export one sketch as DXF R12: {path, sketch? (default: the app's
 ## unambiguous target — active sketch, or the document's only one)}.
+## Export bodies to STL (M24). args: {path, body?: feature id, ascii?}.
+## Bodies come from a fresh BodyBuilder pass (not the display cache), so the
+## result always matches the current document.
+func _cmd_action_export_stl(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
+	var path := String(a.get("path", ""))
+	if path == "":
+		_reply_err(p, id, "bad_args", "missing path")
+		return null
+	var body := String(a.get("body", ""))
+	var wanted: Array = []
+	for b: Dictionary in await BodyBuilder.build(app.doc, app):
+		if body != "" and String(b["id"]) != body:
+			continue
+		wanted.append(b)
+	if not path.to_lower().ends_with(".stl"):
+		path += ".stl"
+	var res := StlExporter.write(wanted, path, bool(a.get("ascii", false)))
+	if not bool(res["ok"]):
+		_reply_err(p, id, "invalid", String(res["error"]))
+		return null
+	_reply(p, id, {"path": path, "triangles": int(res["triangles"]),
+		"bodies": wanted.size()})
+	return null
+
+
 func _cmd_action_export_dxf(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
 	var path := String(a.get("path", ""))
 	if path == "":

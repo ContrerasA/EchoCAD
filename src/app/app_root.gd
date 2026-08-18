@@ -709,6 +709,9 @@ func _build_ui() -> void:
 	_btn_redo.name = "RedoBtn"
 	_btn_save = _button(top, "Save", func() -> void: save_interactive(false))
 	_btn_save.name = "SaveBtn"
+	var stlb := _button(top, "Export STL",
+		func() -> void: export_stl_interactive())
+	stlb.name = "ExportStlBtn"
 	var dxfb := _button(top, "Export DXF", export_dxf_interactive)
 	dxfb.name = "ExportDxfBtn"
 	_btn_open = _button(top, "Open", open_interactive)
@@ -1606,6 +1609,72 @@ func open_from(path: String) -> bool:
 	_save_path = path
 	stack.mark_saved()
 	set_status_hint("Opened " + path)
+	return true
+
+
+## --- STL export (M24) ----------------------------------------------------------
+
+var _stl_dialog: FileDialog
+var _stl_ascii_chk: CheckBox = null
+## Body chosen when the dialog opened ("" = every visible body), so a
+## selection change while the file dialog is up cannot swap the target.
+var _stl_export_body := ""
+
+
+## The bodies an STL export would write: one named body, or every body the
+## browser has visible. Reads the world's built body list (exact meshes for
+## plain solids, CSG bakes for booleans).
+func _stl_bodies(body_id: String) -> Array:
+	var out: Array = []
+	for b: Dictionary in world.bodies():
+		if body_id != "" and String(b["id"]) != body_id:
+			continue
+		if body_id == "" and not world.body_shown(String(b["id"])):
+			continue
+		out.append(b)
+	return out
+
+
+## Open the STL save dialog for one body, or for all visible bodies ("").
+## Called by the toolbar button and the browser's body context menu.
+func export_stl_interactive(body_id := "") -> void:
+	if _stl_bodies(body_id).is_empty():
+		set_status_hint("Export STL: no solid bodies to export")
+		return
+	_stl_export_body = body_id
+	if _stl_dialog == null:
+		_stl_dialog = FileDialog.new()
+		_stl_dialog.name = "StlFileDialog"
+		_stl_dialog.access = FileDialog.ACCESS_FILESYSTEM
+		_stl_dialog.filters = ["*.stl ; STL meshes"]
+		_stl_dialog.file_mode = FileDialog.FILE_MODE_SAVE_FILE
+		_stl_dialog.size = Vector2i(640, 440)
+		_stl_dialog.file_selected.connect(
+			func(path: String) -> void:
+				export_stl(path, _stl_export_body,
+					_stl_ascii_chk.button_pressed))
+		# Binary is the slicer default; ASCII rides as an option for
+		# diffable/debuggable output.
+		_stl_ascii_chk = CheckBox.new()
+		_stl_ascii_chk.name = "StlAsciiChk"
+		_stl_ascii_chk.text = "ASCII STL (text, larger)"
+		_stl_ascii_chk.button_pressed = false
+		_stl_dialog.get_vbox().add_child(_stl_ascii_chk)
+		add_child(_stl_dialog)
+	_stl_dialog.current_file = "export.stl"
+	_stl_dialog.popup_centered()
+
+
+## Write the STL. Returns true on success (status bar reports either way).
+func export_stl(path: String, body_id := "", ascii := false) -> bool:
+	if not path.to_lower().ends_with(".stl"):
+		path += ".stl"
+	var res := StlExporter.write(_stl_bodies(body_id), path, ascii)
+	if not bool(res["ok"]):
+		set_status_hint("Export STL failed: " + String(res["error"]))
+		return false
+	set_status_hint("Exported %d triangles (mm) to %s"
+		% [int(res["triangles"]), path])
 	return true
 
 
