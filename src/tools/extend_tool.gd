@@ -15,7 +15,9 @@ var _pending := {}
 func _init() -> void:
 	id = "extend"
 	title = "Extend"
-	shortcut = KEY_X
+	# E, not X: X is Fusion's normal/construction toggle (M21 QA fix), which
+	# this app now honors too.
+	shortcut = KEY_E
 
 
 func activate() -> void:

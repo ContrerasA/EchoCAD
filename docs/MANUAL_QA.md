@@ -1557,13 +1557,46 @@ Status: Signed off 2026-08-17
 
 Status: PENDING sign-off
 
-- [ ] 1. Sketch with a line, circle, arc, slot, and a construction line.
+- [ ] 1. Sketch with a line, circle, arc, slot, and a construction line
+   (select any curve and press **X** to toggle it construction — fix 1).
    "Export DXF", save somewhere. **Expect:** file dialog defaults to .dxf;
    status bar confirms the path.
+   	~~Does work, however don't know how to create a construction line~~
 - [ ] 2. Open the exported file in any DXF viewer (eMachineShop viewer,
    LibreCAD, an online viewer, or Fusion insert-DXF). **Expect:** geometry
    matches the sketch exactly — arc directions included; construction
    geometry sits on its own CONSTRUCTION layer.
-- [ ] 3. Check units in the viewer: a 1 in line measures 25.4 (mm).
-- [ ] 4. In model mode with several sketches, "Export DXF". **Expect:** a
-   status-bar explanation asking to open the sketch to export (no dialog).
+   ~~Does work, with exception that i don't know how to test construction line~~
+- [X] 3. Check units in the viewer: a 1 in line measures 25.4 (mm).
+- [ ] 4. In model mode with several sketches: click a sketch in the browser,
+   then "Export DXF". **Expect:** the dialog opens titled with THAT
+   sketch's name and exports it. With NO sketch selected, the status bar
+   explains how to pick one.
+   	~~It does state it, however i don't see a way to select what sketch to
+   	export. if i click on a sketch and click export button, it still
+   	reports same error.~~ (fix 2)
+- [ ] 5. Right-click a sketch in the browser. **Expect:** a context menu
+   with "Edit Sketch" and "Export DXF..." — export writes the right-clicked
+   sketch even if another row was selected. Double-clicking a sketch row
+   opens it for editing. (fix 3)
+- [ ] 6. Construction toggle round-trip: select a line, press X — it goes
+   violet/dashed and stops counting for profiles (extrude ignores it);
+   X again restores it; each press is one undo step. NOTE: the Extend
+   tool's shortcut moved from X to **E** to make room for this.
+
+Fix log:
+- **1** (2026-08-18, "don't know how to create a construction line") There
+  was no way — PLAN.md promised Fusion's X toggle but it was never built;
+  only tools (mirror axis, center-rect scaffolding) made construction
+  geometry. **X** now toggles the selected curves between normal and
+  construction (`CmdSetConstruction`, one undo step, status-bar
+  explanation; points are skipped). The Extend tool, which sat on X, moved
+  to **E**.
+- **2** ("no way to select what sketch to export") Export DXF resolved only
+  the ACTIVE sketch or a sole sketch — clicking a browser row never fed it.
+  The target now resolves active sketch -> browser-selected sketch -> only
+  sketch, and the dialog title names which sketch it will write.
+- **3** ("right click a sketch in the outliner to export") The browser's
+  sketch rows now carry a context menu (Edit Sketch / Export DXF...), and
+  double-click opens the sketch for editing, as the code always claimed.
+  `tests/m21_qa_fixes.gd` covers all three.

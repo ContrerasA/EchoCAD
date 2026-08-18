@@ -684,7 +684,7 @@ func _build_ui() -> void:
 	_btn_redo.name = "RedoBtn"
 	_btn_save = _button(top, "Save", func() -> void: save_interactive(false))
 	_btn_save.name = "SaveBtn"
-	var dxfb := _button(top, "Export DXF", _export_dxf_interactive)
+	var dxfb := _button(top, "Export DXF", export_dxf_interactive)
 	dxfb.name = "ExportDxfBtn"
 	_btn_open = _button(top, "Open", open_interactive)
 	_btn_open.name = "OpenBtn"
@@ -1298,28 +1298,48 @@ func open_from(path: String) -> bool:
 ## --- DXF export (M21) ----------------------------------------------------------
 
 var _dxf_dialog: FileDialog
+## Sketch feature chosen when the export dialog opened, so a selection
+## change while the file dialog is up cannot swap the target underneath it.
+var _dxf_export_id := ""
 
 
-## The sketch a DXF export would write: the active one in sketch mode, or
-## the document's ONLY sketch in model mode. Null = ambiguous/none.
-func _dxf_target_sketch() -> Sketch:
-	var sk := active_sketch()
-	if sk != null:
-		return sk
-	var only: Sketch = null
+## The sketch feature a DXF export would write when none is named: the
+## active one in sketch mode, the browser-selected one, or the document's
+## ONLY sketch. Null = ambiguous/none.
+func _dxf_target_feature() -> SketchFeature:
+	if mode == Mode.SKETCH and active_sketch_id != "":
+		return doc.sketch_feature(active_sketch_id)
+	if browser != null:
+		var bid := browser.selected_sketch_id()
+		if bid != "":
+			return doc.sketch_feature(bid)
+	var only: SketchFeature = null
 	for f in doc.features:
 		if f is SketchFeature:
 			if only != null:
 				return null
-			only = (f as SketchFeature).sketch
+			only = f as SketchFeature
 	return only
 
 
-func _export_dxf_interactive() -> void:
-	if _dxf_target_sketch() == null:
-		set_status_hint("Export DXF: open the sketch you want to export "
-			+ "(the document has more than one).")
-		return
+## Compat shim for callers that want the Sketch itself (automation).
+func _dxf_target_sketch() -> Sketch:
+	var sf := _dxf_target_feature()
+	return sf.sketch if sf != null else null
+
+
+## Open the export file dialog for `target_id`, or for the resolved target
+## (active / browser-selected / only sketch) when "". Called by the toolbar
+## button and the browser's right-click menu.
+func export_dxf_interactive(target_id := "") -> void:
+	if target_id == "":
+		var sf := _dxf_target_feature()
+		if sf == null:
+			set_status_hint("Export DXF: select the sketch in the browser "
+				+ "(or open it) first — the document has more than one.")
+			return
+		target_id = sf.id
+	_dxf_export_id = target_id
 	if _dxf_dialog == null:
 		_dxf_dialog = FileDialog.new()
 		_dxf_dialog.name = "DxfFileDialog"
@@ -1327,23 +1347,27 @@ func _export_dxf_interactive() -> void:
 		_dxf_dialog.filters = ["*.dxf ; DXF drawings"]
 		_dxf_dialog.file_mode = FileDialog.FILE_MODE_SAVE_FILE
 		_dxf_dialog.size = Vector2i(640, 420)
-		_dxf_dialog.title = "Export DXF"
 		_dxf_dialog.file_selected.connect(
 			func(path: String) -> void: export_dxf(path))
 		add_child(_dxf_dialog)
+	var named := doc.sketch_feature(target_id)
+	_dxf_dialog.title = "Export DXF — %s" % (named.name if named != null else "?")
 	_dxf_dialog.popup_centered()
 
 
-## Write the target sketch to `path` (.dxf appended if missing). True on
-## success; the status bar reports either way.
+## Write a sketch to `path` (.dxf appended if missing): the one the dialog
+## was opened for, else the resolved target. True on success; the status
+## bar reports either way.
 func export_dxf(path: String) -> bool:
-	var sk := _dxf_target_sketch()
-	if sk == null:
+	var sf := doc.sketch_feature(_dxf_export_id) if _dxf_export_id != "" \
+		else _dxf_target_feature()
+	_dxf_export_id = ""
+	if sf == null:
 		set_status_hint("DXF export: no unambiguous sketch to export")
 		return false
 	if not path.to_lower().ends_with(".dxf"):
 		path += ".dxf"
-	var why := DxfExporter.save(sk, path)
+	var why := DxfExporter.save(sf.sketch, path)
 	set_status_hint(("Exported " + path) if why == ""
 		else ("DXF export failed: " + why))
 	return why == ""
@@ -1619,11 +1643,44 @@ func handle_app_key(k: InputEventKey) -> bool:
 		if active != null and active.key_input(k):
 			overlay.queue_redraw()
 			return true
+		# X: normal <-> construction toggle on the selection (Fusion's key).
+		# After the type-in check so a value being typed never loses its 'x'.
+		if k.keycode == KEY_X:
+			toggle_construction()
+			return true
 		for tid: String in tools.tool_ids():
 			if tools.get_tool(tid).shortcut == k.keycode:
 				tools.set_active(tid)
 				return true
 	return false
+
+
+## Flip the construction flag on every selected curve (X key). Points are
+## skipped — construction has no meaning for a bare point here. The whole
+## toggle is one undo step, and mixed selections normalize to the OPPOSITE
+## of the first curve's state, so repeated presses flip cleanly.
+func toggle_construction() -> void:
+	var sk := active_sketch()
+	if sk == null:
+		return
+	var targets := {}
+	var to := false
+	var first := true
+	for id in selection:
+		var e := sk.entity(id)
+		if e == null or e.kind() == "point":
+			continue
+		if first:
+			to = not e.construction
+			first = false
+		targets[id] = to
+	if targets.is_empty():
+		set_status_hint("Construction toggle (X): select lines, arcs, or "
+			+ "circles first.")
+		return
+	stack.push_no_merge(CmdSetConstruction.new(active_sketch_id, targets))
+	set_status_hint(("Construction geometry (dashed, excluded from profiles)"
+		if to else "Normal geometry") + " — X toggles back.")
 
 
 ## `doomed` plus every point that would be left with nothing referencing it.

@@ -20,6 +20,14 @@ var app: AppRoot = null
 var _rows := {}
 
 
+## Right-click context menu (sketch rows): item id -> action.
+const MENU_EDIT_SKETCH := 0
+const MENU_EXPORT_DXF := 1
+
+var _menu: PopupMenu = null
+var _menu_target := ""     # sketch feature id the open menu acts on
+
+
 func _ready() -> void:
 	name = "BrowserTree"
 	columns = 2
@@ -29,8 +37,11 @@ func _ready() -> void:
 	hide_root = true
 	custom_minimum_size = Vector2(190, 0)
 	select_mode = Tree.SELECT_ROW
+	allow_rmb_select = true
 	item_edited.connect(_on_item_edited)
 	item_selected.connect(_on_item_selected)
+	item_activated.connect(_on_item_activated)
+	item_mouse_selected.connect(_on_item_mouse_selected)
 
 
 func refresh() -> void:
@@ -143,6 +154,54 @@ func _on_item_selected() -> void:
 		"body":
 			app.select_body(String(meta["id"]))
 		"sketch":
-			# Double-click opens a sketch for editing; a single click just
-			# selects the row, matching how bodies behave.
+			# A single click just selects the row (double-click edits, the
+			# context menu exports) — matching how bodies behave.
 			pass
+
+
+## The sketch feature id of the selected row, "" when the selection is not a
+## sketch. Export DXF reads this so "click a sketch, click Export" works.
+func selected_sketch_id() -> String:
+	var row := get_selected()
+	if row == null or not _rows.has(row):
+		return ""
+	var meta: Dictionary = _rows[row]
+	if String(meta["kind"]) != "sketch":
+		return ""
+	return String(meta["id"])
+
+
+## Double-click on a sketch row opens it for editing, Fusion-style.
+func _on_item_activated() -> void:
+	var sid := selected_sketch_id()
+	if sid != "":
+		app.edit_sketch(sid)
+
+
+func _on_item_mouse_selected(pos: Vector2, mouse_button_index: int) -> void:
+	if mouse_button_index != MOUSE_BUTTON_RIGHT:
+		return
+	var row := get_selected()
+	if row == null or not _rows.has(row):
+		return
+	var meta: Dictionary = _rows[row]
+	if String(meta["kind"]) != "sketch":
+		return
+	_menu_target = String(meta["id"])
+	if _menu == null:
+		_menu = PopupMenu.new()
+		_menu.name = "SketchContextMenu"
+		_menu.add_item("Edit Sketch", MENU_EDIT_SKETCH)
+		_menu.add_item("Export DXF...", MENU_EXPORT_DXF)
+		_menu.id_pressed.connect(_on_menu_pressed)
+		add_child(_menu)
+	_menu.position = Vector2i(get_screen_position() + pos)
+	_menu.popup()
+
+
+func _on_menu_pressed(id: int) -> void:
+	match id:
+		MENU_EDIT_SKETCH:
+			app.edit_sketch(_menu_target)
+		MENU_EXPORT_DXF:
+			app.export_dxf_interactive(_menu_target)
