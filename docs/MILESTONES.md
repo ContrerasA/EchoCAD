@@ -369,6 +369,99 @@ from model mode; `action.export_dxf {path, sketch?}` for automation.
   lone-point rule, file API extension handling.
 - **Manual**: §M21 — open an exported file in a second CAD/viewer.
 
+## M22 — Construction planes + sketch on faces  (branch: `m22-planes`)
+
+Phase-2 backlog ("face/offset planes come with phase 2" — sketch_feature.gd).
+Sketches escape the three origin planes:
+
+- **PlaneFeature** — a timeline feature (kind `"plane"`) in two flavors:
+  *offset* (base = origin-plane name or another plane feature id, plus a
+  signed offset in mm along the base normal) and *custom* (a stored basis +
+  origin snapshot, minted by face picking). Live planes render as pickable
+  quads like origin planes, get browser rows under a "Construction" folder
+  (eye toggles), timeline chips, suppress/rollback/undo like any feature.
+- **Sketch on them** — `SketchFeature.plane` may now hold a plane feature id;
+  resolution goes through the document (features resolve in timeline order,
+  so a plane is always defined before the sketches that use it). Everything
+  downstream (extrude, bodies, DXF export, projection) works unchanged.
+- **Sketch on a body face** — while picking a sketch plane, hovering a flat
+  body face highlights it; clicking mints a *custom* PlaneFeature on that
+  face (snapshot, not a parametric link — documented limitation) and starts
+  the sketch there. Extrude cap faces are the target case.
+- **UI**: model-mode "Offset Plane" button → pick base plane → type distance
+  (unit-suffixed); double-click a plane chip/browser row to edit the offset.
+- **RPC**: `action.create_offset_plane {base, offset}`, plane list in
+  `query.timeline`; `action.create_sketch` accepts a plane feature id.
+
+- **Automated**: `tests/m22_planes.gd` — offset-plane transform math (all
+  three bases + chained offsets), sketch on an offset plane world-positions
+  correctly, extrude from it lands at the right height, custom plane from a
+  face transform, suppress/rollback hides dependent sketch geometry,
+  serialization round-trip. RPC `tests/rpc/test_planes.py` — create plane,
+  sketch on it, draw, extrude, query body volume/AABB.
+- **Manual**: §M22 in `docs/MANUAL_QA2.md`.
+
+## M23 — Revolve  (branch: `m23-revolve`)
+
+The second solid feature. `RevolveFeature` mirrors extrude's anchor pattern:
+sketch id + anchor uv re-finds the region on replay; the axis is a sketch
+LINE entity id (typically a construction line) or the sketch's own X/Y axis;
+angle in degrees (default 360); the same operation dropdown (New Body / Join
+/ Cut) evaluated through BodyBuilder.
+
+- Mesh: lathe of the region polygon (holes revolve into their own wall
+  loops); partial angles get flat start/end caps triangulated with holes;
+  profile points on the axis weld (no degenerate quads). Edge-line overlay
+  surface like extrude's.
+- Booleans: BodyBuilder generalizes from "extrude parts" to "solid-feature
+  parts" — each solid feature supplies its own exact mesh, CSG node
+  (CSGPolygon3D MODE_SPIN for revolve), and AABB.
+- UI: "Revolve" button in sketch + model mode (like extrude), dialog with
+  axis pick prompt, angle field, op dropdown, live region highlight.
+- RPC: `action.revolve {sketch, at, axis, angle, op}`.
+
+- **Automated**: `tests/m23_revolve.gd` — full-ring volume vs analytic
+  (Pappus), partial-angle volume ratio, axis-touching profile watertight,
+  hole ring volume, cut/join through BodyBuilder, serialization. RPC
+  `tests/rpc/test_revolve.py` — dialog-driven revolve through real input.
+- **Manual**: §M23 in `docs/MANUAL_QA2.md`.
+
+## M24 — STL export  (branch: `m24-stl-export`)
+
+The "make a real part" exit ramp: bodies → binary STL (mm units, the 3D
+printing default). Exports every visible body or one chosen body; mesh comes
+straight from the body list (exact meshes for plain extrudes/revolves,
+CSG-baked for booleans), triangles re-wound outward and normals recomputed.
+"Export STL" button in model mode + browser body context menu;
+`action.export_stl {path, body?}` for automation. ASCII STL as a checkbox
+option for diffable output.
+
+- **Automated**: `tests/m24_stl_export.gd` — parse the binary back: header,
+  triangle count, volume within tolerance of the body mesh, normals unit
+  length and outward; ASCII variant parses; body filter; construction-only
+  sketch exports nothing gracefully.
+- **Manual**: §M24 in `docs/MANUAL_QA2.md` — print-check an exported STL in
+  an external slicer/viewer.
+
+## M25 — DXF import  (branch: `m25-dxf-import`)
+
+Round-trips M21 and reads real-world 2D DXF: LINE, CIRCLE, ARC, POINT,
+LWPOLYLINE and R12 POLYLINE/VERTEX/SEQEND (with bulge arcs) from the
+ENTITIES section; $INSUNITS-aware scaling to mm (default mm; inches
+honored); layer CONSTRUCTION → construction flag. Import creates a NEW
+sketch feature on a chosen origin plane (XY default), one undo step.
+Endpoints within tolerance weld into shared SketchPoints so imported
+profiles extrude immediately. "Import DXF" button (file dialog) +
+`action.import_dxf {path, plane?}`.
+
+- **Automated**: `tests/m25_dxf_import.gd` — export→import census identical
+  (lines/arcs/circles/points, construction flags, coordinates); inch-unit
+  file scales ×25.4; polyline-with-bulge becomes lines+arcs welded into a
+  loop; profile detection finds the imported loop; malformed file → error,
+  document untouched. RPC `tests/rpc/test_dxf_import.py`.
+- **Manual**: §M25 in `docs/MANUAL_QA2.md` — import a file exported from
+  another CAD.
+
 ---
 
 ## Milestone order rationale

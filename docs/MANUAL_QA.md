@@ -1,5 +1,9 @@
 # EchoCAD — Manual QA Checklist
 
+> **This volume is closed.** It covers §M2–§M21. Sections for M22 onward
+> live in `docs/MANUAL_QA2.md`; only fix-log updates to existing sections
+> land here.
+
 Cumulative, hand-driven, windowed. One section per milestone; each section is
 signed off before its branch merges. Steps are numbered with an expected
 result; log fixes under the section as they happen.
