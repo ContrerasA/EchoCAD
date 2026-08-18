@@ -14,6 +14,7 @@ func _init(feature: Feature) -> void:
 
 func do_() -> void:
 	_at = clampi(doc.timeline_marker, 0, doc.features.size())
+	doc.attach(_feature)
 	doc.features.insert(_at, _feature)
 	doc.timeline_marker = _at + 1
 

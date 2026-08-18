@@ -10,6 +10,12 @@ extends Node3D
 const PLANE_SIDE := 120.0
 const COLOR_PLANE := Color(0.55, 0.65, 0.85, 0.10)
 const COLOR_PLANE_HOVER := Color(0.55, 0.75, 1.0, 0.28)
+## Construction planes read tan/amber (Fusion-ish) so they never get
+## mistaken for origin planes.
+const COLOR_CPLANE := Color(0.88, 0.76, 0.38, 0.12)
+const COLOR_CPLANE_HOVER := Color(0.95, 0.85, 0.45, 0.30)
+## Flat body face hovered while picking a sketch plane (M22).
+const COLOR_FACE_HOVER := Color(0.95, 0.85, 0.45, 0.35)
 const COLOR_SKETCH := Color(0.30, 0.62, 0.96)
 const COLOR_CONSTRUCTION := Color(0.72, 0.55, 0.95)
 ## Closed sketch regions render as translucent faces (Fusion-style) so an
@@ -74,6 +80,10 @@ const GRID_MAX_LINES := 400
 const GRID_TARGET_FRAC := 48.0 / 700.0
 
 var _plane_meshes := {}          # plane name -> MeshInstance3D
+## Construction planes (M22): plane feature id -> MeshInstance3D / transform.
+## Rebuilt from the document alongside the sketches.
+var _cplane_meshes := {}
+var _cplane_xf := {}
 var _axes: MeshInstance3D = null
 var _sketch_root: Node3D = null
 var _grid: MeshInstance3D = null
@@ -82,6 +92,9 @@ var _grid: MeshInstance3D = null
 ## ground); sketch mode moves it onto the sketch's own plane so the grid
 ## reads as the surface being drawn on.
 var _grid_plane := "XY"
+## Full transform of the grid's plane (M22): construction planes carry an
+## origin offset, so a basis alone no longer places the grid.
+var _grid_xf := Transform3D.IDENTITY
 var _grid_unit: UnitConverter.Unit = UnitConverter.Unit.IN
 var _grid_step := 0.0
 ## Cross-fade state for the zoom transition: how far the next FINER ladder rung
@@ -297,7 +310,6 @@ func _rebuild_grid() -> void:
 		return
 	if _grid_step <= 0.0:
 		_grid_step = SketchView.step_for(_grid_unit, 25.0)
-	var basis := SketchFeature.plane_basis(_grid_plane)
 	# Reach, in millimetres. A whole number of steps keeps the fade landing on
 	# a grid line rather than mid-cell.
 	var half := _grid_step * mini(GRID_SPAN_STEPS, GRID_MAX_LINES)
@@ -308,7 +320,8 @@ func _rebuild_grid() -> void:
 	_grid.mesh = quad
 	# A hair below the plane, so coplanar geometry (axes, sketch lines on the
 	# plane) wins the depth test instead of z-fighting the grid.
-	_grid.transform = Transform3D(basis, basis * Vector3(0, 0, -GRID_SINK_MM))
+	_grid.transform = Transform3D(_grid_xf.basis,
+		_grid_xf * Vector3(0, 0, -GRID_SINK_MM))
 	var mat := _grid.material_override as ShaderMaterial
 	if mat != null:
 		mat.set_shader_parameter("fade_mm", half * GRID_FADE_FRAC)
@@ -322,11 +335,21 @@ func _rebuild_grid() -> void:
 
 
 ## Point the grid at a plane ("XY" in model mode, the sketch's plane while
-## editing one). No-op when it is already there.
-func set_grid_plane(plane_name: String) -> void:
-	if _grid_plane == plane_name or not SketchFeature.PLANES.has(plane_name):
+## editing one). Origin-plane names resolve on their own; a construction
+## plane passes its resolved transform as `xf` (M22). No-op when the grid is
+## already there.
+func set_grid_plane(key: String, xf: Variant = null) -> void:
+	var want: Transform3D
+	if xf is Transform3D:
+		want = xf
+	elif SketchFeature.PLANES.has(key):
+		want = Transform3D(SketchFeature.plane_basis(key), Vector3.ZERO)
+	else:
 		return
-	_grid_plane = plane_name
+	if _grid_plane == key and _grid_xf.is_equal_approx(want):
+		return
+	_grid_plane = key
+	_grid_xf = want
 	_rebuild_grid()
 
 
@@ -427,17 +450,20 @@ func set_planes_visible(v: bool) -> void:
 	_apply_plane_visibility()
 
 
-## Browser-tree toggle for a single origin plane. Independent of the mode
-## gate: hiding "XY" here keeps it hidden even while picking a plane.
+## Browser-tree toggle for a single plane — an origin plane by name or a
+## construction plane by feature id. Independent of the mode gate: hiding
+## "XY" here keeps it hidden even while picking a plane.
 func set_plane_shown(plane_name: String, shown: bool) -> void:
-	if not _plane_meshes.has(plane_name):
+	if not _plane_meshes.has(plane_name) and not _cplane_meshes.has(plane_name):
 		return
 	_plane_shown[plane_name] = shown
 	_apply_plane_visibility()
 
 
 func plane_shown(plane_name: String) -> bool:
-	return bool(_plane_shown.get(plane_name, false))
+	# Origin planes start hidden (Fusion's clean boot view); construction
+	# planes start shown.
+	return bool(_plane_shown.get(plane_name, _cplane_meshes.has(plane_name)))
 
 
 ## Browser-tree toggle for the origin axes. Unlike the planes these have no
@@ -458,6 +484,11 @@ func _apply_plane_visibility() -> void:
 		# all three on for the duration of the pick.
 		(_plane_meshes[k] as MeshInstance3D).visible = \
 			_planes_mode_visible or bool(_plane_shown.get(k, false))
+	for k: String in _cplane_meshes:
+		# Construction planes default SHOWN (a plane you just made for a
+		# sketch should be there to click).
+		(_cplane_meshes[k] as MeshInstance3D).visible = \
+			_planes_mode_visible or bool(_plane_shown.get(k, true))
 
 
 func _body_shown(fid: String) -> bool:
@@ -568,6 +599,10 @@ func set_plane_hover(plane_name: String) -> void:
 		var mat := (_plane_meshes[k] as MeshInstance3D).material_override \
 			as StandardMaterial3D
 		mat.albedo_color = COLOR_PLANE_HOVER if k == plane_name else COLOR_PLANE
+	for k: String in _cplane_meshes:
+		var cmat := (_cplane_meshes[k] as MeshInstance3D).material_override \
+			as StandardMaterial3D
+		cmat.albedo_color = COLOR_CPLANE_HOVER if k == plane_name else COLOR_CPLANE
 
 
 ## Is a world point inside an origin plane's quad? The quad runs from the
@@ -578,8 +613,8 @@ func _on_quad(hit: Vector3, basis: Basis) -> bool:
 	return u >= 0.0 and u <= PLANE_SIDE and v >= 0.0 and v <= PLANE_SIDE
 
 
-## Math raycast (no physics): which origin plane does the ray hit inside its
-## quad? Returns "" or the nearest plane name.
+## Math raycast (no physics): which plane quad does the ray hit — an origin
+## plane (name) or a construction plane (feature id)? Returns "" on a miss.
 func pick_plane(origin: Vector3, dir: Vector3) -> String:
 	var best := ""
 	var best_t := INF
@@ -596,7 +631,197 @@ func pick_plane(origin: Vector3, dir: Vector3) -> String:
 		if _on_quad(hit, basis):
 			best = plane_name
 			best_t = t
+	for fid: String in _cplane_xf:
+		# Only pickable while its quad shows (mode gate or tick), like bodies:
+		# what you cannot see, you cannot click.
+		var mi := _cplane_meshes.get(fid) as MeshInstance3D
+		if mi == null or not mi.visible:
+			continue
+		var xf: Transform3D = _cplane_xf[fid]
+		var n2 := xf.basis.z
+		var denom2 := dir.dot(n2)
+		if absf(denom2) < 1e-6:
+			continue
+		var t2 := (xf.origin - origin).dot(n2) / denom2
+		if t2 <= 0.0 or t2 >= best_t:
+			continue
+		# Construction quads are CENTRED on the plane origin (see
+		# `_rebuild_cplanes`), unlike the corner-anchored origin quads.
+		var local := xf.affine_inverse() * (origin + dir * t2)
+		if absf(local.x) <= PLANE_SIDE * 0.5 and absf(local.y) <= PLANE_SIDE * 0.5:
+			best = fid
+			best_t = t2
 	return best
+
+
+## Resolved transform of a construction plane quad currently in the scene.
+func cplane_transform(fid: String) -> Transform3D:
+	return _cplane_xf.get(fid, Transform3D.IDENTITY)
+
+
+## Rebuild the construction-plane quads from the document's live plane
+## features (M22). Wholesale, like the sketch meshes: rollback/undo can add
+## or remove planes in any order.
+func _rebuild_cplanes(doc: CadDocument) -> void:
+	for k: String in _cplane_meshes:
+		(_cplane_meshes[k] as MeshInstance3D).queue_free()
+	_cplane_meshes.clear()
+	_cplane_xf.clear()
+	for f in doc.live_features():
+		var pf := f as PlaneFeature
+		if pf == null:
+			continue
+		var xf := pf.transform()
+		var quad := QuadMesh.new()
+		# Centred on the plane origin: an offset plane should hover over the
+		# model, not run off into one quadrant.
+		quad.size = Vector2(PLANE_SIDE, PLANE_SIDE)
+		var mi := MeshInstance3D.new()
+		mi.name = "CPlane_" + pf.id
+		mi.mesh = quad
+		mi.transform = xf
+		var mat := StandardMaterial3D.new()
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		mat.albedo_color = COLOR_CPLANE
+		mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+		mi.material_override = mat
+		add_child(mi)
+		_cplane_meshes[pf.id] = mi
+		_cplane_xf[pf.id] = xf
+	_apply_plane_visibility()
+
+
+## Nearest flat body face under the ray (M22 face picking). Returns {} on a
+## miss, else {"body": feature id, "point": Vector3 (world hit),
+## "normal": Vector3 (world, unit, facing the ray)}.
+func pick_face(origin: Vector3, dir: Vector3) -> Dictionary:
+	var best := {}
+	var best_t := INF
+	if _sketch_root == null:
+		return best
+	for c in _sketch_root.get_children():
+		var mi := c as MeshInstance3D
+		if mi == null or not mi.visible or not mi.has_meta("is_body"):
+			continue
+		var hit := _ray_mesh_face(mi, origin, dir)
+		if not hit.is_empty() and float(hit["t"]) < best_t:
+			best_t = float(hit["t"])
+			best = {"body": String(mi.get_meta("feature_id")),
+				"point": hit["point"], "normal": hit["normal"]}
+	if not best.is_empty():
+		# The face's outward side is the one looking at the camera.
+		var n := best["normal"] as Vector3
+		if n.dot(dir) > 0.0:
+			best["normal"] = -n
+	return best
+
+
+## Like `_ray_mesh` but keeps the winning triangle's plane, not just the
+## distance. {} on a miss.
+func _ray_mesh_face(mi: MeshInstance3D, origin: Vector3, dir: Vector3) -> Dictionary:
+	var mesh := mi.mesh as ArrayMesh
+	if mesh == null:
+		return {}
+	var xform := mi.transform
+	if not (xform * mesh.get_aabb()).intersects_ray(origin, dir):
+		return {}
+	var out := {}
+	var best := INF
+	for s in mesh.get_surface_count():
+		if mesh.surface_get_primitive_type(s) != Mesh.PRIMITIVE_TRIANGLES:
+			continue
+		var arrays := mesh.surface_get_arrays(s)
+		var verts := arrays[Mesh.ARRAY_VERTEX] as PackedVector3Array
+		if verts.is_empty():
+			continue
+		var idx := PackedInt32Array()
+		if arrays[Mesh.ARRAY_INDEX] != null:
+			idx = arrays[Mesh.ARRAY_INDEX] as PackedInt32Array
+		var indexed := idx.size() > 0
+		var count := idx.size() if indexed else verts.size()
+		var i := 0
+		while i + 2 < count:
+			var a: Vector3 = xform * (verts[idx[i]] if indexed else verts[i])
+			var b: Vector3 = xform * (verts[idx[i + 1]] if indexed else verts[i + 1])
+			var cc: Vector3 = xform * (verts[idx[i + 2]] if indexed else verts[i + 2])
+			var hit = Geometry3D.ray_intersects_triangle(origin, dir, a, b, cc)
+			if hit != null:
+				var t := origin.distance_to(hit as Vector3)
+				if t < best:
+					best = t
+					out = {"t": t, "point": hit,
+						"normal": (b - a).cross(cc - a).normalized()}
+			i += 3
+	return out
+
+
+var _face_hover_mi: MeshInstance3D = null
+var _face_hover_key := ""
+
+
+## Highlight the flat face of `body_fid` through `point` with `normal` — all
+## of the body's triangles coplanar with it, floated a hair off the surface.
+func set_face_hover(body_fid: String, point: Vector3, normal: Vector3) -> void:
+	var key := "%s|%.2f,%.2f,%.2f|%.2f" % [body_fid, normal.x, normal.y,
+		normal.z, point.dot(normal)]
+	if key == _face_hover_key and _face_hover_mi != null:
+		return
+	clear_face_hover()
+	var mi := _body_mesh(body_fid)
+	if mi == null:
+		return
+	var mesh := mi.mesh as ArrayMesh
+	if mesh == null:
+		return
+	var d := point.dot(normal)
+	var tris := PackedVector3Array()
+	for s in mesh.get_surface_count():
+		if mesh.surface_get_primitive_type(s) != Mesh.PRIMITIVE_TRIANGLES:
+			continue
+		var arrays := mesh.surface_get_arrays(s)
+		var verts := arrays[Mesh.ARRAY_VERTEX] as PackedVector3Array
+		var idx := PackedInt32Array()
+		if arrays[Mesh.ARRAY_INDEX] != null:
+			idx = arrays[Mesh.ARRAY_INDEX] as PackedInt32Array
+		var indexed := idx.size() > 0
+		var count := idx.size() if indexed else verts.size()
+		var i := 0
+		while i + 2 < count:
+			var a: Vector3 = mi.transform * (verts[idx[i]] if indexed else verts[i])
+			var b: Vector3 = mi.transform * (verts[idx[i + 1]] if indexed else verts[i + 1])
+			var c2: Vector3 = mi.transform * (verts[idx[i + 2]] if indexed else verts[i + 2])
+			i += 3
+			var tn := (b - a).cross(c2 - a).normalized()
+			if absf(tn.dot(normal)) < 0.999:
+				continue
+			if absf(a.dot(normal) - d) > 0.05 or absf(b.dot(normal) - d) > 0.05 \
+					or absf(c2.dot(normal) - d) > 0.05:
+				continue
+			var lift := normal * 0.05
+			tris.append(a + lift)
+			tris.append(b + lift)
+			tris.append(c2 + lift)
+	if tris.is_empty():
+		return
+	var hm := ArrayMesh.new()
+	var arr := []
+	arr.resize(Mesh.ARRAY_MAX)
+	arr[Mesh.ARRAY_VERTEX] = tris
+	hm.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+	_face_hover_mi = MeshInstance3D.new()
+	_face_hover_mi.name = "FaceHover"
+	_face_hover_mi.mesh = hm
+	_face_hover_mi.material_override = _fill_material(COLOR_FACE_HOVER, false)
+	add_child(_face_hover_mi)
+	_face_hover_key = key
+
+
+func clear_face_hover() -> void:
+	if _face_hover_mi != null:
+		_face_hover_mi.queue_free()
+		_face_hover_mi = null
+	_face_hover_key = ""
 
 
 ## Rebuild the 3D display for every live feature: sketch line meshes plus
@@ -609,6 +834,7 @@ func rebuild_sketches(doc: CadDocument) -> void:
 	for c in _sketch_root.get_children():
 		if not (c as Node).has_meta("is_body"):
 			c.queue_free()
+	_rebuild_cplanes(doc)
 	for f in doc.live_features():
 		if f is ExtrudeFeature:
 			continue   # bodies are rebuilt below, boolean-aware
