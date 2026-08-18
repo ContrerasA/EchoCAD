@@ -79,7 +79,7 @@ func draw_overlay(overlay: Control) -> void:
 	if _picked.size() == 2:
 		var cc := SketchGeometry.circumcircle(_picked[0], _picked[1], _preview)
 		if cc.get("ok", false):
-			overlay.draw_arc(v.world_to_screen(cc["pos"]),
+			preview_arc(overlay, v.world_to_screen(cc["pos"]),
 				float(cc["radius"]) * v.zoom(), 0, TAU, 64,
 				Color(1, 1, 1, 0.7), 1.0)
 	elif _picked.size() == 1:

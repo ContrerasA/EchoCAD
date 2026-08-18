@@ -164,7 +164,8 @@ func draw_overlay(overlay: Control) -> void:
 			var a1 := (_preview - c).angle()
 			var sweep := fposmod(a1 - a0, TAU) if bool(geo["ccw"]) \
 				else fposmod(a1 - a0, TAU) - TAU
-			overlay.draw_arc(v.world_to_screen(c), float(geo["radius"]) * v.zoom(),
+			preview_arc(overlay, v.world_to_screen(c),
+				float(geo["radius"]) * v.zoom(),
 				-a0, -(a0 + sweep), 48, Color(1, 1, 1, 0.8), 1.0)
 		overlay.draw_circle(v.world_to_screen(_start), 4.0, Color(0.35, 0.9, 0.55))
 	overlay.draw_circle(v.world_to_screen(_preview), 2.0, Color(1, 1, 1, 0.7))

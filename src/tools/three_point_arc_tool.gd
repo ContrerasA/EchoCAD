@@ -117,6 +117,7 @@ func draw_overlay(overlay: Control) -> void:
 			var a1 := (_picked[1] - c).angle()
 			var ccw := winding(c, _picked[0], _picked[1], _preview)
 			var sweep := fposmod(a1 - a0, TAU) if ccw else fposmod(a1 - a0, TAU) - TAU
-			overlay.draw_arc(v.world_to_screen(c), float(cc["radius"]) * v.zoom(),
+			preview_arc(overlay, v.world_to_screen(c),
+				float(cc["radius"]) * v.zoom(),
 				-a0, -(a0 + sweep), 48, Color(1, 1, 1, 0.8), 1.0)
 	overlay.draw_circle(v.world_to_screen(_preview), 2.0, Color(1, 1, 1, 0.7))

@@ -59,6 +59,63 @@ func stamp_construction(ents: Array) -> Array:
 	return ents
 
 
+## --- construction-aware preview strokes (M21 QA) --------------------------
+## While construction mode is on, the GHOST a drawing tool shows must read
+## as construction too: these helpers draw the geometry preview dashed and
+## violet-tinted so what you see is what will commit. Guides and markers
+## (radius lines, pick dots) keep the tools' normal chrome.
+
+func _preview_is_construction() -> bool:
+	return app != null and app.construction_mode
+
+
+static func _construction_tint(c: Color) -> Color:
+	var t := RenderBridge.COLOR_CONSTRUCTION
+	return Color(t.r, t.g, t.b, c.a)
+
+
+func preview_line(overlay: Control, a: Vector2, b: Vector2, c: Color,
+		w := 1.0) -> void:
+	if _preview_is_construction():
+		overlay.draw_dashed_line(a, b, _construction_tint(c), w, 8.0)
+	else:
+		overlay.draw_line(a, b, c, w)
+
+
+func preview_arc(overlay: Control, center: Vector2, radius: float,
+		from: float, to: float, segs: int, c: Color, w := 1.0) -> void:
+	if not _preview_is_construction() or radius < 1.0:
+		overlay.draw_arc(center, radius, from, to, segs, c, w)
+		return
+	var tint := _construction_tint(c)
+	var dash_ang := 8.0 / radius
+	var gap_ang := 6.0 / radius
+	var dir := signf(to - from)
+	if dir == 0.0:
+		return
+	var a := from
+	var guard := int(ceil(absf(to - from) * radius / 8.0)) + 4
+	while dir * (to - a) > 0.0 and guard > 0:
+		guard -= 1
+		var a2 := a + dir * dash_ang
+		if dir * (to - a2) < 0.0:
+			a2 = to
+		overlay.draw_arc(center, radius, a, a2, 6, tint, w)
+		a = a2 + dir * gap_ang
+
+
+func preview_rect(overlay: Control, r: Rect2, c: Color, w := 1.0) -> void:
+	if not _preview_is_construction():
+		overlay.draw_rect(r, c, false, w)
+		return
+	var p00 := r.position
+	var p10 := r.position + Vector2(r.size.x, 0)
+	var p11 := r.position + r.size
+	var p01 := r.position + Vector2(0, r.size.y)
+	for pair: Array in [[p00, p10], [p10, p11], [p11, p01], [p01, p00]]:
+		preview_line(overlay, pair[0], pair[1], c, w)
+
+
 func activate() -> void:
 	pass
 

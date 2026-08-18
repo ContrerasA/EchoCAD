@@ -108,7 +108,7 @@ func draw_overlay(overlay: Control) -> void:
 		var c := _picked[0]
 		var r := c.distance_to(_picked[1])
 		var a0 := (_picked[1] - c).angle()
-		overlay.draw_arc(v.world_to_screen(c), r * v.zoom(),
+		preview_arc(overlay, v.world_to_screen(c), r * v.zoom(),
 			-a0, -(a0 + _sweep), 48, Color(1, 1, 1, 0.8), 1.0)
 		overlay.draw_line(v.world_to_screen(c), v.world_to_screen(_preview),
 			Color(1, 1, 1, 0.25), 1.0)

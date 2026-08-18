@@ -1567,7 +1567,9 @@ Status: PENDING sign-off
    	~~Also toggling x during line drawing should turn it into construction
    	line. right now only way is creating the line, selecting it, then
    	pressing x~~ (fix 5)
-- [ ] 2. Open the exported file in any DXF viewer (eMachineShop viewer,
+   	~~While drawing a construction line, make the ghost / psuedo line /
+   	shape / geometry also dashed to show it's geometry~~ (fix 8)
+- [X] 2. Open the exported file in any DXF viewer (eMachineShop viewer,
    LibreCAD, an online viewer, or Fusion insert-DXF). **Expect:** geometry
    matches the sketch exactly — arc directions included; construction
    geometry sits on its own CONSTRUCTION layer and renders DASHED.
@@ -1587,13 +1589,13 @@ Status: PENDING sign-off
    with "Edit Sketch" and "Export DXF..." — export writes the right-clicked
    sketch even if another row was selected. Double-clicking a sketch row
    opens it for editing. (fix 3)
-- [ ] 6. Construction toggle round-trip: select a line, press X — it goes
+- [X] 6. Construction toggle round-trip: select a line, press X — it goes
    violet/dashed and stops counting for profiles (extrude ignores it);
    X again restores it; each press is one undo step. NOTE: the Extend
    tool's shortcut moved from X to **E** to make room for this.
    ~~Construction line doesn't appear as construction (dotted / purple) in
    the 3d view. only when editing that sketch~~ (fix 7)
-- [ ] 7. Selected/hovered construction geometry keeps its dashes: click a
+- [X] 7. Selected/hovered construction geometry keeps its dashes: click a
    construction line — the yellow highlight is DASHED, so it still reads
    as construction while selected. Same for construction circles/arcs.
 - [ ] 8. Construction MODE: with nothing selected press X (or tick the new
@@ -1601,7 +1603,9 @@ Status: PENDING sign-off
    mode, and every line/circle/arc drawn from then on comes out
    construction. Works mid line-chain: segments clicked after the toggle
    are construction, earlier ones untouched. X again (nothing selected)
-   turns it off.
+   turns it off. While the mode is on, the drawing PREVIEW itself renders
+   violet and dashed (line rubber band, rect/circle/arc/slot ghosts), so
+   what you see is what will commit.
 - [ ] 9. Export dialog: an "Include construction geometry" checkbox sits in
    the file dialog. Untick it — the exported DXF contains no construction
    entities; tick it — they export on the dashed CONSTRUCTION layer.
@@ -1647,3 +1651,10 @@ Fix log:
   surface: construction entities render violet with real dashed segments
   (3D lines have no dash support, so the dashes are geometry — item 10).
   All covered by `tests/m21_qa_fixes.gd`.
+- **8** (2026-08-18 retest, "make the ghost also dashed") While
+  construction mode is on, every drawing tool's GEOMETRY preview now
+  renders violet and dashed — the line rubber band, rect outlines, circle/
+  arc ghosts, and slot walls/caps — via construction-aware preview helpers
+  in the tool base (`preview_line`/`preview_arc`/`preview_rect`). Guide
+  chrome (radius spokes, pick markers) stays as it was, since it never
+  becomes geometry.

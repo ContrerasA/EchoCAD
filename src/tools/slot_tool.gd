@@ -195,15 +195,15 @@ func _draw_slot_preview(overlay: Control, width: float) -> void:
 	var n := Vector2(-d.y, d.x)
 	var r := width * 0.5
 	var col := Color(1, 1, 1, 0.85)
-	overlay.draw_line(v.world_to_screen(wa + n * r),
+	preview_line(overlay, v.world_to_screen(wa + n * r),
 		v.world_to_screen(wb + n * r), col, 1.0)
-	overlay.draw_line(v.world_to_screen(wa - n * r),
+	preview_line(overlay, v.world_to_screen(wa - n * r),
 		v.world_to_screen(wb - n * r), col, 1.0)
 	# End caps (screen-space angles are negated: Y-down). The A cap bulges AWAY
 	# from B — its screen sweep must pass through world direction -d, which is
 	# the [ang_n + PI, ang_n + TAU] half here; B gets the other half.
 	var ang_n := -n.angle()
-	overlay.draw_arc(v.world_to_screen(wa), r * v.zoom(),
+	preview_arc(overlay, v.world_to_screen(wa), r * v.zoom(),
 		ang_n + PI, ang_n + TAU, 24, col, 1.0)
-	overlay.draw_arc(v.world_to_screen(wb), r * v.zoom(),
+	preview_arc(overlay, v.world_to_screen(wb), r * v.zoom(),
 		ang_n, ang_n + PI, 24, col, 1.0)

@@ -144,7 +144,7 @@ func draw_overlay(overlay: Control) -> void:
 		var a := v.world_to_screen(_anchor)
 		var b := v.world_to_screen(second)
 		var r := Rect2(a, b - a).abs()
-		overlay.draw_rect(r, Color(1, 1, 1, 0.9), false, 1.0)
+		preview_rect(overlay, r, Color(1, 1, 1, 0.9), 1.0)
 		_fields.draw(overlay, v.world_to_screen(_preview), app.doc.display_unit,
 			[absf(second.x - _anchor.x), absf(second.y - _anchor.y)])
 	else:

@@ -206,7 +206,7 @@ func draw_overlay(overlay: Control) -> void:
 	var p := v.world_to_screen(_preview)
 	# Rubber-band segment.
 	if _chain:
-		overlay.draw_line(v.world_to_screen(_anchor), p,
+		preview_line(overlay, v.world_to_screen(_anchor), p,
 			Color(1, 1, 1, 0.9), 1.0)
 	# Snap marker.
 	var snap: Dictionary = _inference["snap"]

@@ -65,7 +65,7 @@ func draw_overlay(overlay: Control) -> void:
 		var opposite := _anchor * 2.0 - second
 		var a := v.world_to_screen(opposite)
 		var b := v.world_to_screen(second)
-		overlay.draw_rect(Rect2(a, b - a).abs(), Color(1, 1, 1, 0.9), false, 1.0)
+		preview_rect(overlay, Rect2(a, b - a).abs(), Color(1, 1, 1, 0.9), 1.0)
 		var c := v.world_to_screen(_anchor)
 		overlay.draw_line(c - Vector2(4, 0), c + Vector2(4, 0), Color(1, 1, 1, 0.6))
 		overlay.draw_line(c - Vector2(0, 4), c + Vector2(0, 4), Color(1, 1, 1, 0.6))
