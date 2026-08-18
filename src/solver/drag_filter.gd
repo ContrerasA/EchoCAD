@@ -56,6 +56,8 @@ static func plan(sk: Sketch, drag_pids: Array, desired: Dictionary) -> Dictionar
 	for pid: String in group:
 		cols[pid] = true
 	var live := DofAnalyzer._state(sk)
+	var best_plan := {}
+	var best_len := 0.0
 	for ring in EXPAND_MAX:
 		var out := _project(sk, cols, desired, live)
 		if bool(out["point_freedom"]):
@@ -64,11 +66,29 @@ static func plan(sk: Sketch, drag_pids: Array, desired: Dictionary) -> Dictionar
 			for pid: String in moves:
 				moved_len += (moves[pid] as Vector2).length_squared()
 			moved_len = sqrt(moved_len)
-			return {"allowed": true,
+			var ring_plan := {"allowed": true,
 				"restricted": moved_len < desired_len * 0.999,
 				"moves": moves}
-		if not _expand(sk, cols, held_always):
+			if moved_len >= desired_len * 0.05:
+				return ring_plan
+			# Freedom in name only: the rails at this ring are (nearly)
+			# perpendicular to the request, so the drag would visibly stick —
+			# a line end whose rotation is pinned by tangency to a HELD arc,
+			# an offset source held by its copy's gaps. Only COUPLING
+			# constraints (2+ operands) may pull more geometry in to free the
+			# motion; the dragged entity's own remaining points must not join
+			# through its own H/V, or an endpoint drag would translate the
+			# whole line — the M17 stick rule. No coupled geometry left to
+			# recruit: the stick is honest, return it.
+			if best_plan.is_empty() or moved_len > best_len:
+				best_plan = ring_plan
+				best_len = moved_len
+			if not _expand_coupled(sk, cols, held_always):
+				return ring_plan
+		elif not _expand(sk, cols, held_always):
 			break
+	if not best_plan.is_empty():
+		return best_plan
 	return {"allowed": false, "restricted": true, "moves": {}}
 
 
@@ -169,8 +189,12 @@ static func _coincident_closure(sk: Sketch, pids: Array) -> Dictionary:
 	return group
 
 
-## Grow `cols` by one entity hop: every point sharing an entity with a column
-## point joins (plus its own coincident welds). Returns false when nothing new.
+## Grow `cols` by one hop: every point sharing an ENTITY with a column point
+## joins, and so does every point of geometry coupled to the columns only
+## through a CONSTRAINT (an offset ring held to its source by LINE_DIST, a
+## tangent pair) — such geometry shares no entity, so without the constraint
+## hop a source drag reads as fully held and gets refused (QA §M19.3).
+## Returns false when nothing new.
 static func _expand(sk: Sketch, cols: Dictionary, held: Dictionary) -> bool:
 	var add := {}
 	for e in sk.entities():
@@ -185,6 +209,54 @@ static func _expand(sk: Sketch, cols: Dictionary, held: Dictionary) -> bool:
 		for pid in e.point_refs():
 			if not cols.has(pid) and not held.has(pid):
 				add[pid] = true
+	for c in sk.constraints:
+		if c.driven or not _touches(sk, c, cols):
+			continue
+		for op in c.operands:
+			var e := sk.entity(op)
+			if e == null:
+				continue
+			if e.kind() == "point":
+				if not cols.has(op) and not held.has(op):
+					add[op] = true
+			else:
+				for pid in e.point_refs():
+					if not cols.has(pid) and not held.has(pid):
+						add[pid] = true
+	if add.is_empty():
+		return false
+	var welded := _coincident_closure(sk, add.keys())
+	var grew := false
+	for pid: String in welded:
+		if not cols.has(pid) and not held.has(pid):
+			cols[pid] = true
+			grew = true
+	return grew
+
+
+## Sticky-drag recruitment: grow `cols` through COUPLING constraints only
+## (2+ operands) — the tangent partner, the offset ring's other half — never
+## through the dragged entity's own single-operand shape constraints (H/V),
+## which is what keeps a purely-vertical drag on a Horizontal line a stick
+## instead of a translation. Returns false when nothing new joins.
+static func _expand_coupled(sk: Sketch, cols: Dictionary, held: Dictionary) -> bool:
+	var add := {}
+	for c in sk.constraints:
+		if c.driven or c.operands.size() < 2:
+			continue
+		if not _touches(sk, c, cols):
+			continue
+		for op in c.operands:
+			var e := sk.entity(op)
+			if e == null:
+				continue
+			if e.kind() == "point":
+				if not cols.has(op) and not held.has(op):
+					add[op] = true
+			else:
+				for pid in e.point_refs():
+					if not cols.has(pid) and not held.has(pid):
+						add[pid] = true
 	if add.is_empty():
 		return false
 	var welded := _coincident_closure(sk, add.keys())

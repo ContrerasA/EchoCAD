@@ -48,6 +48,16 @@ func push_no_merge(cmd: Command) -> void:
 	_merge_enabled = prev
 
 
+## Drop `cmd` from the top of the undo stack if it is there and does nothing —
+## a drag that never moved anything must not leave a phantom undo step the
+## user has to press Ctrl+Z through (QA §M19.8).
+func drop_if_noop(cmd: Command) -> void:
+	if cmd != null and not _undo.is_empty() and _undo.back() == cmd \
+			and cmd.is_noop():
+		_undo.pop_back()
+		changed.emit()
+
+
 ## Most recent undoable command (or null). Never mutate through this.
 func peek() -> Command:
 	return _undo.back() if not _undo.is_empty() else null

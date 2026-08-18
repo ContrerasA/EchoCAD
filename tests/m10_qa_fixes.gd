@@ -196,8 +196,16 @@ func _run() -> bool:
 	for e in sk.entities():
 		if e is SketchLine and (e as SketchLine).p0 == tm.p0:
 			kept_left = true
-			if not _has_point_on(sk, (e as SketchLine).p1, tt.id):
-				return _fail("T-joint trim did not tie the cut onto the toucher")
+			# A cut AT the toucher's endpoint welds COINCIDENT to that point
+			# (M19): the junction is a real corner, not a slide-along tie.
+			var welded := false
+			for c in sk.constraints:
+				if c.type == SketchConstraint.Type.COINCIDENT \
+						and c.operands.has((e as SketchLine).p1) \
+						and c.operands.has(tt.p0):
+					welded = true
+			if not welded:
+				return _fail("T-joint trim did not weld the cut onto the toucher")
 	if not kept_left:
 		return _fail("T-joint trim removed the whole line instead of the span")
 

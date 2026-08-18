@@ -6,9 +6,10 @@ extends SketchTool
 ## connected chain, Fusion-style (M19): every element shifts the same
 ## distance to the same side, shared corners are re-intersected, tangent
 ## joints stay joined. The copies are CONSTRAINED to their sources: each
-## offset line is PARALLEL to its source and one driving point-to-line
-## dimension holds the gap; offset arcs/circles share their source's center
-## point, so they are concentric by construction. One undo step.
+## offset line carries a LINE_DIST (parallel + gap) to its source, all in one
+## dimension GROUP so a single shown dimension drives the whole ring; offset
+## arcs/circles share their source's center point, so they are concentric by
+## construction. One undo step.
 
 var _targets: Array[String] = []
 var _hover := false
@@ -390,11 +391,14 @@ func _apply() -> void:
 		np.id = sk.next_id()
 		pid_map[pid] = np.id
 		adds.append(np)
-	# The copies are tied to their sources (M19): PARALLEL per line, and ONE
-	# driving point-to-line gap dimension on the first offset line, so the
-	# offset follows its source through later edits. Arcs/circles reuse the
-	# source's center point — concentric by construction, no constraint needed.
-	var gap_done := false
+	# The copies are tied to their sources (M19): every offset line carries a
+	# LINE_DIST to its source (the solver's parallel-gap constraint — one
+	# residual for the gap, one for parallelism), all sharing one dimension
+	# GROUP. One gap dimension shows; editing it re-drives the WHOLE ring, and
+	# dragging the source pulls the copy along, because the ring is fully
+	# determined instead of only the first edge (QA §M19.2/3). Arcs/circles
+	# reuse the source's center point — concentric by construction.
+	var group_id := ""
 	for rec: Dictionary in spec["elems"]:
 		var e: SketchEntity = rec["e"]
 		if e is SketchLine:
@@ -403,14 +407,13 @@ func _apply() -> void:
 			nl.id = sk.next_id()
 			nl.construction = l.construction
 			adds.append(nl)
-			cons.append(SketchConstraint.make(
-				SketchConstraint.Type.PARALLEL, [nl.id, l.id]))
-			if not gap_done:
-				var gap := SketchConstraint.make(
-					SketchConstraint.Type.POINT_LINE_DIST,
-					[pid_map[l.p0], l.id], float(spec["d"]))
-				cons.append(gap)
-				gap_done = true
+			if group_id == "":
+				group_id = "offset-" + nl.id
+			var gap := SketchConstraint.make(
+				SketchConstraint.Type.LINE_DIST,
+				[nl.id, l.id], float(spec["d"]))
+			gap.group = group_id
+			cons.append(gap)
 		else:
 			var arc := e as SketchArc
 			# The source's center point is REUSED: the offset arc is concentric

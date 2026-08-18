@@ -12,6 +12,14 @@ const COLOR_PLANE := Color(0.55, 0.65, 0.85, 0.10)
 const COLOR_PLANE_HOVER := Color(0.55, 0.75, 1.0, 0.28)
 const COLOR_SKETCH := Color(0.30, 0.62, 0.96)
 const COLOR_CONSTRUCTION := Color(0.72, 0.55, 0.95)
+## Closed sketch regions render as translucent faces (Fusion-style) so an
+## extrudable profile reads as a surface, not bare wireframe (QA §M18.1).
+const COLOR_REGION_FILL := Color(0.30, 0.62, 0.96, 0.12)
+## Profile-pick hover: the region under the cursor while Extrude waits.
+const COLOR_REGION_HOVER := Color(1.0, 0.72, 0.25, 0.35)
+## How far a region fill sits BELOW its sketch plane (mm): under the sketch
+## lines (at 0) but above the grid (at -GRID_SINK_MM), so nothing z-fights.
+const FILL_SINK_MM := 0.02
 ## The one background colour for BOTH modes. Model mode paints it as the 3D
 ## environment's clear colour, sketch mode fills the 2D canvas with it, so
 ## switching modes does not change the colour under the work.
@@ -107,6 +115,10 @@ var _bodies_building := false
 var _bodies_pending: CadDocument = null
 ## The last built body list: [{id, name, mesh, feature_ids}].
 var _bodies: Array = []
+## Profile-pick hover highlight (owned by this node, outside _sketch_root so
+## sketch rebuilds cannot orphan it mid-gesture).
+var _profile_hover_mi: MeshInstance3D = null
+var _profile_hover_key := ""
 
 
 func _ready() -> void:
@@ -476,9 +488,20 @@ func set_sketch_shown(fid: String, shown: bool) -> void:
 		_sketch_hidden.erase(fid)
 	else:
 		_sketch_hidden[fid] = true
-	var mi := _body_mesh(fid)   # keyed on feature_id; sketch meshes carry it too
-	if mi != null:
-		mi.visible = shown
+	if _sketch_root == null:
+		return
+	# Both the line mesh (keyed on feature_id) and the region-fill mesh
+	# (keyed on sketch_fill_for — it must NOT carry feature_id, or it would
+	# be pickable as a body) obey the one tick.
+	for c in _sketch_root.get_children():
+		var mi := c as MeshInstance3D
+		if mi == null:
+			continue
+		if (mi.has_meta("feature_id") and not mi.has_meta("is_body") \
+				and String(mi.get_meta("feature_id")) == fid) \
+				or (mi.has_meta("sketch_fill_for") \
+				and String(mi.get_meta("sketch_fill_for")) == fid):
+			mi.visible = shown
 
 
 func sketch_shown(fid: String) -> bool:
@@ -612,7 +635,98 @@ func rebuild_sketches(doc: CadDocument) -> void:
 		mi.material_override = _line_material(COLOR_SKETCH)
 		mi.visible = sketch_shown(sf.id)
 		_sketch_root.add_child(mi)
+		# Closed regions get a translucent face so the sketch reads as
+		# extrudable (Fusion-style). No feature_id meta: fills must never be
+		# body-pickable.
+		var fill := _profile_fill_mesh(sf)
+		if fill != null:
+			var fmi := MeshInstance3D.new()
+			fmi.name = sf.name + "Fill"
+			fmi.mesh = fill
+			fmi.set_meta("sketch_fill_for", sf.id)
+			fmi.material_override = _fill_material(COLOR_REGION_FILL, false)
+			fmi.visible = sketch_shown(sf.id)
+			_sketch_root.add_child(fmi)
 	_rebuild_bodies(doc)
+
+
+## Triangulated faces of every closed region in a sketch, sunk FILL_SINK_MM
+## below its plane. null when the sketch closes nothing.
+func _profile_fill_mesh(sf: SketchFeature) -> ArrayMesh:
+	var tris := PackedVector3Array()
+	var xf := sf.plane_transform()
+	var off: Vector3 = xf.basis.z * -FILL_SINK_MM
+	for prof: Dictionary in ProfileFinder.profiles(sf.sketch):
+		var tri := ProfileFinder.triangulate_with_holes(
+			prof["polygon"] as PackedVector2Array, prof.get("holes", []) as Array)
+		var pts: PackedVector2Array = tri["points"]
+		for i: int in (tri["indices"] as PackedInt32Array):
+			tris.append(xf * Vector3(pts[i].x, pts[i].y, 0.0) + off)
+	if tris.is_empty():
+		return null
+	var mesh := ArrayMesh.new()
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = tris
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	return mesh
+
+
+func _fill_material(color: Color, on_top: bool) -> StandardMaterial3D:
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.albedo_color = color
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	if on_top:
+		# Hover highlight must read even where a body covers the region.
+		mat.no_depth_test = true
+		mat.render_priority = 10
+	return mat
+
+
+## Highlight the region of `sf` enclosing sketch-uv `at` — the profile the
+## Extrude click would take. Rebuilds only when the hovered region changes.
+func set_profile_hover(sf: SketchFeature, at: Vector2) -> void:
+	if sf == null:
+		clear_profile_hover()
+		return
+	var prof := ProfileFinder.profile_at(sf.sketch, at)
+	if prof.is_empty():
+		clear_profile_hover()
+		return
+	var k := sf.id + "|" + str(prof["polygon"])
+	if k == _profile_hover_key and _profile_hover_mi != null:
+		return
+	clear_profile_hover()
+	var tri := ProfileFinder.triangulate_with_holes(
+		prof["polygon"] as PackedVector2Array, prof.get("holes", []) as Array)
+	var pts: PackedVector2Array = tri["points"]
+	var idx: PackedInt32Array = tri["indices"]
+	if idx.is_empty():
+		return
+	var xf := sf.plane_transform()
+	var tris := PackedVector3Array()
+	for i: int in idx:
+		tris.append(xf * Vector3(pts[i].x, pts[i].y, 0.0))
+	var mesh := ArrayMesh.new()
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = tris
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	_profile_hover_mi = MeshInstance3D.new()
+	_profile_hover_mi.name = "ProfileHover"
+	_profile_hover_mi.mesh = mesh
+	_profile_hover_mi.material_override = _fill_material(COLOR_REGION_HOVER, true)
+	add_child(_profile_hover_mi)
+	_profile_hover_key = k
+
+
+func clear_profile_hover() -> void:
+	if _profile_hover_mi != null:
+		_profile_hover_mi.queue_free()
+		_profile_hover_mi = null
+	_profile_hover_key = ""
 
 
 ## Rebuild solid bodies via BodyBuilder. Runs to completion synchronously
@@ -642,6 +756,11 @@ func _apply_bodies(bodies: Array) -> void:
 			c.free()   # immediate: the replacement is added THIS call
 	for b: Dictionary in bodies:
 		var mesh: ArrayMesh = b["mesh"]
+		# A bake can legitimately come back with no surfaces (a cut consumed
+		# the body); putting a surface override on it is the out-of-bounds
+		# error QA §M18.6 hit.
+		if mesh == null or mesh.get_surface_count() == 0:
+			continue
 		var smi := MeshInstance3D.new()
 		smi.name = b["name"]
 		smi.mesh = mesh

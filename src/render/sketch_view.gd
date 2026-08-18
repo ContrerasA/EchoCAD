@@ -36,6 +36,9 @@ const COLOR_GRID_MINOR := Color(1, 1, 1, 0.14)
 const COLOR_GRID_MAJOR := Color(1, 1, 1, 0.26)
 const COLOR_AXIS_X := Color(0.85, 0.30, 0.30, 0.8)
 const COLOR_AXIS_Y := Color(0.35, 0.80, 0.35, 0.8)
+## Closed regions get a translucent face under the geometry, Fusion-style —
+## the "this sketch closes, it can be extruded" affordance (QA §M18.1).
+const COLOR_REGION_FILL := Color(0.30, 0.62, 0.96, 0.10)
 
 var bridge: RenderBridge = null
 ## The unit whose steps the grid follows (document display unit).
@@ -66,6 +69,10 @@ var _references: Array = []
 ## sketch on its own.
 var show_model_behind := true
 var _dirty := false
+## Cached closed-region triangles (mm, flat triples) for the fill in _draw;
+## rebuilt lazily when the model changes, only transformed per redraw.
+var _region_tris := PackedVector2Array()
+var _regions_dirty := true
 
 
 ## Key hook: Callable(event: InputEventKey) -> bool. Focused keys (Tab,
@@ -224,6 +231,8 @@ func show_sketch(sketch: Sketch, references: Array = []) -> void:
 ## Model changed: rebuild canvas + re-render.
 func mark_dirty() -> void:
 	_dirty = true
+	_regions_dirty = true
+	queue_redraw()
 	_refresh()
 
 
@@ -347,6 +356,19 @@ static func step_for(unit: UnitConverter.Unit, target_mm: float) -> float:
 	return decade * 10.0 * unit_mm
 
 
+func _rebuild_region_tris() -> void:
+	_region_tris.clear()
+	_regions_dirty = false
+	if _sketch == null:
+		return
+	for prof: Dictionary in ProfileFinder.profiles(_sketch):
+		var tri := ProfileFinder.triangulate_with_holes(
+			prof["polygon"] as PackedVector2Array, prof.get("holes", []) as Array)
+		var pts: PackedVector2Array = tri["points"]
+		for i: int in (tri["indices"] as PackedInt32Array):
+			_region_tris.append(pts[i])
+
+
 func _draw() -> void:
 	# A VEIL, not a solid fill. The 3D viewport sits directly behind this
 	# canvas, so painting COLOR_BG opaquely hid every solid in the model the
@@ -405,6 +427,16 @@ func _draw() -> void:
 		draw_line(Vector2(0, sy), Vector2(size.x, sy),
 			COLOR_GRID_MAJOR if major else COLOR_GRID_MINOR, 1.0)
 		y += step
+	# Closed-region fills over the grid, under the raster's geometry lines.
+	if _regions_dirty:
+		_rebuild_region_tris()
+	var ti := 0
+	while ti + 2 < _region_tris.size():
+		draw_colored_polygon(PackedVector2Array([
+			world_to_screen(_region_tris[ti]),
+			world_to_screen(_region_tris[ti + 1]),
+			world_to_screen(_region_tris[ti + 2])]), COLOR_REGION_FILL)
+		ti += 3
 	# Origin axes on top of the grid.
 	var o := world_to_screen(Vector2.ZERO)
 	if o.y >= 0 and o.y <= size.y:

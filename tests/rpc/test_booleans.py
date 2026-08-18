@@ -79,7 +79,9 @@ def main():
                    "operation": "cut"})
     check(r2["operation"] == "cut", "cut extrude accepted")
     bodies = app.call("query.bodies")["bodies"]
-    want2 = want - 10.0 * 8.0 * 10.0
+    # Cut prisms inflate 0.05 mm sideways (coplanar-skin defence), so the
+    # interior 10x8 through-cut removes (10.1 * 8.1) * 10.
+    want2 = want - 10.1 * 8.1 * 10.0
     check(len(bodies) == 1 and near(bodies[0]["volume"], want2, 10.0),
           f"cut carved the plate (got {[round(b['volume']) for b in bodies]}, "
           f"want {want2:.0f})")

@@ -130,8 +130,12 @@ func _run() -> bool:
 	vols = await _volumes()
 	if vols.size() != 1:
 		return _fail("cut should leave 1 body, got %d" % vols.size())
-	if absf(float(vols[0]) - 11000.0) > 5.0:
-		return _fail("cut volume wrong: %f (want 11000)" % float(vols[0]))
+	# Cut prisms are inflated EPS_MM sideways (coplanar-skin defence), so an
+	# interior 10x10 through-cut removes (10+2*EPS)^2 * 10.
+	var cut_side := 10.0 + 2.0 * BodyBuilder.EPS_MM
+	var want_cut := 12000.0 - cut_side * cut_side * 10.0
+	if absf(float(vols[0]) - want_cut) > 5.0:
+		return _fail("cut volume wrong: %f (want %f)" % [float(vols[0]), want_cut])
 
 	# Undo removes the cut; redo restores it.
 	_root.stack.undo()
@@ -142,7 +146,7 @@ func _run() -> bool:
 	_root.stack.redo()
 	await _idle()
 	vols = await _volumes()
-	if absf(float(vols[0]) - 11000.0) > 5.0:
+	if absf(float(vols[0]) - want_cut) > 5.0:
 		return _fail("redo of cut wrong: %f" % float(vols[0]))
 
 	# A cut that touches no body is a no-op (still one body, same volume).
@@ -152,7 +156,7 @@ func _run() -> bool:
 		return _fail("far cut refused")
 	await _idle()
 	vols = await _volumes()
-	if vols.size() != 1 or absf(float(vols[0]) - 11000.0) > 5.0:
+	if vols.size() != 1 or absf(float(vols[0]) - want_cut) > 5.0:
 		return _fail("no-target cut changed something: %s" % str(vols))
 
 	# --- C: join ------------------------------------------------------------
@@ -181,6 +185,62 @@ func _run() -> bool:
 	if vols.size() != 2:
 		return _fail("new_body should be a second body, got %d" % vols.size())
 
+	# --- D: QA §M18 regressions ---------------------------------------------
+	# Same-height cut: the cut prism overhangs both caps, so no zero-thickness
+	# cap skin survives and the pocket goes clean through.
+	_root.load_document(CadDocument.new())
+	var f8 := _sketch_rect("XY", Vector2(0, 0), Vector2(40, 30))
+	_root.finish_sketch()
+	if _root.extrude(f8, Vector2(20, 15), 10.0) == "":
+		return _fail("plate D extrude refused")
+	var f9 := _sketch_rect("XY", Vector2(10, 10), Vector2(20, 20))
+	_root.finish_sketch()
+	if _root.extrude(f9, Vector2(15, 15), 10.0, ExtrudeFeature.OP_CUT) == "":
+		return _fail("same-height cut refused")
+	await _idle()
+	vols = await _volumes()
+	if vols.size() != 1 or absf(float(vols[0]) - want_cut) > 5.0:
+		return _fail("same-height cut volume wrong: %s (want %f)"
+			% [str(vols), want_cut])
+
+	# Flush-edge cut (QA §M18.3 follow-up): the pocket shares an edge with the
+	# plate's outer boundary — the coplanar side wall must NOT leave a roof
+	# skin, and the sideways inflation makes the notch open cleanly. Removed:
+	# x spans the full inflated width (interior), y is clipped by the plate
+	# edge at 30 so only EPS of the overhang lands inside.
+	var f9b := _sketch_rect("XY", Vector2(25, 20), Vector2(35, 30))
+	_root.finish_sketch()
+	if _root.extrude(f9b, Vector2(30, 25), 12.0, ExtrudeFeature.OP_CUT) == "":
+		return _fail("flush-edge cut refused")
+	await _idle()
+	vols = await _volumes()
+	var want_flush := want_cut \
+		- (10.0 + 2.0 * BodyBuilder.EPS_MM) * (10.0 + BodyBuilder.EPS_MM) * 10.0
+	if vols.size() != 1 or absf(float(vols[0]) - want_flush) > 5.0:
+		return _fail("flush-edge cut volume wrong: %s (want %f)"
+			% [str(vols), want_flush])
+
+	# Profile picking resolves to the LATEST coplanar sketch: a ray into the
+	# small rectangle must pick f9's region, not the plate's outer profile
+	# (the old first-sketch-wins scan is what cut whole plates away).
+	var hit: Dictionary = _root._profile_under_ray(
+		Vector3(15, 15, 50), Vector3(0, 0, -1))
+	if hit.is_empty() or String(hit["sketch_id"]) != f9:
+		return _fail("profile pick chose %s, want the latest sketch %s"
+			% [str(hit), f9])
+
+	# A cut that consumes the whole body removes it cleanly — no ghost body,
+	# no empty-mesh crash in the world rebuild.
+	var f10 := _sketch_rect("XY", Vector2(-5, -5), Vector2(45, 35))
+	_root.finish_sketch()
+	if _root.extrude(f10, Vector2(20, 16), 12.0, ExtrudeFeature.OP_CUT) == "":
+		return _fail("consuming cut refused")
+	await _idle()
+	vols = await _volumes()
+	if not vols.is_empty():
+		return _fail("consumed body should vanish, got %s" % str(vols))
+
 	print("M18_EXTRUDE_BOOLEANS OK: hole regions, ring extrusion, cut, "
-		+ "join, no-target cut, undo/redo, serialization")
+		+ "join, no-target cut, undo/redo, serialization, same-height cut, "
+		+ "latest-sketch profile pick, consuming cut")
 	return true

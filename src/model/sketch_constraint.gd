@@ -52,6 +52,11 @@ var expr: String = ""
 var expr_unit: int = CadParameter.UNIT_SCALAR
 ## Parked offset of the dimension label from its anchor, sketch mm.
 var label_offset := Vector2.ZERO
+## Dimension GROUP (M19 offset): same-group dimensional constraints share one
+## value — editing any of them re-drives them all, the overlay shows only the
+## first as the group's dimension, and deleting it deletes the group. "" =
+## ungrouped (the normal case).
+var group := ""
 
 
 static func make(t: Type, ops: Array[String], v := 0.0) -> SketchConstraint:
@@ -86,6 +91,7 @@ func duplicate_constraint() -> SketchConstraint:
 	c.expr = expr
 	c.expr_unit = expr_unit
 	c.label_offset = label_offset
+	c.group = group
 	return c
 
 
@@ -100,6 +106,8 @@ func to_dict() -> Dictionary:
 			d["expr_unit"] = expr_unit
 		if label_offset != Vector2.ZERO:
 			d["label_offset"] = [label_offset.x, label_offset.y]
+		if group != "":
+			d["group"] = group
 	return d
 
 
@@ -116,4 +124,5 @@ static func from_dict(d: Dictionary) -> SketchConstraint:
 	c.expr_unit = int(d.get("expr_unit", CadParameter.UNIT_SCALAR))
 	var lo: Array = d.get("label_offset", [0.0, 0.0])
 	c.label_offset = Vector2(float(lo[0]), float(lo[1]))
+	c.group = String(d.get("group", ""))
 	return c

@@ -43,10 +43,17 @@ static func draw(overlay: Control, view: SketchView, sk: Sketch,
 		analysis: Dictionary, selected: int,
 		unit: UnitConverter.Unit) -> Array:
 	var hits: Array = []
+	var groups_drawn := {}
 	for i in sk.constraints.size():
 		var c := sk.constraints[i]
 		if not c.is_dimensional():
 			continue
+		# One dimension per GROUP: an offset ring's per-edge gaps are one
+		# value, so only the first member shows (editing it drives them all).
+		if c.group != "":
+			if groups_drawn.has(c.group):
+				continue
+			groups_drawn[c.group] = true
 		var color := COLOR
 		if (analysis.get("conflicts", []) as Array).has(i):
 			color = COLOR_CONFLICT

@@ -57,8 +57,33 @@ func pointer_down(world: Vector2, _screen: Vector2, e: InputEventMouseButton) ->
 ##   removed piece (0..sweep).
 func _span_at(sk: Sketch, id: String, world: Vector2) -> Dictionary:
 	var e := sk.entity(id)
-	var cuts := SketchGeometry.entity_intersections_ex(sk, id)
-	cuts.append_array(_touch_cuts(sk, id))
+	# Cut priority: touch cuts (carry the endpoint id, so the weld tie in
+	# _apply fires), then TANGENCY cuts from tangent constraints, then plain
+	# intersections. A tangent line only GRAZES the curve, so the segment
+	# intersector finds zero, one or two phantom points there depending on
+	# which side of exact the solver settled — trim must not hinge on that
+	# coin flip (QA §M19.6 round 3: circle with tangent lines untrimmable).
+	# An intersection from the SAME entity as a nearby prior cut is that
+	# grazing pair and is dropped generously; unrelated cuts dedup only at
+	# touch tolerance.
+	var touch := _touch_cuts(sk, id)
+	var cuts := touch.duplicate()
+	for cut: Dictionary in _tangent_cuts(sk, id):
+		var dup := false
+		for t: Dictionary in touch:
+			if (t["pos"] as Vector2).distance_to(cut["pos"]) <= 0.5:
+				dup = true
+		if not dup:
+			cuts.append(cut)
+	for cut: Dictionary in SketchGeometry.entity_intersections_ex(sk, id):
+		var dup := false
+		for t: Dictionary in cuts:
+			var lim := 1.0 if String(t["other"]) == String(cut["other"]) \
+				else TOUCH_TOL
+			if (t["pos"] as Vector2).distance_to(cut["pos"]) <= lim:
+				dup = true
+		if not dup:
+			cuts.append(cut)
 	match e.kind():
 		"line":
 			var l := e as SketchLine
@@ -72,16 +97,20 @@ func _span_at(sk: Sketch, id: String, world: Vector2) -> Dictionary:
 			var t1 := 1.0
 			var src0 := ""
 			var src1 := ""
+			var w0 := ""
+			var w1 := ""
 			for cut: Dictionary in cuts:
 				var t := ((cut["pos"] as Vector2) - a).dot(b - a) / len2
 				if t > t0 and t < tc:
 					t0 = t
 					src0 = String(cut["other"])
+					w0 = String(cut.get("pid", ""))
 				if t < t1 and t > tc:
 					t1 = t
 					src1 = String(cut["other"])
+					w1 = String(cut.get("pid", ""))
 			return {"kind": "line", "t0": t0, "t1": t1,
-				"src0": src0, "src1": src1}
+				"src0": src0, "src1": src1, "w0": w0, "w1": w1}
 		"circle":
 			if cuts.size() < 2:
 				return {}
@@ -94,6 +123,8 @@ func _span_at(sk: Sketch, id: String, world: Vector2) -> Dictionary:
 			var a1 := 0.0
 			var csrc0 := ""
 			var csrc1 := ""
+			var cw0 := ""
+			var cw1 := ""
 			for cut: Dictionary in cuts:
 				var ang := ((cut["pos"] as Vector2) - c).angle()
 				var before := fposmod(ac - ang, TAU)   # cut ccw-before cursor
@@ -102,12 +133,14 @@ func _span_at(sk: Sketch, id: String, world: Vector2) -> Dictionary:
 					best_before = before
 					a0 = ang
 					csrc0 = String(cut["other"])
+					cw0 = String(cut.get("pid", ""))
 				if after < best_after:
 					best_after = after
 					a1 = ang
 					csrc1 = String(cut["other"])
+					cw1 = String(cut.get("pid", ""))
 			return {"kind": "circle", "a0": a0, "a1": a1,
-				"src0": csrc0, "src1": csrc1}
+				"src0": csrc0, "src1": csrc1, "w0": cw0, "w1": cw1}
 		"arc":
 			var arc := e as SketchArc
 			var c := sk.point(arc.center).pos
@@ -123,24 +156,30 @@ func _span_at(sk: Sketch, id: String, world: Vector2) -> Dictionary:
 			var r1: float = sweep
 			var asrc0 := ""
 			var asrc1 := ""
+			var aw0 := ""
+			var aw1 := ""
 			for cut: Dictionary in cuts:
 				var rp: float = rel_of.call(cut["pos"])
 				if sweep >= 0.0:
 					if rp > r0 and rp < rc:
 						r0 = rp
 						asrc0 = String(cut["other"])
+						aw0 = String(cut.get("pid", ""))
 					if rp < r1 and rp > rc:
 						r1 = rp
 						asrc1 = String(cut["other"])
+						aw1 = String(cut.get("pid", ""))
 				else:
 					if rp < r0 and rp > rc:
 						r0 = rp
 						asrc0 = String(cut["other"])
+						aw0 = String(cut.get("pid", ""))
 					if rp > r1 and rp < rc:
 						r1 = rp
 						asrc1 = String(cut["other"])
+						aw1 = String(cut.get("pid", ""))
 			return {"kind": "arc", "r0": r0, "r1": r1,
-				"src0": asrc0, "src1": asrc1}
+				"src0": asrc0, "src1": asrc1, "w0": aw0, "w1": aw1}
 	return {}
 
 
@@ -171,8 +210,89 @@ func _touch_cuts(sk: Sketch, id: String) -> Array:
 			var p := sk.point(pid)
 			if p != null and SketchGeometry.distance_to_entity(sk, e, p.pos) \
 					<= TOUCH_TOL:
-				out.append({"pos": p.pos, "other": other.id})
+				# `pid` rides along: a cut AT another entity's endpoint welds
+				# the kept piece to that point instead of leaving it merely
+				# point-on the cutter (see the tie in _apply).
+				out.append({"pos": p.pos, "other": other.id, "pid": pid})
 	return out
+
+
+## The tangency points of every TANGENT constraint on `id`, as cuts. Exact by
+## construction (foot of perpendicular / center line), so trim sees a tangent
+## contact even when the numeric intersection misses the graze entirely.
+func _tangent_cuts(sk: Sketch, id: String) -> Array:
+	var e := sk.entity(id)
+	if e == null:
+		return []
+	var out: Array = []
+	for c in sk.constraints:
+		if c.type != SketchConstraint.Type.TANGENT or not c.references(id):
+			continue
+		var other_id := String(c.operands[1]) if String(c.operands[0]) == id \
+			else String(c.operands[0])
+		var other := sk.entity(other_id)
+		if other == null or other.id == id:
+			continue
+		var pos: Variant = _tangency_between(sk, e, other)
+		if pos != null:
+			out.append({"pos": pos, "other": other_id})
+	return out
+
+
+## Tangency point ON `on` implied by tangency with `other`; null when it
+## falls outside `other`'s actual span (tangent to the extension only).
+func _tangency_between(sk: Sketch, on: SketchEntity, other: SketchEntity) -> Variant:
+	# The center of whichever side is curved.
+	if on is SketchLine and (other is SketchCircle or other is SketchArc):
+		var a: Vector2 = sk.point((on as SketchLine).p0).pos
+		var b: Vector2 = sk.point((on as SketchLine).p1).pos
+		var oc := _curve_center(sk, other)
+		var len := a.distance_to(b)
+		if len < 1e-9:
+			return null
+		var d := (b - a) / len
+		var t := (oc - a).dot(d)
+		if t < -TOUCH_TOL or t > len + TOUCH_TOL:
+			return null
+		return a + d * t
+	if not (on is SketchCircle or on is SketchArc):
+		return null
+	var cc := _curve_center(sk, on)
+	var r := _curve_radius(sk, on)
+	if other is SketchLine:
+		var a2: Vector2 = sk.point((other as SketchLine).p0).pos
+		var b2: Vector2 = sk.point((other as SketchLine).p1).pos
+		var len2 := a2.distance_to(b2)
+		if len2 < 1e-9:
+			return null
+		var d2 := (b2 - a2) / len2
+		var t2 := (cc - a2).dot(d2)
+		if t2 < -TOUCH_TOL or t2 > len2 + TOUCH_TOL:
+			return null
+		var foot := a2 + d2 * t2
+		var v := foot - cc
+		if v.length() < 1e-9:
+			return null
+		return cc + v.normalized() * r
+	if other is SketchCircle or other is SketchArc:
+		var v2 := _curve_center(sk, other) - cc
+		if v2.length() < 1e-9:
+			return null
+		return cc + v2.normalized() * r
+	return null
+
+
+func _curve_center(sk: Sketch, e: SketchEntity) -> Vector2:
+	if e is SketchCircle:
+		return sk.point((e as SketchCircle).center).pos
+	return sk.point((e as SketchArc).center).pos
+
+
+func _curve_radius(sk: Sketch, e: SketchEntity) -> float:
+	if e is SketchCircle:
+		return (e as SketchCircle).radius
+	var arc := e as SketchArc
+	return sk.point(arc.center).pos.distance_to(sk.point(arc.start).pos)
 
 
 func _apply(sk: Sketch, id: String, span: Dictionary) -> void:
@@ -181,10 +301,19 @@ func _apply(sk: Sketch, id: String, span: Dictionary) -> void:
 	app.stack.push_no_merge(batch)
 	var adds: Array = []
 	var cons: Array = []
+	var welds := {}   # existing point id welded to a new cut endpoint
 	# Tie a new cut endpoint onto the entity that cut it, so the joint stays a
 	# joint under later edits (dragging the cutter drags the trimmed end too).
-	var tie := func(pid: String, src: String) -> void:
-		if src != "" and sk.has(src):
+	# A cut made AT another entity's ENDPOINT (a touch cut) welds COINCIDENT
+	# to that point — the joint is a real corner, and a mere point-on left the
+	# kept piece free to slide along the cutter (QA §M19.6's tangent line
+	# detaching from its arc).
+	var tie := func(pid: String, src: String, weld: String) -> void:
+		if weld != "" and sk.point(weld) != null:
+			cons.append(SketchConstraint.make(
+				SketchConstraint.Type.COINCIDENT, [pid, weld]))
+			welds[weld] = true
+		elif src != "" and sk.has(src):
 			cons.append(SketchConstraint.make(
 				SketchConstraint.Type.POINT_ON, [pid, src]))
 	match String(span["kind"]):
@@ -200,14 +329,14 @@ func _apply(sk: Sketch, id: String, span: Dictionary) -> void:
 				var nl := SketchLine.make(l.p0, np.id)
 				nl.id = sk.next_id()
 				adds.append_array([np, nl])
-				tie.call(np.id, String(span["src0"]))
+				tie.call(np.id, String(span["src0"]), String(span.get("w0", "")))
 			if t1 < 1.0 - 1e-9:    # keep [t1, 1]
 				var np2 := SketchPoint.make(a.lerp(b, t1))
 				np2.id = sk.next_id()
 				var nl2 := SketchLine.make(np2.id, l.p1)
 				nl2.id = sk.next_id()
 				adds.append_array([np2, nl2])
-				tie.call(np2.id, String(span["src1"]))
+				tie.call(np2.id, String(span["src1"]), String(span.get("w1", "")))
 		"circle":
 			var ci := e as SketchCircle
 			var c := sk.point(ci.center).pos
@@ -224,8 +353,8 @@ func _apply(sk: Sketch, id: String, span: Dictionary) -> void:
 			var na := SketchArc.make(ci.center, sp.id, ep.id, true)
 			na.id = sk.next_id()
 			adds.append_array([sp, ep, na])
-			tie.call(sp.id, String(span["src1"]))
-			tie.call(ep.id, String(span["src0"]))
+			tie.call(sp.id, String(span["src1"]), String(span.get("w1", "")))
+			tie.call(ep.id, String(span["src0"]), String(span.get("w0", "")))
 		"arc":
 			var arc := e as SketchArc
 			var c := sk.point(arc.center).pos
@@ -242,7 +371,7 @@ func _apply(sk: Sketch, id: String, span: Dictionary) -> void:
 				var na2 := SketchArc.make(arc.center, arc.start, mp.id, sweep >= 0.0)
 				na2.id = sk.next_id()
 				adds.append_array([mp, na2])
-				tie.call(mp.id, String(span["src0"]))
+				tie.call(mp.id, String(span["src0"]), String(span.get("w0", "")))
 			if absf(r1) < absf(sweep) - 1e-9:   # keep r1..end
 				var mp3 := SketchPoint.make(c
 					+ Vector2(cos(base + r1), sin(base + r1)) * r)
@@ -250,13 +379,13 @@ func _apply(sk: Sketch, id: String, span: Dictionary) -> void:
 				var na3 := SketchArc.make(arc.center, mp3.id, arc.end, sweep >= 0.0)
 				na3.id = sk.next_id()
 				adds.append_array([mp3, na3])
-				tie.call(mp3.id, String(span["src1"]))
+				tie.call(mp3.id, String(span["src1"]), String(span.get("w1", "")))
 	if not adds.is_empty():
 		app.stack.push(CmdAddEntities.new(app.active_sketch_id, adds, cons))
 	# POINT_ONs that referenced the trimmed entity retarget onto whichever
 	# kept piece the point actually lies on — deleting the entity would prune
 	# them, silently unhooking joints made by EARLIER trims/extends.
-	_retarget_point_ons(sk, id, adds)
+	_retarget_point_ons(sk, id, adds, welds)
 	# Likewise the entity-level constraints (M19): a kept line piece is
 	# collinear with its source, so directional constraints still hold; a
 	# kept arc keeps its circle's radius, so radial ones do too.
@@ -312,14 +441,23 @@ func _retarget_entity_constraints(sk: Sketch, doomed_id: String,
 			continue
 		var handled := false
 		if c.type == T.TANGENT:
-			var best: SketchEntity = null
-			var best_err := 0.05   # mm — beyond this no piece truly touches
-			for piece: SketchEntity in line_pieces + curve_pieces:
-				var err := ConstraintSolver.error_of(sk, swap.call(c, piece.id))
-				if err < best_err:
-					best_err = err
-					best = piece
-			if best != null:
+			# Tangency depends only on the infinite line / the circle's
+			# center+radius, and every kept piece preserves those (collinear
+			# line pieces, same-circle arcs) — so the retarget is
+			# UNCONDITIONAL. The old best-residual-under-0.05mm test silently
+			# dropped the constraint whenever the sketch sat a hair off
+			# converged, which is how a trim "broke" tangency (QA §M19.6).
+			# Among several pieces, the one nearest the tangency point wins.
+			var pieces: Array = line_pieces + curve_pieces
+			if not pieces.is_empty():
+				var tan_at := _tangency_point(sk, c, doomed_id)
+				var best: SketchEntity = pieces[0]
+				var best_d := INF
+				for piece: SketchEntity in pieces:
+					var dd := SketchGeometry.distance_to_entity(sk, piece, tan_at)
+					if dd < best_d:
+						best_d = dd
+						best = piece
 				after.append(swap.call(c, best.id))
 				changed = true
 				handled = true
@@ -349,9 +487,64 @@ func _retarget_entity_constraints(sk: Sketch, doomed_id: String,
 			sk.constraints, after))
 
 
+## Where does a TANGENT constraint touch? The point on the doomed entity
+## nearest the OTHER operand — exact for line-circle tangency, close enough
+## for curve-curve — used to pick which kept piece inherits the constraint.
+func _tangency_point(sk: Sketch, c: SketchConstraint, doomed_id: String) -> Vector2:
+	var other_id := String(c.operands[1]) if String(c.operands[0]) == doomed_id \
+		else String(c.operands[0])
+	var other := sk.entity(other_id)
+	var doomed := sk.entity(doomed_id)
+	if other == null or doomed == null:
+		return Vector2.ZERO
+	# A representative point of the other operand, projected onto the doomed
+	# curve: for line-circle this lands on the tangency.
+	var probe := Vector2.ZERO
+	if other is SketchLine:
+		var l := other as SketchLine
+		probe = (sk.point(l.p0).pos + sk.point(l.p1).pos) * 0.5
+	elif other is SketchCircle:
+		probe = sk.point((other as SketchCircle).center).pos
+	elif other is SketchArc:
+		probe = sk.point((other as SketchArc).center).pos
+	if doomed is SketchCircle:
+		var cc: Vector2 = sk.point((doomed as SketchCircle).center).pos
+		var v := probe - cc
+		if other is SketchLine:
+			# Project the circle center onto the line: THAT direction is the
+			# tangency direction; midpoint projection above is not.
+			var l2 := other as SketchLine
+			var a: Vector2 = sk.point(l2.p0).pos
+			var b: Vector2 = sk.point(l2.p1).pos
+			var d := (b - a).normalized()
+			var foot := a + d * (cc - a).dot(d)
+			v = foot - cc
+		if v.length() > 1e-9:
+			return cc + v.normalized() * (doomed as SketchCircle).radius
+		return cc
+	if doomed is SketchArc:
+		var cc2: Vector2 = sk.point((doomed as SketchArc).center).pos
+		var r := cc2.distance_to(sk.point((doomed as SketchArc).start).pos)
+		var v2 := probe - cc2
+		if v2.length() > 1e-9:
+			return cc2 + v2.normalized() * r
+		return cc2
+	if doomed is SketchLine:
+		var dl := doomed as SketchLine
+		var a2: Vector2 = sk.point(dl.p0).pos
+		var b2: Vector2 = sk.point(dl.p1).pos
+		var d2 := (b2 - a2).normalized()
+		return a2 + d2 * (probe - a2).dot(d2)
+	return probe
+
+
 ## Rewrite POINT_ON [p, doomed] to [p, kept piece under p] where such a piece
 ## exists (constraints that cannot be retargeted die with the entity).
-func _retarget_point_ons(sk: Sketch, doomed_id: String, adds: Array) -> void:
+## `welds` — points this trim just welded COINCIDENT to a kept piece's
+## endpoint: their POINT_ON is implied by the weld (an endpoint is on its own
+## curve by construction), so retargeting it would only mint a redundant row.
+func _retarget_point_ons(sk: Sketch, doomed_id: String, adds: Array,
+		welds: Dictionary = {}) -> void:
 	var pieces: Array = []
 	for e in adds:
 		if (e as SketchEntity).kind() != "point":
@@ -364,6 +557,9 @@ func _retarget_point_ons(sk: Sketch, doomed_id: String, adds: Array) -> void:
 		if c.type != SketchConstraint.Type.POINT_ON \
 				or c.operands[1] != doomed_id:
 			after.append(c)
+			continue
+		if welds.has(String(c.operands[0])):
+			after.append(c)   # implied by the new weld; the delete prunes it
 			continue
 		var p := sk.point(c.operands[0])
 		var new_target := ""

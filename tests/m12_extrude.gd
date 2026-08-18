@@ -89,10 +89,11 @@ func _run() -> bool:
 	var vol := ExtrudeFeature.mesh_volume(mesh)
 	if absf(vol - 1200.0 * 25.4) > 30.0:
 		return _fail("extrude volume wrong: %f vs %f" % [vol, 1200.0 * 25.4])
-	# World shows a solid.
+	# World shows a solid. Keyed on the is_body meta: sketch region FILLS are
+	# ArrayMeshes too, so "any ArrayMesh" no longer means "a solid".
 	var solids := 0
 	for c in _root.world._sketch_root.get_children():
-		if not c.is_queued_for_deletion() and (c as MeshInstance3D).mesh is ArrayMesh:
+		if not c.is_queued_for_deletion() and (c as Node).has_meta("is_body"):
 			solids += 1
 	if solids < 1:
 		return _fail("no solid in the world")
@@ -121,7 +122,7 @@ func _run() -> bool:
 	_root.stack.push_no_merge(CmdSetMarker.new(_root.doc.timeline_marker, 1))
 	var still := 0
 	for c in _root.world._sketch_root.get_children():
-		if not c.is_queued_for_deletion() and (c as MeshInstance3D).mesh is ArrayMesh:
+		if not c.is_queued_for_deletion() and (c as Node).has_meta("is_body"):
 			still += 1
 	if still != 0:
 		return _fail("rolled-back solid still visible")

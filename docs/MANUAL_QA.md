@@ -1256,78 +1256,301 @@ Fix log:
 
 Status: PENDING sign-off
 
-- [ ] 1. Sketch on XY: rectangle, then a circle inside it. Finish. Extrude,
+- [X] 1. Sketch on XY: rectangle, then a circle inside it. Finish. Extrude,
    hover/click the RING between rect and circle. **Expect:** the extrude
    lands as a plate with a real hole — orbit it and look through the hole.
-- [ ] 2. Same sketch: extrude again, this time clicking INSIDE the circle.
+    Does work as described, but:
+    When hovering over a sketch in 2d / 3d mode, it doesn't have any indication that we are able to perform actions on it (like extruding)
+    When a sketch is 'closed' it should have a filled in area like in fusion
+    Fixed — see fix log **1**. Re-test.
+- [X] 2. Same sketch: extrude again, this time clicking INSIDE the circle.
    **Expect:** a solid disc body appears in the hole (it is its own
    region, not part of the ring).
-- [ ] 3. New sketch on the plate's plane, small rectangle over the solid.
+- [X] 3. New sketch on the plate's plane, small rectangle over the solid.
    Extrude → in the dialog pick **Cut**, distance deeper than the plate.
    **Expect:** a rectangular pocket is carved out of the plate; orbit to
    confirm the cut walls are closed (no see-through faces).
-- [ ] 4. Another sketch, a rectangle overlapping the plate's footprint.
+    Unable to select rectangle, or it's not working correctly. extrude of any size is making the original extruded 'ring' disapear
+    Fixed — see fix log **2**. Re-test.
+    Update: Still issue with left over faces. see prompt image
+    Fixed — see fix log **7** (lateral skin). Re-test.
+- [X] 4. Another sketch, a rectangle overlapping the plate's footprint.
    Extrude → **Join**, same height. **Expect:** plate and boss become ONE
    body (click one — both highlight together as a single selection).
-- [ ] 5. Extrude a far-away rectangle as **New Body**. **Expect:** it stays
+- [X] 5. Extrude a far-away rectangle as **New Body**. **Expect:** it stays
    a separate body; the browser lists it on its own; clicking it does not
    highlight the plate.
-- [ ] 6. Ctrl+Z through the above one step at a time. **Expect:** each
+- [X] 6. Ctrl+Z through the above one step at a time. **Expect:** each
    boolean unwinds cleanly — the pocket refills, the boss detaches — with
    no ghost geometry left behind.
-- [ ] 7. Save, reopen. **Expect:** holes, cuts, and joins all rebuild
+    ctrl + z made some geometry disapear, ctrl + shift + z did not bring it all back. 
+    even though it's still set as visible in the outliner. there is a maybe related error
+    󰣇  [tones] nixos:~/godot/echo-cad/  main   godot --path ./
+    Godot Engine v4.7.1.stable.official.a13da4feb - https://godotengine.org
+    OpenGL API 3.3.0 NVIDIA 595.71.05 - Compatibility - Using Device: NVIDIA - NVIDIA GeForce RTX 4080
+
+    [godot-geometry] extension initialized; GeometryOps registered.
+    [godot-thorvg] extension initialized; TVGCanvas registered.
+    ERROR: Index p_surface = 0 is out of bounds (surface_override_materials.size() = 0).
+       at: set_surface_override_material (scene/3d/mesh_instance_3d.cpp:376)
+       GDScript backtrace (most recent call first):
+           [0] _apply_bodies (res://src/app/world_3d.gd:665)
+           [1] _rebuild_bodies (res://src/app/world_3d.gd:630)
+           [2] build (res://src/features/body_builder.gd:91)
+    Fixed — see fix log **3**. Re-test.
+    󰣇  [tones] nixos:~/godot/echo-cad/  main   godot --path ./
+    Update: Still has errors, se prompt
+    Fixed — see fix log **6** (null bake crash + z-fighting ghost). Re-test.
+- [X] 7. Save, reopen. **Expect:** holes, cuts, and joins all rebuild
    identically (operations persist in the file).
-- [ ] 8. A **Cut** whose profile touches no body. **Expect:** nothing is
+- [X] 8. A **Cut** whose profile touches no body. **Expect:** nothing is
    removed; the status bar explains what Cut does.
+    Cut makes certain geometry fail, like if same height, it will leave cap. maybe z fighting? unsure. 
+    Also causes model to disapear until saved / reopened Fixed — see fix log **4** (cap skin) and **3** 
+    (disappearing). Re-test. 
+    Update: Error on loading
+      󰣇  [tones] nixos:~/godot/echo-cad/  main   godot --path ./
+      Godot Engine v4.7.1.stable.official.a13da4feb - https://godotengine.org
+      OpenGL API 3.3.0 NVIDIA 595.71.05 - Compatibility - Using Device: NVIDIA - NVIDIA GeForce RTX 4080
+
+      [godot-geometry] extension initialized; GeometryOps registered.
+      [godot-thorvg] extension initialized; TVGCanvas registered.
+      SCRIPT ERROR: Cannot call method 'get_surface_count' on a null value.
+                at: build (res://src/features/body_builder.gd:89)
+                GDScript backtrace (most recent call first):
+                    [0] build (res://src/features/body_builder.gd:89)
+    Fixed — see fix log **6**. Re-test.
+
+Additional:
+  3d meshes seem to spawn with different lighting . some appear as if lit from top, some appear as if lit from botom or back. it's not cohesive. also don't see outlines in the models edges making it somewhat hard to tell exactly what were' looking at. that is a regression
+  Fixed — see fix log **5**. Re-test.
+  update:
+   Lighting appears to be coming from down to top rather than top to down
+
+Fix log:
+- **1 (extrude affordance)** — closed sketch regions now render as
+  translucent filled faces in BOTH views, Fusion-style: `SketchView._draw`
+  fills every closed region under the geometry lines (2D), and `CadWorld.
+  rebuild_sketches` adds a fill mesh per sketch, sunk 0.02 mm below the
+  plane so it never z-fights lines or body caps (3D). While "Extrude" is
+  waiting for a profile click, mouse motion pre-highlights the region the
+  click would take (`CadWorld.set_profile_hover`, amber, drawn on top) —
+  hovering now says "this is extrudable" before you commit. The fill
+  carries `sketch_fill_for` meta, NOT `feature_id`, so it is never
+  body-pickable; the browser eye tick hides fill and lines together.
+- **2 (wrong profile picked)** — `AppRoot._profile_under_ray` scanned
+  sketches in TIMELINE order and returned the first containing the hit, so
+  with two sketches on the same plane a click inside the new rectangle
+  resolved to the PLATE's outer profile — the "cut" then carved the plate's
+  own footprint and the whole ring vanished. It now takes the NEAREST ray
+  hit, and on a tie (coplanar sketches) the LATEST sketch wins. Regression
+  test in `m18_extrude_booleans`.
+- **3 (bodies vanishing; surface-override error)** — two halves. (a) The
+  CSG combiner's shape rebuilds via a deferred call after entering the
+  tree; depending on when the rebuild was kicked off (an undo, a coalesced
+  rebuild) one frame was not always enough and `bake_static_mesh()` came
+  back with ZERO surfaces — `BodyBuilder.build` now re-bakes across up to 8
+  frames before believing "empty". (b) A genuinely empty bake (a cut that
+  consumes the body) is legal: the builder drops surfaceless meshes from
+  the body list and `CadWorld._apply_bodies` guards against them, which is
+  exactly the `set_surface_override_material` index-out-of-bounds error in
+  the report.
+- **4 (same-height cut leaves a cap)** — only HOLE prisms were extended
+  past the caps; a cut prism exactly as tall as its target left coplanar
+  faces for the CSG classifier to z-fight over, leaving a zero-thickness
+  cap skin. Cut prisms now overhang both caps by the same `EPS_MM` (0.05 mm)
+  the holes use. Regression test: same-height pocket volume is exact.
+- **5 (lighting/outlines regression on boolean bodies)** — single-part
+  bodies mesh through `ExtrudeFeature.build_mesh` (flat normals + an
+  edge-line overlay surface); CSG-baked boolean bodies kept whatever
+  normals the classifier left behind (smoothed across seams, occasionally
+  inward) and had NO edge overlay — hence the incoherent lighting and the
+  missing silhouettes. `BodyBuilder._finish_csg_mesh` now rebuilds every
+  bake into the same shape: outward winding enforced by signed volume,
+  flat per-face normals, and an edge surface at sharp dihedrals (same 15°
+  threshold as plain extrudes) and open boundaries.
+- **6 (round 2: null bake crash, stuck builds, z-fighting ghost)** —
+  `bake_static_mesh()` can also return NULL (shape not yet built — e.g. the
+  first build after a document load), and the unguarded call crashed the
+  `BodyBuilder.build` coroutine mid-flight. That crash left
+  `_bodies_building` stuck true, so NO body rebuild ever ran again — and the
+  scratch CSG combiner it abandoned kept rendering its raw brushes over the
+  real body mesh, which is exactly the z-fighting striped ghost in the
+  §M18.6 screenshot. The retry loop now guards null (a null that survives
+  the retries counts as empty), and scratch combiners are `visible = false`
+  from birth — they exist only to be baked and must never draw.
+- **7 (round 2: flush cut leaves a roof/wall skin)** — the EPS overhang in
+  fix **4** only covered the caps; a cut sharing an EDGE with the target's
+  outer profile puts a cut side wall exactly ON a body wall, and that
+  lateral coplanar pair left the skin roofing the notch in the §M18.3
+  screenshot. Cut profiles now also inflate EPS_MM (0.05 mm) SIDEWAYS
+  (`Geometry2D.offset_polygon`, miter), with kept islands (holes in the cut
+  region) shrunk by the same hair. Cuts therefore over-cut by 0.05 mm at
+  their side walls — invisible, and the price of clean engine-CSG booleans.
+  Regression tests: flush-edge notch volume exact; interior cut volumes in
+  the m18/RPC tests account for the inflation.
 
 ## §M19 — Modify-tool constraint upkeep
 
 Status: PENDING sign-off
 
-- [ ] 1. Rectangle, then Offset (O) and a single click on ONE edge.
+- [X] 1. Rectangle, then Offset (O) and a single click on ONE edge.
    **Expect:** the whole rectangle offsets as a ring, not just that edge;
    the preview follows the cursor to either side; a distance dimension
    appears on the offset.
-- [ ] 2. Double-click that gap dimension and type a new value. **Expect:**
+- [X] 2. Double-click that gap dimension and type a new value. **Expect:**
    the offset copy re-drives to the new gap, staying parallel edge-for-edge.
-- [ ] 3. Drag a corner of the SOURCE rectangle. **Expect:** the offset copy
+    Only that one edge changes size, not all
+    Fixed — see fix log **1**. Re-test.
+- [X] 3. Drag a corner of the SOURCE rectangle. **Expect:** the offset copy
    follows (parallel + gap hold); nothing explodes.
-- [ ] 4. Draw a horizontal line (H badge), cross it with two verticals, Trim
+    Only source rectatngle moves, offset shape does not
+    Fixed — see fix log **1** and **2**. Re-test.
+- [X] 4. Draw a horizontal line (H badge), cross it with two verticals, Trim
    the middle span. **Expect:** BOTH kept pieces still carry the H badge and
    stay horizontal when dragged.
-- [ ] 5. Circle with a radius dimension, crossed by a line; trim half the
+- [X] 5. Circle with a radius dimension, crossed by a line; trim half the
    circle away. **Expect:** the kept arc still carries the radius dimension,
    and editing it resizes the arc.
-- [ ] 6. Tangent line on a circle; trim the circle's far side. **Expect:**
-   the tangency survives on the kept arc (drag the line — the arc follows).
-- [ ] 7. Center Rectangle: **Expect:** a construction diagonal + center point
-   appear; drag a corner — the center point stays centered; the Line tool
+- [!] 6. Tangent line on a circle; trim the circle's far side. **Expect:** the tangency survives on the kept arc (drag the line — the arc follows).
+    Tangent constraint breaks, badges turn orange, and line is able to move independently of arc. 
+    also to test this i had to draw two lines, one tangent, and another also tangent on another quadrant, or intercepting circle, so there could be geometry to trim arc. just an observation
+    Fixed — see fix log **3** (retarget) and **4** (undo-batch corruption, the
+    likely source of the orange badges and the decoupled line). Re-test.
+    Update round 2 (screenshot with two tangent lines): orange badges +
+    detachable line reproduced and root-caused — see fix log **5** (false
+    "redundant" at exact tangency), **6** (trim tie let the joint slide),
+    **7** (touch cuts shadowed by intersection cuts). Re-test.
+    Update round 3: unable to trim circle with tangent constraints when the
+    tangent lines' endpoints sit OFF the circle. Fixed — see fix log **8**.
+    Re-test.
+    Update round 4: a tangent ARC (line -> Tangent Arc -> line) grew in size
+    on EVERY dimension edit — adding a dimension, changing a `width`-driven
+    one, or adding lines each nudged the arc bigger, until it visibly crossed
+    its own tangent line. Fixed — see fix log **9**. Re-test.
+    Update round 5 (screenshots: width/2 -> width on a separate line): editing
+    a dimension on an UNRELATED line still resized the arc. Fixed — see fix
+    log **10**. Re-test.
+    Still fails, see prompt for image
+- [X] 7. Center Rectangle: **Expect:** a construction diagonal + center point appear; drag a corner — the center point stays centered; the Line tool
    snaps to the center point.
-- [ ] 8. Each of the above is ONE undo step (offset+constraints, trim+
+- [X] 8. Each of the above is ONE undo step (offset+constraints, trim+
    retargets, center rect+scaffolding).
+    Sometimes when dragging a corner / line it seems that it requires multiple undo steps to fully undo
+    Fixed — see fix log **4**. Re-test.
+
+Fix log:
+- **1 (offset ring under-constrained)** — the offset used to carry PARALLEL
+  per line plus ONE point-to-line gap on the first edge: three of the four
+  edges had no gap, so driving the dimension moved one edge (§M19.2) and a
+  source drag left the copy behind (§M19.3). Every offset line now carries a
+  LINE_DIST to its source (the solver's parallel-gap constraint — parallelism
+  and gap in one), and all of them share a new dimension GROUP
+  (`SketchConstraint.group`, serialized): the overlay shows one dimension for
+  the group, editing it re-drives every member, deleting it deletes the
+  group. The ring is fully determined against its source, Fusion-style.
+- **2 (drag never recruited coupled geometry)** — `DragFilter.plan` only grew
+  its column set when the dragged point had NO freedom at all; a drag whose
+  request projected to (nearly) zero — the rails perpendicular to the cursor
+  — just stuck, which is why the source could not tow its offset, and why
+  m06's tangent-arc drag had quietly done NOTHING since M17 (its test passed
+  vacuously). Two changes: `_expand` also hops through constraints (an offset
+  ring shares no entity with its source, so the entity hop never reached it),
+  and a near-zero projected motion now recruits geometry reachable through
+  COUPLING constraints (2+ operands) and retries. Single-operand shape
+  constraints (H/V) never recruit — a purely vertical drag on a Horizontal
+  line still sticks, per the locked M17 rule.
+- **3 (trim dropped tangency)** — TANGENT retargeting kept the constraint
+  only if some kept piece's live residual was under 0.05 mm; a sketch a hair
+  off converged silently dropped it. Tangency depends only on the infinite
+  line / the circle's center+radius, and every kept piece preserves those
+  (collinear line pieces, same-circle arcs) — so the retarget is now
+  UNCONDITIONAL, aimed at the piece nearest the tangency point.
+- **4 (drag undo-batch lifecycle)** — two leaks. An Esc or tool switch
+  mid-drag left the gesture's CmdMergeBatch OPEN on the stack, silently
+  absorbing every later command into one undo step — after which Ctrl+Z
+  undid mixed blobs of edits and re-solves (the "multiple undos to unwind",
+  and a plausible source of §M19.6's broken-looking constraints). And a drag
+  that never moved anything sealed an EMPTY batch: a phantom undo step that
+  eats a Ctrl+Z doing nothing. Batches now seal on EVERY exit path
+  (pointer-up, cancel, deactivate) and a sealed no-op batch is dropped from
+  the stack (`CommandStack.drop_if_noop`).
+- **5 (round 2: amber badges at exact tangency)** — the screenshot's orange
+  badges were `DofAnalyzer` false alarms: at an EXACT tangency the tangent
+  and point-on gradients align, and the numeric rank test cannot tell
+  "dependent everywhere" (a real duplicate) from "degenerate right here" (a
+  singular configuration). Flagged constraints are now CONFIRMED at a
+  jittered state — golden-angle per-point directions, since a shared
+  direction is a rigid translation every constraint is invariant under —
+  and only constraints still dependent there stay flagged. The tangency
+  reads green; true duplicates still read amber.
+- **6 (round 2: joint could slide)** — a trim cut made AT another entity's
+  ENDPOINT (touch cut) tied the kept piece to the cutter with POINT_ON,
+  which left the joint free to SLIDE along the cutter — the tangent line
+  "moving independently". Touch cuts now weld COINCIDENT to the touching
+  endpoint (the joint is a real corner), and a POINT_ON made redundant by
+  the new weld is pruned instead of retargeted. m10's T-joint test updated
+  to the weld semantics.
+- **7 (round 2: welds never fired)** — the same junction is often found
+  BOTH as a touch cut (with the endpoint id) and as a segment intersection
+  (without); the intersection version won the span scan, so the weld in fix
+  **6** never triggered. Touch cuts now take precedence and coinciding
+  intersection cuts are dropped.
+- **8 (round 3: tangent contacts are not "intersections")** — a tangent line
+  only GRAZES the curve, so the segment intersector finds zero, one or two
+  phantom points there depending on which side of exact the solver settled;
+  with both contacts tangential the circle often had under two cuts and trim
+  refused entirely. Tangency points implied by TANGENT constraints are now
+  first-class CUTS (`_tangent_cuts`), computed exactly (foot of
+  perpendicular / center line) and bounded to the partner's actual span;
+  grazing phantom intersections from the same entity are deduped against
+  them. The trimmed-off span ties its new endpoints POINT_ON the tangent
+  lines and both tangents retarget onto the kept arc.
+- **9 (round 4: arc radius ratchet)** — the relax solver finds *a*
+  satisfying state, not the NEAREST one, and on an under-constrained
+  tangent-arc chain the equilibrium slid a little outward on every re-solve:
+  ten dimension edits took a 15.4 mm arc to 17.3 mm, and mid-ratchet states
+  are what put the arc visibly across its own tangent line. The solve now
+  takes a one-shot MINIMAL-CHANGE pass at first convergence
+  (`_restore_arc_radii`): every arc whose radius no dimension drives gets
+  its centre pulled back onto the rim chord's bisector at its ENTRY radius,
+  then the rounds continue so the constraints can object — and if they
+  cannot re-converge, the pre-restore state (which had converged) is what
+  applies. Same ten edits now hold the radius flat. Regression test in m19.
+- **10 (round 5: unrelated edits leak into the chain)** — every dimension
+  edit re-solved the WHOLE sketch, and the relax solver nudges everything it
+  visits by residual dust; on a stiff under-constrained tangent-arc chain
+  (whose radius is geometrically a function of where its weld points sit)
+  those nudges moved the chain sideways and the radius followed — an arc
+  resizing because a line it shares nothing with changed length. Solves
+  after dimension add/edit/delete/driven-toggle and parameter changes are
+  now SCOPED: geometry outside the edited constraint's constraint-connected
+  component is pinned (`AppRoot._pins_outside_components`), so unrelated
+  geometry cannot move at all — the chain now stays bit-for-bit identical
+  under unrelated edits. Regression test in m19.
 
 ## §M20 — Marquee selection + Parameters dialog
 
-Status: PENDING sign-off
+Status: Signed off 2026-08-17
 
-- [ ] 1. Sketch with several entities. Drag LEFT-TO-RIGHT on empty space
+- [x] 1. Sketch with several entities. Drag LEFT-TO-RIGHT on empty space
    around some of them. **Expect:** a blue band with a solid edge; on
    release only entities ENTIRELY inside are selected (one poking out is
    not).
-- [ ] 2. Drag RIGHT-TO-LEFT across the same geometry. **Expect:** a green
+- [x] 2. Drag RIGHT-TO-LEFT across the same geometry. **Expect:** a green
    dashed band; everything the band merely TOUCHES selects.
-- [ ] 3. Ctrl+band adds to an existing selection; plain click on empty
+- [x] 3. Ctrl+band adds to an existing selection; plain click on empty
    space still deselects everything; Esc mid-band cancels it.
-- [ ] 4. Band over a dimension label / constraint badge area. **Expect:**
+- [x] 4. Band over a dimension label / constraint badge area. **Expect:**
    bands select geometry only — labels and badges are not kidnapped.
-- [ ] 5. Toolbar "Parameters": dialog lists name / expression / value.
+- [x] 5. Toolbar "Parameters": dialog lists name / expression / value.
    Add `width = 2` (in). **Expect:** it appears with value 2 in.
-- [ ] 6. Dimension a line, double-click it, type `width`. **Expect:** the
+- [x] 6. Dimension a line, double-click it, type `width`. **Expect:** the
    line drives to 2 in. Change width to 3 in the dialog — the line follows.
-- [ ] 7. Try to delete `width` while the dimension uses it. **Expect:**
+- [x] 7. Try to delete `width` while the dimension uses it. **Expect:**
    refused with a message naming the user. Delete the dimension, then the
    parameter deletes fine.
-- [ ] 8. Type a bad expression (`width +`) in the dialog. **Expect:** the
+- [x] 8. Type a bad expression (`width +`) in the dialog. **Expect:** the
    error shows inline; nothing is applied.
 
 ## §M21 — DXF export

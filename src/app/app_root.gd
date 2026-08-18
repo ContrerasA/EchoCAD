@@ -279,7 +279,7 @@ func add_constraint(c: SketchConstraint) -> void:
 			stack.push(CmdSetConstraints.new(active_sketch_id,
 				sk.constraints, driven_after))
 			demoted = SketchConstraint.Type.keys()[c.type]
-	solve_followers_prefer_points()
+	solve_followers_prefer_points(_pins_outside_components(sk, [c]))
 	batch.seal()
 	if demoted != "":
 		_status_hint.text = ("%s is redundant here — kept as a DRIVEN "
@@ -292,11 +292,24 @@ func delete_constraint(index: int) -> void:
 	if sk == null or index < 0 or index >= sk.constraints.size():
 		return
 	var after: Array = sk.constraints.duplicate()
-	after.remove_at(index)
+	# Component pins from the constraint being deleted, taken BEFORE the
+	# delete rewires anything.
+	var del_pins := _pins_outside_components(sk, [sk.constraints[index]])
+	# A grouped dimension deletes with its whole group — the hidden members
+	# would otherwise keep driving the geometry with no visible dimension.
+	var grp := (sk.constraints[index] as SketchConstraint).group
+	if grp != "":
+		var keep: Array = []
+		for c: SketchConstraint in after:
+			if c.group != grp:
+				keep.append(c)
+		after = keep
+	else:
+		after.remove_at(index)
 	var batch := CmdMergeBatch.new("Delete Constraint", [])
 	stack.push_no_merge(batch)
 	stack.push(CmdSetConstraints.new(active_sketch_id, sk.constraints, after))
-	solve_followers()
+	solve_followers(del_pins)
 	batch.seal()
 	selected_constraint = -1
 
@@ -333,8 +346,20 @@ func set_dimension_value(index: int, text: String) -> String:
 		edited.expr_unit = unit_space
 	var after: Array = sk.constraints.duplicate()
 	after[index] = edited
+	# Grouped dimensions (an offset's per-edge gaps) share one value: editing
+	# the shown one re-drives every member, or the ring would tear (§M19.2).
+	if c.group != "":
+		for i in after.size():
+			var oc: SketchConstraint = after[i]
+			if i == index or oc.group != c.group:
+				continue
+			var mate := oc.duplicate_constraint()
+			mate.value = edited.value
+			mate.expr = edited.expr
+			mate.expr_unit = edited.expr_unit
+			after[i] = mate
 	stack.push(CmdSetConstraints.new(active_sketch_id, sk.constraints, after))
-	solve_followers()
+	solve_followers(_pins_outside_components(sk, [c]))
 	return ""
 
 
@@ -349,7 +374,7 @@ func set_dimension_driven(index: int, driven: bool) -> void:
 	var batch := CmdMergeBatch.new("Driven", [])
 	stack.push_no_merge(batch)
 	stack.push(CmdSetConstraints.new(active_sketch_id, sk.constraints, after))
-	solve_followers()
+	solve_followers(_pins_outside_components(sk, [edited]))
 	batch.seal()
 
 
@@ -422,6 +447,7 @@ func set_parameters(new_params: Array) -> void:
 			continue
 		var sk := (f as SketchFeature).sketch
 		var changed := false
+		var changed_cons: Array = []
 		var after: Array = sk.constraints.duplicate()
 		for i in after.size():
 			var c: SketchConstraint = after[i]
@@ -433,12 +459,16 @@ func set_parameters(new_params: Array) -> void:
 				edited.value = float(r["value"])
 				after[i] = edited
 				changed = true
+				changed_cons.append(edited)
 		if changed:
 			stack.push(CmdSetConstraints.new(f.id, sk.constraints, after))
+			# Solve scoped to the components the changed dimensions touch —
+			# a parameter edit must not disturb unrelated geometry.
+			var pins := _pins_outside_components(sk, changed_cons)
 			if f.id == active_sketch_id:
-				solve_followers()
+				solve_followers(pins)
 			else:
-				var res := ConstraintSolver.solve(sk)
+				var res := ConstraintSolver.solve(sk, pins)
 				if not (res["points"] as Dictionary).is_empty():
 					stack.push(CmdMovePoints.new(f.id, res["points"]))
 				if not (res["radii"] as Dictionary).is_empty():
@@ -467,6 +497,55 @@ var _snap_exclude: Array = []
 func rebuild_snap_index(exclude = []) -> void:
 	_snap_exclude = exclude if exclude is Array else Array(exclude.keys())
 	snap.build_index(active_sketch(), _snap_exclude)
+
+
+## Point ids OUTSIDE the constraint-connected component(s) of `cons` — the
+## solve after editing a dimension may only move geometry actually coupled to
+## it. The relax solver nudges everything it visits by residual dust, and on
+## stiff tangent-arc chains those nudges accumulated into visible drift (an
+## arc resizing because an UNRELATED line's dimension changed — QA §M19).
+func _pins_outside_components(sk: Sketch, cons: Array) -> Array:
+	var parent := {}
+	var find := func(x: String) -> String:
+		var r := x
+		while parent.get(r, r) != r:
+			r = parent[r]
+		return r
+	var union := func(a: String, b: String) -> void:
+		var ra: String = find.call(a)
+		var rb: String = find.call(b)
+		if ra != rb:
+			parent[rb] = ra
+	var ent_pts := func(id: String) -> Array:
+		var e := sk.entity(id)
+		if e == null:
+			return []
+		if e.kind() == "point":
+			return [e.id]
+		return e.point_refs()
+	for e in sk.entities():
+		if e.kind() == "point":
+			parent[e.id] = e.id
+	for e in sk.entities():
+		var pts: Array = e.point_refs()
+		for i in range(1, pts.size()):
+			union.call(pts[0], pts[i])
+	for cc in sk.constraints:
+		var all: Array = []
+		for op in cc.operands:
+			all.append_array(ent_pts.call(String(op)))
+		for i in range(1, all.size()):
+			union.call(all[0], all[i])
+	var seed_roots := {}
+	for c: SketchConstraint in cons:
+		for op in c.operands:
+			for pid: String in ent_pts.call(String(op)):
+				seed_roots[find.call(pid)] = true
+	var pins: Array = []
+	for e in sk.entities():
+		if e.kind() == "point" and not seed_roots.has(find.call(e.id)):
+			pins.append(e.id)
+	return pins
 
 
 ## Re-solve the active sketch with `pinned` point ids held fixed, pushing
@@ -949,6 +1028,7 @@ func set_sketch_shown(fid: String, shown: bool) -> void:
 func _on_create_sketch() -> void:
 	picking_plane = true
 	picking_profile = false
+	world.clear_profile_hover()
 	# Planes stay out of sight until there is a reason to aim at one.
 	world.set_planes_visible(true)
 	_refresh_ui()
@@ -980,9 +1060,15 @@ func extrude(sketch_id: String, at: Vector2, dist: float,
 	return f.id
 
 
-## Ray -> (sketch feature, uv on its plane) for the topmost live sketch
-## whose profile contains the hit. {} when none.
+## Ray -> (sketch feature, uv on its plane) for the sketch whose profile the
+## ray hits NEAREST; a tie (coplanar sketches) goes to the LATEST sketch.
+## {} when none. The old timeline-order scan returned the FIRST sketch
+## containing the hit, so clicking a fresh profile drawn over an older sketch
+## silently picked the older sketch's region — QA §M18.3's "cut" that erased
+## the whole plate was cutting the plate's own outer profile.
 func _profile_under_ray(origin: Vector3, dir: Vector3) -> Dictionary:
+	var best := {}
+	var best_t := INF
 	for f in doc.live_features():
 		if not (f is SketchFeature):
 			continue
@@ -993,13 +1079,15 @@ func _profile_under_ray(origin: Vector3, dir: Vector3) -> Dictionary:
 		if absf(denom) < 1e-9:
 			continue
 		var t := -origin.dot(n) / denom
-		if t <= 0.0:
+		if t <= 0.0 or t > best_t + 1e-6:
 			continue
 		var hit := origin + dir * t
 		var uv := Vector2(hit.dot(xf.basis.x), hit.dot(xf.basis.y))
-		if not ProfileFinder.profile_at(sf.sketch, uv).is_empty():
-			return {"sketch_id": sf.id, "at": uv}
-	return {}
+		if ProfileFinder.profile_at(sf.sketch, uv).is_empty():
+			continue
+		best = {"sketch_id": sf.id, "at": uv}
+		best_t = minf(best_t, t)
+	return best
 
 
 func _open_extrude_dialog() -> void:
@@ -1010,7 +1098,9 @@ func _open_extrude_dialog() -> void:
 		_extrude_dialog.size = Vector2i(220, 118)
 		_extrude_dialog.exclusive = false
 		_extrude_dialog.close_requested.connect(
-			func() -> void: _extrude_dialog.hide())
+			func() -> void:
+				_extrude_dialog.hide()
+				world.clear_profile_hover())
 		var box := VBoxContainer.new()
 		box.set_anchors_preset(Control.PRESET_FULL_RECT)
 		_extrude_dialog.add_child(box)
@@ -1044,6 +1134,7 @@ func _commit_extrude() -> void:
 		_status_hint.text = "Extrude: enter a distance"
 		return
 	_extrude_dialog.hide()
+	world.clear_profile_hover()
 	if not _pending_extrude.is_empty():
 		var ops := [ExtrudeFeature.OP_NEW_BODY, ExtrudeFeature.OP_JOIN,
 			ExtrudeFeature.OP_CUT]
@@ -1425,6 +1516,15 @@ func _on_viewport_input(event: InputEvent) -> void:
 		elif picking_plane:
 			var ray := rig.pixel_ray(mm.position)
 			world.set_plane_hover(world.pick_plane(ray[0], ray[1]))
+		elif picking_profile:
+			# Pre-highlight the region the click would extrude (QA §M18.1).
+			var rayp := rig.pixel_ray(mm.position)
+			var hitp := _profile_under_ray(rayp[0], rayp[1])
+			if hitp.is_empty():
+				world.clear_profile_hover()
+			else:
+				world.set_profile_hover(
+					doc.sketch_feature(hitp["sketch_id"]), hitp["at"])
 
 
 func _unhandled_key_input(event: InputEvent) -> void:
@@ -1472,6 +1572,7 @@ func handle_app_key(k: InputEventKey) -> bool:
 			picking_plane = false
 			picking_profile = false
 			world.set_plane_hover("")
+			world.clear_profile_hover()
 			world.set_planes_visible(false)
 			_refresh_ui()
 			return true

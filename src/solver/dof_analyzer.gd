@@ -104,6 +104,64 @@ static func analyze(sk: Sketch) -> Dictionary:
 			if not redundant.has(src):
 				redundant.append(src)
 
+	# A redundancy read at a SINGULAR configuration is a false alarm: at an
+	# exact tangency the tangent and point-on gradients align, and the rank
+	# test cannot tell "dependent everywhere" from "degenerate right here" —
+	# which painted amber badges on perfectly sound constraints (QA §M19.6).
+	# Confirm each flagged constraint at a jittered state: a real duplicate
+	# stays dependent under any state, a configuration accident does not.
+	if not redundant.is_empty():
+		var jit := _state(sk)
+		var jpos: Dictionary = jit["pos"]
+		# Golden-angle per-point directions: every point jitters a DIFFERENT
+		# way. A shared direction is a rigid translation, which every
+		# constraint is invariant under — it would leave the degeneracy
+		# perfectly intact and confirm the false alarm.
+		var ji := 0
+		for id: String in jpos:
+			ji += 1
+			if fixed.has(id):
+				continue
+			var h := float(ji) * 2.39996
+			jpos[id] = (jpos[id] as Vector2) \
+				+ Vector2(cos(h), sin(h)) * (0.31 + 0.11 * float(ji % 3))
+		var jrad: Dictionary = jit["rad"]
+		for id: String in jrad:
+			ji += 1
+			if not fixed.has(id):
+				jrad[id] = float(jrad[id]) + 0.17 + 0.09 * float(ji % 3)
+		var jrows: Array = []
+		var jsources: Array = []
+		var cj := 0
+		for c in sk.constraints:
+			if c.type == SketchConstraint.Type.FIX or c.driven:
+				cj += 1
+				continue
+			var jbase := ConstraintSolver.residuals(sk, c, jpos, jrad)
+			for ri in jbase.size():
+				jrows.append(_jacobian_row(sk, c, ri, columns, jit))
+				jsources.append(cj)
+			cj += 1
+		for e in sk.entities():
+			if e.kind() == "arc":
+				jrows.append(_arc_row(sk, e as SketchArc, columns, jit))
+				jsources.append(-1)
+		var jpivots: Array = []
+		var jredundant := {}
+		for i in jrows.size():
+			var jv: PackedFloat64Array = jrows[i]
+			for jp: PackedFloat64Array in jpivots:
+				jv = _eliminate(jv, jp)
+			if _norm(jv) > RANK_TOL:
+				jpivots.append(_normalize(jv))
+			elif jsources[i] >= 0:
+				jredundant[jsources[i]] = true
+		var confirmed: Array = []
+		for src: int in redundant:
+			if jredundant.has(src):
+				confirmed.append(src)
+		redundant = confirmed
+
 	# Conflicts: an over-determined system (some row redundant) where any
 	# constraint is left violated is unsatisfiable. The solver satisfies
 	# whichever duplicate it visited last, so the VIOLATED one may not be

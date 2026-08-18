@@ -46,12 +46,26 @@ func _init() -> void:
 	shortcut = KEY_V
 
 
+## Seal the drag's merge batch and drop it if it absorbed nothing. An OPEN
+## batch left on the stack silently swallows every later command into one
+## undo step (the "several Ctrl+Z to unwind one drag" of QA §M19.8), and a
+## sealed-but-empty one is a phantom step; both end here, at every path out
+## of a drag (pointer-up, Esc, tool switch).
+func _end_batch() -> void:
+	if _batch == null:
+		return
+	_batch.seal()
+	app.stack.drop_if_noop(_batch)
+	_batch = null
+
+
 func deactivate() -> void:
 	_drag = Drag.NONE
 	_pending = false
 	_marq = Marq.NONE
 	if app != null:
 		app.set_live_gesture(false)
+		_end_batch()
 	clear_hover()
 
 
@@ -63,6 +77,7 @@ func cancel() -> bool:
 	if _drag != Drag.NONE:
 		_drag = Drag.NONE
 		app.set_live_gesture(false)
+		_end_batch()
 		return true
 	if app.selected_constraint >= 0:
 		app.selected_constraint = -1
@@ -316,9 +331,7 @@ func pointer_up(_world: Vector2, _screen: Vector2, e: InputEventMouseButton) -> 
 				if e_up.kind() == "point":
 					all_pts.append(e_up.id)
 			app.solve_followers(all_pts)
-		if _batch != null:
-			_batch.seal()
-			_batch = null
+		_end_batch()
 		app.rebuild_snap_index()
 		app.set_live_gesture(false)
 	_pending = false

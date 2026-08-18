@@ -117,6 +117,8 @@ static func solve(sk: Sketch, pinned = [], pin_radii = [],
 	# from the whole point cloud ratchets, because an inflated rim widens the
 	# cloud and so grants a larger bound on the next solve.
 	var arc_ceiling := {}
+	var arc_entry_r := {}     # entry radius per arc, for the restore pass
+	var arc_dim_r := {}       # driving RADIUS/DIAMETER value per arc (0 = none)
 	for a: SketchArc in arcs:
 		var r0 := 0.0
 		if pos.has(a.center) and pos.has(a.start):
@@ -135,6 +137,8 @@ static func solve(sk: Sketch, pinned = [], pin_radii = [],
 			elif c.type == SketchConstraint.Type.DIAMETER:
 				dim_r = maxf(dim_r, c.value * 0.5)
 		arc_ceiling[a.id] = maxf(r0, dim_r) * MAX_RADIUS_GROWTH + RADIUS_SLACK_MM
+		arc_entry_r[a.id] = r0
+		arc_dim_r[a.id] = dim_r
 
 	# Rim points that other geometry holds in place. They are still solver
 	# variables — projections move them freely — but they are not free to be
@@ -196,6 +200,17 @@ static func solve(sk: Sketch, pinned = [], pin_radii = [],
 					anchored[a.end] = true
 
 	var rounds := 0
+	# One-shot MINIMAL-CHANGE pass, taken at first convergence: the relax
+	# rounds find *a* satisfying state, not the NEAREST one, and on an
+	# under-constrained tangent-arc chain the equilibrium slides a little
+	# outward on every solve — users watched an arc grow with every dimension
+	# edit (QA §M19 follow-up). An arc whose radius no dimension drives gets
+	# its centre pulled back toward the entry radius, then the loop continues
+	# so the constraints can object; if they cannot re-converge, the
+	# pre-restore state (which HAD converged) is what gets applied.
+	var restore_done := false
+	var restore_snapshot := {}
+	var last_worst := INF
 	for round_i in MAX_ROUNDS:
 		rounds = round_i + 1
 		# Rigid propagation: when a projection translates an arc's CENTER,
@@ -248,8 +263,20 @@ static func solve(sk: Sketch, pinned = [], pin_radii = [],
 		_clamp_arc_radii(arcs, arc_ceiling, pos, pin)
 		for id: String in pin_r:
 			rad[id] = pin_r[id]
+		last_worst = worst
 		if worst < converged:
+			if not restore_done:
+				restore_done = true
+				restore_snapshot = pos.duplicate()
+				if _restore_arc_radii(arcs, arc_entry_r, arc_dim_r, pos, pin):
+					continue   # give the constraints rounds to re-settle
 			break
+
+	# A restore that could not re-converge is discarded: the snapshot taken at
+	# first convergence is a known-good state.
+	if restore_done and not restore_snapshot.is_empty() \
+			and last_worst >= converged:
+		pos = restore_snapshot
 
 	# ...and once more after the loop. Running it only inside is not enough:
 	# the guard sits before the convergence break, so on the final round the
@@ -298,6 +325,43 @@ static func _sanity_budget(sk: Sketch) -> float:
 		if e.kind() == "point":
 			far = maxf(far, (e as SketchPoint).pos.length())
 	return maxf(far * SANITY_FACTOR, SANITY_FLOOR_MM)
+
+
+## Pull each undimensioned arc's CENTER back toward its entry radius: onto
+## the rim chord's perpendicular bisector at the entry-radius distance, same
+## side as before. Returns true when anything moved. This is a PREFERENCE,
+## never a constraint — the caller re-runs projection rounds afterwards and
+## reverts to the pre-restore state if they cannot re-converge.
+static func _restore_arc_radii(arcs: Array, entry: Dictionary,
+		dim_r: Dictionary, pos: Dictionary, pin: Dictionary) -> bool:
+	var moved := false
+	for a: SketchArc in arcs:
+		if float(dim_r.get(a.id, 0.0)) > 0.0 or pin.has(a.center):
+			continue
+		var r0 := float(entry.get(a.id, 0.0))
+		if r0 <= 1e-6 or not (pos.has(a.center) and pos.has(a.start)
+				and pos.has(a.end)):
+			continue
+		var c: Vector2 = pos[a.center]
+		var s: Vector2 = pos[a.start]
+		var e: Vector2 = pos[a.end]
+		var r_now := c.distance_to(s)
+		if absf(r_now - r0) < 0.001:
+			continue
+		var mid := (s + e) * 0.5
+		var half := s.distance_to(e) * 0.5
+		if half >= r0:
+			continue   # the rim chord no longer fits the entry radius
+		var n := (e - s).orthogonal()
+		if n.length() < 1e-9:
+			continue
+		n = n.normalized()
+		var side := signf(n.dot(c - mid))
+		if side == 0.0:
+			side = 1.0
+		pos[a.center] = mid + n * side * sqrt(maxf(r0 * r0 - half * half, 0.0))
+		moved = true
+	return moved
 
 
 ## Hold every arc's center-to-rim distance at or under its ceiling.
