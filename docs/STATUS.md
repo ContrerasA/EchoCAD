@@ -1,18 +1,16 @@
 # EchoCAD — Status
 
-Updated: 2026-08-17. Milestones M0–M21 implemented and merged to `main`.
-Automated coverage: 38 headless tests (`tools/run_tests.sh` /
-`tools\run_tests.ps1`) + 14 RPC suites (`tools/run_rpc_tests.sh` /
+Updated: 2026-08-18. Milestones M0–M25 implemented and merged to `main`.
+Automated coverage: 43 headless tests (`tools/run_tests.sh` /
+`tools\run_tests.ps1`) + 18 RPC suites (`tools/run_rpc_tests.sh` /
 `tools\run_rpc_tests.ps1`), all green on Windows (run RPC suites HEADLESS=1
 when unattended — windowed runs on a live desktop flake from real mouse
 interference).
 
-Manual QA in `docs/MANUAL_QA.md`: §M2–§M12 signed off 2026-08-15/16;
-§M14–§M17 hand-tested 2026-08-16 — the remaining §M17 item-5 note (badge
-flashing "invalid" while dragging a point-on point) was root-caused and
-fixed 2026-08-17 (badge state now frozen during live gestures; applying
-Point-On no longer inflates the circle — see §M17 fix 5b) and awaits
-retest. §M18–§M21 (new) are PENDING sign-off.
+Manual QA: `docs/MANUAL_QA.md` (closed volume, §M2–§M21) — §M2–§M12 signed
+off 2026-08-15/16; §M14–§M17 hand-tested 2026-08-16, §M17 item-5b fix
+awaits retest; §M18–§M21 PENDING sign-off. `docs/MANUAL_QA2.md` (volume 2,
+M22 onward) — §M22–§M25 PENDING sign-off.
 
 Windows: self-contained — vendored addons carry Linux + Windows x86_64
 binaries. The PS runners were hardened 2026-08-17 for stock PowerShell 5.1
@@ -43,6 +41,10 @@ binaries still pending in the sibling repos.
 | M19 modify upkeep | merged | chain offset + constraints, trim retarget, center rect |
 | M20 marquee + params | merged | window/crossing bands, Parameters dialog |
 | M21 DXF export | merged | R12 writer, layers, mm units, RPC action |
+| M22 construction planes | merged | offset/chained planes, sketch on body faces |
+| M23 revolve | merged | lathe solids, line/axis pick, booleans via CSG spin |
+| M24 STL export | merged | binary + ASCII, per-body / visible bodies, mm |
+| M25 DXF import | merged | R12 + LWPOLYLINE/bulge, welds, $INSUNITS, layers |
 
 ## Known limitations / backlog
 
@@ -57,8 +59,13 @@ binaries still pending in the sibling repos.
 - Solver is damped iterative projection — adequate so far; planegcs
   (vendored via the godot-geometry SConstruct pattern) remains the fallback
   if convergence quality hits a wall.
-- No DXF *import*; export is R12 lines/arcs/circles/points (no splines,
-  no dimensions/annotations).
+- DXF export is R12 lines/arcs/circles/points (no splines, no
+  dimensions/annotations); import reads the same subset plus polylines —
+  text, dimensions, splines, and blocks are skipped with a count.
+- Face planes (sketch-on-face, M22) are SNAPSHOTS of the clicked face, not
+  parametric links — editing the underlying extrude does not move them.
+- Revolve booleans share extrude's AABB target picking; a revolve's swept
+  AABB is generous, so join can merge bodies that only nearly touch.
 - macOS/web builds need addon binaries built in the sibling repos first.
 
 ## Flakes to watch
