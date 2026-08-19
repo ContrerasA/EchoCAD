@@ -10,6 +10,8 @@ const SETTINGS_PATH := "user://settings.cfg"
 const ICON_DIR := "res://assets/icons"
 
 static var dark := true
+## M27: model-mode camera projection preference (sketch mode is always ortho).
+static var model_ortho := false
 static var _icon_cache := {}
 
 ## Dark palette carries the pre-M26 hardcoded colors verbatim, so the default
@@ -169,10 +171,12 @@ static func load_settings() -> void:
 	var cfg := ConfigFile.new()
 	if cfg.load(SETTINGS_PATH) == OK:
 		dark = bool(cfg.get_value("ui", "dark", true))
+		model_ortho = bool(cfg.get_value("view", "ortho", false))
 
 
 static func save_settings() -> void:
 	var cfg := ConfigFile.new()
 	cfg.load(SETTINGS_PATH)   # keep unrelated sections if any
 	cfg.set_value("ui", "dark", dark)
+	cfg.set_value("view", "ortho", model_ortho)
 	cfg.save(SETTINGS_PATH)

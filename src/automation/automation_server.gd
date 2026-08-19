@@ -375,7 +375,74 @@ func _cmd_query_view(_a: Dictionary, _p: StreamPeerTCP, _id: Variant) -> Diction
 		"camera_rotation": [app.rig.rotation.x, app.rig.rotation.y,
 			app.rig.rotation.z],
 		"camera_distance": app.rig.distance,
+		"ortho": app.rig.is_orthographic(),
+		"view_height_mm": app.rig.view_height_mm(),
+		"camera_target": [app.rig.target.x, app.rig.target.y,
+			app.rig.target.z],
 	}
+
+
+## --- M27 viewing -------------------------------------------------------------
+
+func _cmd_action_look_at(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
+	if not a.has("normal"):
+		_reply_err(p, id, "bad_args", "normal required")
+		return null
+	var n := a["normal"] as Array
+	var normal := Vector3(float(n[0]), float(n[1]), float(n[2]))
+	if normal.length() < 1e-9:
+		_reply_err(p, id, "bad_args", "normal is zero")
+		return null
+	var up := Vector3(0, 0, 1)
+	if a.has("up"):
+		var u := a["up"] as Array
+		up = Vector3(float(u[0]), float(u[1]), float(u[2]))
+	app.look_at_normal(normal.normalized(), up)
+	return {"ok": true}
+
+
+func _cmd_action_fit(_a: Dictionary, _p: StreamPeerTCP, _id: Variant) -> Dictionary:
+	app.fit_view()
+	return {"view_height_mm": app.rig.view_height_mm()}
+
+
+func _cmd_action_set_display_unit(a: Dictionary, p: StreamPeerTCP,
+		id: Variant) -> Variant:
+	var s := String(a.get("unit", ""))
+	var u := UnitConverter.unit_from_string(s, UnitConverter.Unit.MM)
+	if UnitConverter.unit_to_string(u) != s:
+		_reply_err(p, id, "bad_args", "unknown unit %s" % s)
+		return null
+	app.set_display_unit(u)
+	return {"unit": UnitConverter.unit_to_string(app.doc.display_unit)}
+
+
+func _cmd_action_save_view(a: Dictionary, _p: StreamPeerTCP, _id: Variant) -> Dictionary:
+	var d := app.save_named_view(String(a.get("name", "")))
+	return {"view": d, "count": app.doc.named_views.size()}
+
+
+func _cmd_action_apply_view(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
+	var view_name := String(a.get("name", ""))
+	for v in app.doc.named_views:
+		if String((v as Dictionary).get("name", "")) == view_name:
+			app.apply_named_view(v)
+			return {"ok": true}
+	_reply_err(p, id, "not_found", "no view named %s" % view_name)
+	return null
+
+
+## Measurement of a selection (or explicit ids) — same numbers the status
+## readout formats. args: {ids?: [..]} (defaults to the live selection).
+func _cmd_query_measure(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
+	var sk := app.active_sketch()
+	if sk == null:
+		_reply_err(p, id, "bad_state", "not in a sketch")
+		return null
+	var ids: Array = a.get("ids", app.selection)
+	var m := Measure.analyze(sk, ids)
+	m["text"] = Measure.describe(sk, ids, app.doc.display_unit)
+	return m
 
 
 ## Sketch mm -> WINDOW pixels (what input.* takes).
@@ -604,13 +671,16 @@ func _cmd_action_set_pref(a: Dictionary, _p: StreamPeerTCP, _id: Variant) -> Dic
 		app.snap.entity_snap_enabled = bool(a["entity_snap"])
 	if a.has("dark_theme"):
 		app.set_dark_theme(bool(a["dark_theme"]))
+	if a.has("ortho"):
+		app.set_model_projection(bool(a["ortho"]))
 	# The toolbar checkboxes show this same state — refresh them, or the hand
 	# path and the RPC path would disagree about what is on.
 	app.sync_pref_checks()
 	return {"inference": app.prefs["inference"],
 		"grid_snap": app.snap.grid_enabled,
 		"entity_snap": app.snap.entity_snap_enabled,
-		"dark_theme": ThemeService.dark}
+		"dark_theme": ThemeService.dark,
+		"ortho": app.rig.is_orthographic()}
 
 func _cmd_action_enter_sketch(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
 	# An origin-plane name or a construction plane's feature id (M22).

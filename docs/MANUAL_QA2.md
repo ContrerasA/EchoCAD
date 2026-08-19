@@ -306,3 +306,31 @@ Status: PENDING sign-off
 - [ ] 7. Icon check: hover every tool + constraint button once. **Expect:**
    each icon plausibly depicts its command (no blanks, no mismatches);
    both themes tint icons legibly.
+
+## §M27 — Viewing: projection, look-at, units, measure
+
+Status: PENDING sign-off
+
+- [ ] 1. Model mode with a body: press **P** (or the Ortho shelf toggle).
+   **Expect:** projection flips to orthographic with no size jump; parallel
+   edges render parallel. P again returns to perspective, again no jump.
+- [ ] 2. Enter a sketch with Ortho ON, finish it. **Expect:** sketch mode
+   unaffected (always ortho); finishing returns to the ORTHO model view.
+   Relaunch the app: the projection choice is remembered.
+- [ ] 3. **Look At** → click the XZ plane, then again → click a flat body
+   face. **Expect:** hover highlights planes/faces; the camera animates to
+   face it square-on. Esc cancels the pick.
+- [ ] 4. Orbit away, zoom far out, press **F** (or Fit). **Expect:** the
+   model fills the view, centered, in both projections.
+- [ ] 5. Views dropdown → **Save View**; orbit elsewhere; pick the saved
+   view. **Expect:** the exact camera returns (angle, distance, and its
+   projection). Save the file, reopen it: the view survives.
+- [ ] 6. Preferences → Units → Millimeters. **Expect:** dimension labels,
+   grid step readout, type-in defaults, and the Parameters dialog all speak
+   mm; the model itself does not move. Switch to Feet and back.
+- [ ] 7. In a sketch select: one line; a circle; two points; two parallel
+   edges; two angled lines; a point + a line. **Expect:** the status bar
+   shows Length/∠, R/⌀, Dist ΔX ΔY, parallel Dist, ∠, and Dist
+   respectively, in the display unit.
+- [ ] 8. Browser → right-click a body → **Properties…**. **Expect:** a
+   popup with volume and bounding size in the display unit (³ for volume).

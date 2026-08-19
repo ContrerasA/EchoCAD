@@ -13,6 +13,10 @@ var features: Array[Feature] = []
 var timeline_marker := 0
 var parameters: Array[CadParameter] = []
 var display_unit := UnitConverter.Unit.IN
+## M27 named views: [{name, yaw, pitch, target:[x,y,z], distance, ortho}].
+## Camera bookmarks, not model state — they ride along in the file for
+## convenience but sit outside the command stack (like display_unit).
+var named_views: Array = []
 
 var _feature_counter := 0
 
@@ -102,6 +106,7 @@ func to_dict() -> Dictionary:
 		"timeline_marker": timeline_marker,
 		"parameters": params,
 		"features": feats,
+		"named_views": named_views.duplicate(true),
 	}
 
 
@@ -121,6 +126,9 @@ static func from_dict(d: Dictionary) -> CadDocument:
 		int(d.get("timeline_marker", doc.features.size())), 0, doc.features.size())
 	for pd in d.get("parameters", []):
 		doc.parameters.append(CadParameter.from_dict(pd as Dictionary))
+	for vd in d.get("named_views", []):
+		if vd is Dictionary:
+			doc.named_views.append((vd as Dictionary).duplicate(true))
 	return doc
 
 

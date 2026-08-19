@@ -129,6 +129,12 @@ var _pivot_pick: OptionButton
 var _shelf_groups := {}
 var _prefs_dialog: Window = null
 var _theme_pick: OptionButton = null
+## M27 viewing: Look At pick state, projection toggle, named views, units.
+var picking_look_at := false
+var _btn_ortho: Button = null
+var _views_pick: OptionButton = null
+var _unit_pick: OptionButton = null
+var _status_measure: Label = null
 var _status_mode: Label
 var _status_hint: Label
 ## Wall-clock ms until which a posted hint outranks the cursor readout.
@@ -170,6 +176,7 @@ func _ready() -> void:
 	threaded_solver.name = "ThreadedSolver"
 	add_child(threaded_solver)
 	_build_ui()
+	_apply_model_projection()
 	_refresh_ui()
 	_maybe_start_automation()
 	get_window().title = "EchoCAD — build " + BUILD
@@ -237,6 +244,7 @@ func set_selection(ids: Array) -> void:
 		selection.append(String(i))
 	if not selection.is_empty():
 		selected_constraint = -1
+	_update_measure_label()
 	overlay.queue_redraw()
 	_refresh_ui()
 
@@ -652,6 +660,7 @@ func load_document(new_doc: CadDocument) -> void:
 	active_sketch_id = ""
 	picking_plane = false
 	picking_offset_base = false
+	picking_look_at = false
 	mode = Mode.MODEL
 	sketch_orbit = false
 	sketch_view.clear_projection_3d()
@@ -662,6 +671,9 @@ func load_document(new_doc: CadDocument) -> void:
 	world.rebuild_sketches(doc)
 	timeline.refresh()
 	browser.refresh()
+	_refresh_views_pick()
+	if _unit_pick != null:
+		_unit_pick.select(_unit_pick.get_item_index(doc.display_unit))
 	mode_changed.emit(mode)
 	_refresh_ui()
 
@@ -757,6 +769,24 @@ func _build_ui() -> void:
 	_pivot_pick.item_selected.connect(func(i: int) -> void:
 		set_pivot_mode(_pivot_pick.get_item_id(i) as OrbitCamera.PivotMode))
 	g_view.add_child(_pivot_pick)
+	_btn_ortho = _button(g_view, "Ortho", func() -> void:
+		set_model_projection(_btn_ortho.button_pressed), "camera_ortho")
+	_btn_ortho.name = "OrthoBtn"
+	_btn_ortho.toggle_mode = true
+	_btn_ortho.tooltip_text = "Orthographic projection (P)"
+	var lookb := _button(g_view, "Look At", _on_look_at_pressed, "look_at")
+	lookb.name = "LookAtBtn"
+	lookb.tooltip_text = "Look At: square the view to a plane or flat face"
+	var fitb := _button(g_view, "Fit", fit_view, "fit_view")
+	fitb.name = "FitBtn"
+	fitb.tooltip_text = "Fit the model in view (F)"
+	_views_pick = OptionButton.new()
+	_views_pick.name = "ViewsPick"
+	_views_pick.focus_mode = Control.FOCUS_NONE
+	_views_pick.fit_to_longest_item = false
+	_views_pick.item_selected.connect(_on_views_pick)
+	g_view.add_child(_views_pick)
+	_refresh_views_pick()
 	var prefb := _button(g_view, "Preferences", _open_prefs_dialog,
 		"preferences")
 	prefb.name = "PreferencesBtn"
@@ -960,6 +990,8 @@ func _build_ui() -> void:
 	_status_mode = _label(status, "Model")
 	_status_hint = _label(status, "")
 	_status_hint.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_status_measure = _label(status, "")
+	_status_measure.name = "StatusMeasure"
 	_status_dof = _label(status, "")
 	_status_dof.name = "StatusDof"
 	_status_zoom = _label(status, "")
@@ -1043,7 +1075,7 @@ func _open_prefs_dialog() -> void:
 		_prefs_dialog = Window.new()
 		_prefs_dialog.name = "PrefsDialog"
 		_prefs_dialog.title = "Preferences"
-		_prefs_dialog.size = Vector2i(260, 96)
+		_prefs_dialog.size = Vector2i(280, 132)
 		_prefs_dialog.exclusive = false
 		_prefs_dialog.close_requested.connect(
 			func() -> void: _prefs_dialog.hide())
@@ -1064,6 +1096,21 @@ func _open_prefs_dialog() -> void:
 		_theme_pick.item_selected.connect(func(i: int) -> void:
 			set_dark_theme(i == 0))
 		row.add_child(_theme_pick)
+		var urow := HBoxContainer.new()
+		box.add_child(urow)
+		var ulab := Label.new()
+		ulab.text = "Units"
+		urow.add_child(ulab)
+		_unit_pick = OptionButton.new()
+		_unit_pick.name = "UnitPick"
+		_unit_pick.focus_mode = Control.FOCUS_NONE
+		_unit_pick.add_item("Millimeters", UnitConverter.Unit.MM)
+		_unit_pick.add_item("Centimeters", UnitConverter.Unit.CM)
+		_unit_pick.add_item("Inches", UnitConverter.Unit.IN)
+		_unit_pick.add_item("Feet", UnitConverter.Unit.FT)
+		_unit_pick.item_selected.connect(func(i: int) -> void:
+			set_display_unit(_unit_pick.get_item_id(i) as UnitConverter.Unit))
+		urow.add_child(_unit_pick)
 		var okb := Button.new()
 		okb.name = "PrefsCloseBtn"
 		okb.text = "Close"
@@ -1071,7 +1118,159 @@ func _open_prefs_dialog() -> void:
 		okb.pressed.connect(func() -> void: _prefs_dialog.hide())
 		box.add_child(okb)
 		add_child(_prefs_dialog)
+	_unit_pick.select(_unit_pick.get_item_index(doc.display_unit))
 	_prefs_dialog.popup_centered()
+
+
+## --- viewing: projection, look-at, fit, named views, units (M27) -------------
+
+func set_model_projection(ortho: bool) -> void:
+	ThemeService.model_ortho = ortho
+	ThemeService.save_settings()
+	# Sketch mode owns its projection (always ortho; off-axis perspective) —
+	# the preference lands when the camera is the model-mode one.
+	if mode == Mode.MODEL:
+		rig.set_projection_ortho(ortho)
+	if _btn_ortho != null:
+		_btn_ortho.set_pressed_no_signal(ortho)
+
+
+func _apply_model_projection() -> void:
+	rig.set_projection_ortho(ThemeService.model_ortho)
+	if _btn_ortho != null:
+		_btn_ortho.set_pressed_no_signal(ThemeService.model_ortho)
+
+
+func _on_look_at_pressed() -> void:
+	if mode != Mode.MODEL:
+		return
+	picking_look_at = true
+	world.set_planes_visible(true)
+	_refresh_ui()
+
+
+## Square the camera onto a plane/face normal (Look At).
+func look_at_normal(normal: Vector3, up_hint := Vector3(0, 0, 1)) -> void:
+	rig.frame_view(normal, up_hint)
+
+
+func fit_view() -> void:
+	if mode != Mode.MODEL:
+		return
+	rig.fit_bounds(world.model_bounds())
+
+
+func _plane_transform_for(key: String) -> Transform3D:
+	if SketchFeature.PLANES.has(key):
+		return Transform3D(SketchFeature.plane_basis(key), Vector3.ZERO)
+	var pf := doc.plane_feature(key)
+	return pf.transform() if pf != null else Transform3D.IDENTITY
+
+
+## The Views dropdown: Home + the document's named views + "Save View".
+const _VIEWS_ID_HOME := -1
+const _VIEWS_ID_SAVE := -2
+
+func _refresh_views_pick() -> void:
+	if _views_pick == null:
+		return
+	_views_pick.clear()
+	_views_pick.add_item("Views", -3)
+	_views_pick.set_item_disabled(0, true)
+	_views_pick.add_item("Home", _VIEWS_ID_HOME)
+	for i in doc.named_views.size():
+		_views_pick.add_item(String(doc.named_views[i].get("name", "View")), i)
+	_views_pick.add_item("Save View", _VIEWS_ID_SAVE)
+	_views_pick.select(0)
+
+
+func _on_views_pick(index: int) -> void:
+	var id := _views_pick.get_item_id(index)
+	_views_pick.select(0)   # it acts as a menu, not a state holder
+	if mode != Mode.MODEL:
+		return
+	if id == _VIEWS_ID_SAVE:
+		save_named_view()
+	elif id == _VIEWS_ID_HOME:
+		rig.frame_view(Vector3(0.5, -0.7, 0.5), Vector3(0, 0, 1))
+	elif id >= 0 and id < doc.named_views.size():
+		apply_named_view(doc.named_views[id])
+
+
+## Camera bookmarks live in the document (outside the command stack, like
+## display_unit — they are viewport state that rides along in the file).
+func save_named_view(view_name := "") -> Dictionary:
+	var v := rig.capture_view()
+	var d := {"name": view_name if view_name != ""
+			else "View%d" % (doc.named_views.size() + 1),
+		"yaw": v["yaw"], "pitch": v["pitch"],
+		"target": [v["target"].x, v["target"].y, v["target"].z],
+		"distance": v["distance"], "ortho": rig.is_orthographic()}
+	doc.named_views.append(d)
+	_refresh_views_pick()
+	set_status_hint("Saved %s" % d["name"])
+	return d
+
+
+func apply_named_view(d: Dictionary) -> void:
+	var t: Array = d.get("target", [0, 0, 0])
+	rig.set_projection_ortho(bool(d.get("ortho", false)))
+	if _btn_ortho != null:
+		_btn_ortho.set_pressed_no_signal(rig.is_orthographic())
+	rig.restore_view({"yaw": float(d.get("yaw", 0.0)),
+		"pitch": float(d.get("pitch", 0.0)),
+		"target": Vector3(float(t[0]), float(t[1]), float(t[2])),
+		"distance": float(d.get("distance", 800.0))})
+
+
+## Display unit (M27): UI-boundary only — model/solver/RPC stay mm. Reaches
+## every formatter: grids, dimension labels, measure readout, dialogs.
+func set_display_unit(u: UnitConverter.Unit) -> void:
+	if doc.display_unit == u:
+		return
+	doc.display_unit = u
+	world.set_grid_unit(u)
+	sketch_view.grid_unit = u
+	sketch_view.queue_redraw()
+	overlay.queue_redraw()
+	_update_measure_label()
+	if _unit_pick != null:
+		_unit_pick.select(_unit_pick.get_item_index(u))
+	_refresh_ui()
+
+
+func _update_measure_label() -> void:
+	if _status_measure == null:
+		return
+	_status_measure.text = "" if mode != Mode.SKETCH \
+		else Measure.describe(active_sketch(), selection, doc.display_unit)
+
+
+## Body properties popup (M27): volume + bounding box, in the display unit.
+func show_body_properties(body_id: String) -> void:
+	var bodies: Array = await BodyBuilder.build(doc, self)
+	for b: Dictionary in bodies:
+		if String(b["id"]) != body_id:
+			continue
+		var mesh: ArrayMesh = b["mesh"]
+		var box := mesh.get_aabb()
+		var u := doc.display_unit
+		var per := UnitConverter.to_mm(1.0, u)
+		var dlg := AcceptDialog.new()
+		dlg.name = "BodyPropsDialog"
+		dlg.title = String(b["name"])
+		dlg.dialog_text = "Volume: %.3f %s³\nSize: %s × %s × %s" % [
+			BodyBuilder.mesh_volume(mesh) / (per * per * per),
+			UnitConverter.unit_to_string(u),
+			UnitConverter.format(box.size.x, u),
+			UnitConverter.format(box.size.y, u),
+			UnitConverter.format(box.size.z, u)]
+		add_child(dlg)
+		dlg.close_requested.connect(dlg.queue_free)
+		dlg.confirmed.connect(dlg.queue_free)
+		dlg.popup_centered()
+		return
+	set_status_hint("No such body")
 
 
 func _label(parent: Control, text: String) -> Label:
@@ -1163,9 +1362,9 @@ func finish_sketch() -> void:
 	# camera pulls back from the plane to the previous model view.
 	sketch_view.visible = false
 	world.set_planes_visible(false)
-	# Model mode is a 3D space again: perspective back on, so solids read with
-	# depth. (Sketch mode runs orthographic — see `_sync_camera_to_sketch_view`.)
-	rig.set_perspective()
+	# Model mode is a 3D space again: back to the user's chosen projection
+	# (M27). (Sketch mode runs orthographic — see `_sync_camera_to_sketch_view`.)
+	_apply_model_projection()
 	# Back to the ground plane: the grid is XY whenever no sketch is open.
 	world.set_grid_plane("XY")
 	world.rebuild_sketches(doc)
@@ -2183,6 +2382,25 @@ func _on_viewport_input(event: InputEvent) -> void:
 			if mb.button_index == MOUSE_BUTTON_LEFT:
 				_on_tool_input(sketch_view.screen_to_world(mb.position),
 					mb.position, mb)
+		elif mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT \
+				and picking_look_at:
+			var rayl := rig.pixel_ray(mb.position)
+			var lplane := world.pick_plane(rayl[0], rayl[1])
+			if lplane != "":
+				picking_look_at = false
+				world.set_plane_hover("")
+				world.set_planes_visible(false)
+				var xf := _plane_transform_for(lplane)
+				look_at_normal(xf.basis.z, xf.basis.y)
+				_refresh_ui()
+			else:
+				var lface := world.pick_face(rayl[0], rayl[1])
+				if not lface.is_empty():
+					picking_look_at = false
+					world.clear_face_hover()
+					world.set_planes_visible(false)
+					look_at_normal(lface["normal"])
+					_refresh_ui()
 		elif mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT and picking_plane:
 			var ray := rig.pixel_ray(mb.position)
 			var plane := world.pick_plane(ray[0], ray[1])
@@ -2254,7 +2472,7 @@ func _on_viewport_input(event: InputEvent) -> void:
 			# Off-axis sketching: hover/preview motion reaches the tool too.
 			_on_tool_input(sketch_view.screen_to_world(mm.position),
 				mm.position, mm)
-		elif picking_plane:
+		elif picking_plane or picking_look_at:
 			var ray := rig.pixel_ray(mm.position)
 			var hov := world.pick_plane(ray[0], ray[1])
 			world.set_plane_hover(hov)
@@ -2349,12 +2567,13 @@ func handle_app_key(k: InputEventKey) -> bool:
 				return_to_sketch_plane()
 				return true
 		if picking_plane or picking_profile or picking_offset_base \
-				or picking_revolve or picking_revolve_axis:
+				or picking_revolve or picking_revolve_axis or picking_look_at:
 			picking_plane = false
 			picking_profile = false
 			picking_offset_base = false
 			picking_revolve = false
 			picking_revolve_axis = false
+			picking_look_at = false
 			_pending_revolve = {}
 			world.set_plane_hover("")
 			world.clear_profile_hover()
@@ -2401,6 +2620,15 @@ func handle_app_key(k: InputEventKey) -> bool:
 			batch.seal()
 			return true
 		return false
+	if mode == Mode.MODEL and not k.ctrl_pressed:
+		# Model-mode view keys (M27). Guarded from sketch mode, where letters
+		# belong to tools and type-in fields.
+		if k.keycode == KEY_P:
+			set_model_projection(not rig.is_orthographic())
+			return true
+		if k.keycode == KEY_F:
+			fit_view()
+			return true
 	if mode == Mode.SKETCH and not k.ctrl_pressed:
 		# Type-in fields get first claim on keys (digits, Tab, units...).
 		var active := tools.get_tool(tools.active_id())
@@ -2782,7 +3010,15 @@ func _refresh_ui() -> void:
 	_btn_undo.disabled = not stack.can_undo()
 	_btn_redo.disabled = not stack.can_redo()
 	_status_mode.text = "Sketch" if in_sketch else "Model"
-	if picking_plane:
+	_btn_ortho.disabled = in_sketch
+	if not in_sketch:
+		_btn_ortho.set_pressed_no_signal(rig.is_orthographic())
+	if _status_measure != null and not in_sketch:
+		_status_measure.text = ""
+	if picking_look_at:
+		_status_hint.text = ("Look At: select a plane or a flat body face "
+			+ "(Esc to cancel)")
+	elif picking_plane:
 		_status_hint.text = "Select a plane or a flat body face (Esc to cancel)"
 	elif picking_offset_base:
 		_status_hint.text = "Select the plane to offset from (Esc to cancel)"

@@ -299,6 +299,40 @@ func is_orthographic() -> bool:
 		and camera.projection == Camera3D.PROJECTION_ORTHOGONAL
 
 
+## Model-mode projection toggle (M27). Both directions preserve the apparent
+## size at the switch: ortho inherits the perspective view height, and the
+## way back goes through `to_perspective_preserving`.
+func set_projection_ortho(on: bool) -> void:
+	if camera == null:
+		return
+	if on:
+		set_orthographic(view_height_mm())
+	else:
+		to_perspective_preserving()
+	# Projection changes what view_height_mm derives from — grid listeners
+	# need to hear about it even though the rig itself did not move.
+	moved.emit()
+
+
+## Frame `aabb` without changing the orientation (M27 "Fit"): the target
+## moves to its center and the view height grows to hold its bounding sphere
+## plus margin. Works under either projection.
+func fit_bounds(aabb: AABB) -> void:
+	var radius := aabb.size.length() * 0.5
+	if radius < 1e-6:
+		radius = 100.0   # empty model: settle on a sane default framing
+	var vh := radius * 2.0 * 1.15
+	target = aabb.get_center()
+	if is_orthographic():
+		camera.size = maxf(vh, 0.001)
+		# Keep the eye clear of the model so near-plane clipping cannot eat
+		# it (the ortho near plane sits at -size/2 behind the eye).
+		distance = maxf(distance, radius * 2.0)
+	else:
+		distance = vh / (2.0 * tan(deg_to_rad(camera.fov) * 0.5))
+	_apply()
+
+
 ## How much world the view spans vertically, in mm.
 ##
 ## Grid density has to key off THIS rather than off `distance`. Under a
