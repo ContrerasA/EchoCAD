@@ -183,8 +183,8 @@ func _run() -> bool:
 	if absf(world.model_bounds().size.z - tall) > 1e-6:
 		return _fail("re-shown body missing from model bounds")
 
-	# --- one background colour for both modes -----------------------------
-	if SketchView.COLOR_BG != CadWorld.COLOR_BG:
+	# --- one background colour for both modes (M26: theme-sourced) --------
+	if SketchView.bg_color() != ThemeService.col("bg3d"):
 		return _fail("sketch and model backgrounds differ")
 	var env: WorldEnvironment = null
 	for c in world.get_children():
@@ -194,7 +194,7 @@ func _run() -> bool:
 		return _fail("world has no WorldEnvironment")
 	if env.environment.background_mode != Environment.BG_COLOR:
 		return _fail("3D background is not a flat colour")
-	if env.environment.background_color != CadWorld.COLOR_BG:
+	if env.environment.background_color != ThemeService.col("bg3d"):
 		return _fail("3D clear colour is not the shared background")
 
 	# --- camera view round-trips through capture/restore ------------------

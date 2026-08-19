@@ -87,6 +87,8 @@ var _cplane_xf := {}
 var _axes: MeshInstance3D = null
 var _sketch_root: Node3D = null
 var _grid: MeshInstance3D = null
+## Kept so a theme switch (M26) can recolor the background without a rebuild.
+var _env: Environment = null
 
 ## The plane the ground grid currently lies on. Model mode shows XY (the
 ## ground); sketch mode moves it onto the sketch's own plane so the grid
@@ -154,11 +156,12 @@ func _ready() -> void:
 	var env := WorldEnvironment.new()
 	var e := Environment.new()
 	e.background_mode = Environment.BG_COLOR
-	e.background_color = COLOR_BG
+	e.background_color = ThemeService.col("bg3d")
 	e.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	e.ambient_light_color = Color(0.55, 0.57, 0.62)
+	e.ambient_light_color = ThemeService.col("ambient")
 	e.ambient_light_energy = 0.6
 	env.environment = e
+	_env = e
 	add_child(env)
 	_build_grid()
 	_build_axes()
@@ -339,8 +342,8 @@ func _rebuild_grid() -> void:
 		mat.set_shader_parameter("major_every", GRID_MAJOR_EVERY)
 		mat.set_shader_parameter("level_blend", _grid_blend)
 		mat.set_shader_parameter("level_ratio", _grid_ratio)
-		mat.set_shader_parameter("minor_color", COLOR_GRID_MINOR)
-		mat.set_shader_parameter("major_color", COLOR_GRID_MAJOR)
+		mat.set_shader_parameter("minor_color", ThemeService.col("grid_minor"))
+		mat.set_shader_parameter("major_color", ThemeService.col("grid_major"))
 	_grid.visible = _grid_shown
 
 
@@ -407,6 +410,18 @@ func _push_grid_uniforms() -> void:
 		return
 	mat.set_shader_parameter("level_blend", _grid_blend)
 	mat.set_shader_parameter("level_ratio", _grid_ratio)
+
+
+## Re-read the ThemeService palette (M26): background, ambient, grid colors.
+func apply_theme() -> void:
+	if _env != null:
+		_env.background_color = ThemeService.col("bg3d")
+		_env.ambient_light_color = ThemeService.col("ambient")
+	if _grid != null:
+		var mat := _grid.material_override as ShaderMaterial
+		if mat != null:
+			mat.set_shader_parameter("minor_color", ThemeService.col("grid_minor"))
+			mat.set_shader_parameter("major_color", ThemeService.col("grid_major"))
 
 
 func set_grid_shown(shown: bool) -> void:

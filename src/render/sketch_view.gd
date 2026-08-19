@@ -16,7 +16,9 @@ const ZOOM_MIN := 0.05      # px per mm  (~fit 8m)
 const ZOOM_MAX := 400.0
 const GRID_TARGET_PX := 48.0   # aim one minor line every ~this many px
 ## Shared with model mode so the background does not shift when switching.
-const COLOR_BG := CadWorld.COLOR_BG
+## Theme-sourced since M26 — must be looked up per draw, not cached.
+static func bg_color() -> Color:
+	return ThemeService.col("bg3d")
 ## Opacity of the veil drawn over the 3D viewport while sketching. High enough
 ## that the sketch reads as the foreground, low enough that solids behind it
 ## stay legible so you can place geometry against the part you are drawing on.
@@ -32,8 +34,7 @@ const MODEL_VEIL_ALPHA := 0.82
 ## exactly how "only the majors are drawn" looked in the sketch view. The STEP
 ## ladder stays shared (that is a units question, the same in both places); the
 ## colours answer a rendering question and each surface answers it for itself.
-const COLOR_GRID_MINOR := Color(1, 1, 1, 0.14)
-const COLOR_GRID_MAJOR := Color(1, 1, 1, 0.26)
+## (Theme-sourced since M26: sk_grid_minor / sk_grid_major.)
 const COLOR_AXIS_X := Color(0.85, 0.30, 0.30, 0.8)
 const COLOR_AXIS_Y := Color(0.35, 0.80, 0.35, 0.8)
 ## Closed regions get a translucent face under the geometry, Fusion-style —
@@ -379,11 +380,14 @@ func _draw() -> void:
 	# on. Fusion keeps the model visible and knocked back behind the sketch;
 	# this is the same idea, and because the veil colour IS the 3D background
 	# an empty model still looks exactly as it did before.
+	var bg := bg_color()
+	var grid_minor := ThemeService.col("sk_grid_minor")
+	var grid_major := ThemeService.col("sk_grid_major")
 	if not show_model_behind:
-		draw_rect(Rect2(Vector2.ZERO, size), COLOR_BG)
+		draw_rect(Rect2(Vector2.ZERO, size), bg)
 	else:
 		draw_rect(Rect2(Vector2.ZERO, size),
-			Color(COLOR_BG.r, COLOR_BG.g, COLOR_BG.b, MODEL_VEIL_ALPHA))
+			Color(bg.r, bg.g, bg.b, MODEL_VEIL_ALPHA))
 	# TWO LEVELS, cross-faded, exactly as the 3D grid does it — see
 	# `step_levels`. The spacing snaps between rungs of the 1/2/5 ladder, so
 	# drawing only the chosen rung makes every intermediate line appear or
@@ -402,8 +406,8 @@ func _draw() -> void:
 	# draw call per line to say so.
 	if blend > 0.002 and float(levels["finer"]) * _zoom >= 2.0:
 		var fine: float = levels["finer"]
-		var fc := Color(COLOR_GRID_MINOR.r, COLOR_GRID_MINOR.g,
-			COLOR_GRID_MINOR.b, COLOR_GRID_MINOR.a * blend)
+		var fc := Color(grid_minor.r, grid_minor.g,
+			grid_minor.b, grid_minor.a * blend)
 		var fx := floorf(view.position.x / fine) * fine
 		while fx <= view.end.x:
 			var sfx := world_to_screen(Vector2(fx, 0)).x
@@ -421,14 +425,14 @@ func _draw() -> void:
 		var sx := world_to_screen(Vector2(x, 0)).x
 		var major := absf(fposmod(x / step, float(major_every))) < 0.01
 		draw_line(Vector2(sx, 0), Vector2(sx, size.y),
-			COLOR_GRID_MAJOR if major else COLOR_GRID_MINOR, 1.0)
+			grid_major if major else grid_minor, 1.0)
 		x += step
 	var y := y0
 	while y <= view.end.y:
 		var sy := world_to_screen(Vector2(0, y)).y
 		var major := absf(fposmod(y / step, float(major_every))) < 0.01
 		draw_line(Vector2(0, sy), Vector2(size.x, sy),
-			COLOR_GRID_MAJOR if major else COLOR_GRID_MINOR, 1.0)
+			grid_major if major else grid_minor, 1.0)
 		y += step
 	# Closed-region fills over the grid, under the raster's geometry lines.
 	if _regions_dirty:

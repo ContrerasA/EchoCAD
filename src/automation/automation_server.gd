@@ -602,12 +602,15 @@ func _cmd_action_set_pref(a: Dictionary, _p: StreamPeerTCP, _id: Variant) -> Dic
 		app.snap.grid_enabled = bool(a["grid_snap"])
 	if a.has("entity_snap"):
 		app.snap.entity_snap_enabled = bool(a["entity_snap"])
+	if a.has("dark_theme"):
+		app.set_dark_theme(bool(a["dark_theme"]))
 	# The toolbar checkboxes show this same state — refresh them, or the hand
 	# path and the RPC path would disagree about what is on.
 	app.sync_pref_checks()
 	return {"inference": app.prefs["inference"],
 		"grid_snap": app.snap.grid_enabled,
-		"entity_snap": app.snap.entity_snap_enabled}
+		"entity_snap": app.snap.entity_snap_enabled,
+		"dark_theme": ThemeService.dark}
 
 func _cmd_action_enter_sketch(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
 	# An origin-plane name or a construction plane's feature id (M22).

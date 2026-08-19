@@ -278,3 +278,31 @@ Status: PENDING sign-off
   working tree; pick XZ in the "Sketch plane" dropdown inside the import
   file dialog before choosing the file.
 
+
+## §M26 — Tool shelf, icons, themes
+
+Status: PENDING sign-off
+
+- [ ] 1. Launch the app. **Expect:** the top bar is grouped into captioned
+   shelf groups (Solids / Construct / Inspect / History / File /
+   Interchange / View); every button has an icon; hovering shows a tooltip
+   (shortcuts included, e.g. "Undo (Ctrl+Z)").
+- [ ] 2. Enter a sketch. **Expect:** the Solids/Construct groups vanish, a
+   "Sketch" group with Finish Sketch appears, and two shelf rows show:
+   icon-only tool strip (Select / Create / Modify / Dimension / Options
+   groups) and an icon-only Constraints strip. Tooltips name every tool
+   with its shortcut; clicking activates it (button stays pressed).
+- [ ] 3. Resize the window narrow (~900px). **Expect:** whole groups wrap
+   to the next row; no button is pushed off-screen or clipped.
+- [ ] 4. Preferences → Theme → Light. **Expect:** the ENTIRE app recolors:
+   buttons/panels/labels/status bar light, the 3D viewport background goes
+   light with darker grid lines, the sketch canvas matches. Sketch line
+   colors (blue/green/violet) stay legible.
+- [ ] 5. In light theme, open a sketch, draw, dimension, orbit off-axis.
+   **Expect:** everything legible: grid, badges, dimension labels,
+   selection highlight.
+- [ ] 6. Quit and relaunch. **Expect:** the light theme is remembered.
+   Switch back to Dark; relaunch; dark comes back.
+- [ ] 7. Icon check: hover every tool + constraint button once. **Expect:**
+   each icon plausibly depicts its command (no blanks, no mismatches);
+   both themes tint icons legibly.

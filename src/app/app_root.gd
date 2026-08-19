@@ -125,6 +125,10 @@ var _save_path := ""
 var _file_dialog: FileDialog = null
 var _file_dialog_saving := false
 var _pivot_pick: OptionButton
+## M26 shelf: group panels by caption, for mode-based show/hide.
+var _shelf_groups := {}
+var _prefs_dialog: Window = null
+var _theme_pick: OptionButton = null
 var _status_mode: Label
 var _status_hint: Label
 ## Wall-clock ms until which a posted hint outranks the cursor readout.
@@ -682,42 +686,66 @@ func _maybe_start_automation() -> void:
 
 func _build_ui() -> void:
 	set_anchors_preset(Control.PRESET_FULL_RECT)
+	# Theme before any control exists, so everything is born themed (M26).
+	ThemeService.load_settings()
+	theme = ThemeService.build_theme()
 	var vbox := VBoxContainer.new()
 	vbox.name = "Root"
 	vbox.set_anchors_preset(Control.PRESET_FULL_RECT)
 	vbox.add_theme_constant_override("separation", 0)
 	add_child(vbox)
 
-	var top := HBoxContainer.new()
+	# --- top shelf: grouped Fusion-style (M26). HFlow so narrow windows wrap
+	# instead of pushing tail buttons off-screen (users AND automation clicks).
+	var top := HFlowContainer.new()
 	top.name = "TopBar"
 	vbox.add_child(top)
-	_btn_create = _button(top, "Create Sketch", _on_create_sketch)
+	var g_solids := _shelf_group(top, "Solids")
+	_btn_create = _button(g_solids, "Create Sketch", _on_create_sketch,
+		"create_sketch")
 	_btn_create.name = "CreateSketchBtn"
-	_btn_extrude = _button(top, "Extrude", _on_extrude_pressed)
+	_btn_extrude = _button(g_solids, "Extrude", _on_extrude_pressed, "extrude")
 	_btn_extrude.name = "ExtrudeBtn"
-	_btn_revolve = _button(top, "Revolve", _on_revolve_pressed)
+	_btn_revolve = _button(g_solids, "Revolve", _on_revolve_pressed, "revolve")
 	_btn_revolve.name = "RevolveBtn"
-	_btn_offset_plane = _button(top, "Offset Plane", _on_offset_plane_pressed)
+	var g_construct := _shelf_group(top, "Construct")
+	_btn_offset_plane = _button(g_construct, "Offset Plane",
+		_on_offset_plane_pressed, "offset_plane")
 	_btn_offset_plane.name = "OffsetPlaneBtn"
-	var pbtn := _button(top, "Parameters", _open_params_dialog)
-	pbtn.name = "ParametersBtn"
-	_btn_finish = _button(top, "Finish Sketch", _on_finish_sketch)
+	var g_sketch := _shelf_group(top, "Sketch")
+	_btn_finish = _button(g_sketch, "Finish Sketch", _on_finish_sketch,
+		"finish_sketch")
 	_btn_finish.name = "FinishSketchBtn"
-	_btn_undo = _button(top, "Undo", func() -> void: stack.undo())
+	var g_inspect := _shelf_group(top, "Inspect")
+	var pbtn := _button(g_inspect, "Parameters", _open_params_dialog,
+		"parameters")
+	pbtn.name = "ParametersBtn"
+	var g_hist := _shelf_group(top, "History")
+	_btn_undo = _button(g_hist, "Undo", func() -> void: stack.undo(), "undo")
 	_btn_undo.name = "UndoBtn"
-	_btn_redo = _button(top, "Redo", func() -> void: stack.redo())
+	_btn_undo.tooltip_text = "Undo (Ctrl+Z)"
+	_btn_redo = _button(g_hist, "Redo", func() -> void: stack.redo(), "redo")
 	_btn_redo.name = "RedoBtn"
-	_btn_save = _button(top, "Save", func() -> void: save_interactive(false))
+	_btn_redo.tooltip_text = "Redo (Ctrl+Shift+Z)"
+	var g_file := _shelf_group(top, "File")
+	_btn_save = _button(g_file, "Save",
+		func() -> void: save_interactive(false), "save")
 	_btn_save.name = "SaveBtn"
-	var stlb := _button(top, "Export STL",
-		func() -> void: export_stl_interactive())
-	stlb.name = "ExportStlBtn"
-	var dxfi := _button(top, "Import DXF", import_dxf_interactive)
-	dxfi.name = "ImportDxfBtn"
-	var dxfb := _button(top, "Export DXF", export_dxf_interactive)
-	dxfb.name = "ExportDxfBtn"
-	_btn_open = _button(top, "Open", open_interactive)
+	_btn_save.tooltip_text = "Save (Ctrl+S)"
+	_btn_open = _button(g_file, "Open", open_interactive, "open")
 	_btn_open.name = "OpenBtn"
+	_btn_open.tooltip_text = "Open (Ctrl+O)"
+	var g_io := _shelf_group(top, "Interchange")
+	var dxfi := _button(g_io, "Import DXF", import_dxf_interactive,
+		"import_dxf")
+	dxfi.name = "ImportDxfBtn"
+	var dxfb := _button(g_io, "Export DXF", export_dxf_interactive,
+		"export_dxf")
+	dxfb.name = "ExportDxfBtn"
+	var stlb := _button(g_io, "Export STL",
+		func() -> void: export_stl_interactive(), "export_stl")
+	stlb.name = "ExportStlBtn"
+	var g_view := _shelf_group(top, "View")
 	# Orbit pivot: Fusion's body-center is the default, Blender-style
 	# under-cursor and plain view-center are the alternatives.
 	_pivot_pick = OptionButton.new()
@@ -728,12 +756,20 @@ func _build_ui() -> void:
 	_pivot_pick.add_item("Orbit: View Center", OrbitCamera.PivotMode.VIEW_CENTER)
 	_pivot_pick.item_selected.connect(func(i: int) -> void:
 		set_pivot_mode(_pivot_pick.get_item_id(i) as OrbitCamera.PivotMode))
-	top.add_child(_pivot_pick)
+	g_view.add_child(_pivot_pick)
+	var prefb := _button(g_view, "Preferences", _open_prefs_dialog,
+		"preferences")
+	prefb.name = "PreferencesBtn"
+
 	# Tools get their own row — one row would overflow the window and make
 	# the tail buttons unreachable (for users AND automation clicks).
 	_tool_bar = HFlowContainer.new()
 	_tool_bar.name = "ToolBar"
 	vbox.add_child(_tool_bar)
+	var g_select := _shelf_group(_tool_bar, "Select")
+	var g_create := _shelf_group(_tool_bar, "Create")
+	var g_modify := _shelf_group(_tool_bar, "Modify")
+	var g_dim := _shelf_group(_tool_bar, "Dimension")
 	var group := ButtonGroup.new()
 	for tid: String in tools.tool_ids():
 		var t := tools.get_tool(tid)
@@ -743,24 +779,34 @@ func _build_ui() -> void:
 		for part in parts:
 			pascal += part.substr(0, 1).to_upper() + part.substr(1)
 		b.name = pascal + "ToolBtn"
-		b.text = t.title
+		# Icon-only: with titles the sketch shelf overflowed a 1280px window
+		# and the tail tools fell off-screen (unreachable for users AND
+		# automation clicks). The title lives in the tooltip; a text fallback
+		# keeps the button usable if its icon asset ever goes missing.
+		b.icon = ThemeService.icon(tid)
+		if b.icon == null:
+			b.text = t.title
+		b.tooltip_text = t.title if t.shortcut == KEY_NONE \
+			else "%s (%s)" % [t.title, OS.get_keycode_string(t.shortcut)]
+		b.custom_minimum_size = Vector2(34, 30)
 		b.focus_mode = Control.FOCUS_NONE
 		b.toggle_mode = true
 		b.button_group = group
 		b.pressed.connect(func() -> void: tools.set_active(tid))
-		_tool_bar.add_child(b)
+		_tool_group_for(tid, g_select, g_create, g_modify, g_dim).add_child(b)
 		_tool_buttons[tid] = b
 
 	# Snap + inference toggles. These already existed as `prefs` entries that
 	# only `action.set_pref` could reach, which made them unusable by hand and
 	# unverifiable in manual QA. Both paths now drive the same state.
+	var g_opts := _shelf_group(_tool_bar, "Options")
 	var snap_box := CheckBox.new()
 	snap_box.name = "GridSnapChk"
 	snap_box.text = "Snap"
 	snap_box.focus_mode = Control.FOCUS_NONE
 	snap_box.button_pressed = snap.grid_enabled
 	snap_box.toggled.connect(func(on: bool) -> void: snap.grid_enabled = on)
-	_tool_bar.add_child(snap_box)
+	g_opts.add_child(snap_box)
 	_snap_check = snap_box
 
 	var infer_box := CheckBox.new()
@@ -769,7 +815,7 @@ func _build_ui() -> void:
 	infer_box.focus_mode = Control.FOCUS_NONE
 	infer_box.button_pressed = bool(prefs.get("inference", true))
 	infer_box.toggled.connect(func(on: bool) -> void: prefs["inference"] = on)
-	_tool_bar.add_child(infer_box)
+	g_opts.add_child(infer_box)
 	_infer_check = infer_box
 
 	# Construction MODE: newly drawn curves come out as construction geometry
@@ -781,31 +827,37 @@ func _build_ui() -> void:
 	cons_box.focus_mode = Control.FOCUS_NONE
 	cons_box.button_pressed = construction_mode
 	cons_box.toggled.connect(func(on: bool) -> void: construction_mode = on)
-	_tool_bar.add_child(cons_box)
+	g_opts.add_child(cons_box)
 	_construction_check = cons_box
 
 	_constraint_bar = HFlowContainer.new()
 	_constraint_bar.name = "ConstraintBar"
 	vbox.add_child(_constraint_bar)
+	var g_cons := _shelf_group(_constraint_bar, "Constraints")
 	var cons_defs := [
-		["Coincident", SketchConstraint.Type.COINCIDENT],
-		["Horizontal", SketchConstraint.Type.HORIZONTAL],
-		["Vertical", SketchConstraint.Type.VERTICAL],
-		["Parallel", SketchConstraint.Type.PARALLEL],
-		["Perpendicular", SketchConstraint.Type.PERPENDICULAR],
-		["Collinear", SketchConstraint.Type.COLLINEAR],
-		["Equal", SketchConstraint.Type.EQUAL],
-		["Midpoint", SketchConstraint.Type.MIDPOINT],
-		["Concentric", SketchConstraint.Type.CONCENTRIC],
-		["Tangent", SketchConstraint.Type.TANGENT],
-		["PointOn", SketchConstraint.Type.POINT_ON],
-		["Fix", SketchConstraint.Type.FIX],
-		["Symmetry", SketchConstraint.Type.SYMMETRY],
+		["Coincident", SketchConstraint.Type.COINCIDENT, "const_coincident"],
+		["Horizontal", SketchConstraint.Type.HORIZONTAL, "const_horizontal"],
+		["Vertical", SketchConstraint.Type.VERTICAL, "const_vertical"],
+		["Parallel", SketchConstraint.Type.PARALLEL, "const_parallel"],
+		["Perpendicular", SketchConstraint.Type.PERPENDICULAR,
+			"const_perpendicular"],
+		["Collinear", SketchConstraint.Type.COLLINEAR, "const_collinear"],
+		["Equal", SketchConstraint.Type.EQUAL, "const_equal"],
+		["Midpoint", SketchConstraint.Type.MIDPOINT, "const_midpoint"],
+		["Concentric", SketchConstraint.Type.CONCENTRIC, "const_concentric"],
+		["Tangent", SketchConstraint.Type.TANGENT, "const_tangent"],
+		["PointOn", SketchConstraint.Type.POINT_ON, "const_point_on"],
+		["Fix", SketchConstraint.Type.FIX, "const_fix"],
+		["Symmetry", SketchConstraint.Type.SYMMETRY, "const_symmetry"],
 	]
 	for def in cons_defs:
-		var cb := _button(_constraint_bar, def[0],
-			func() -> void: apply_constraint(def[1]))
+		var cb := _button(g_cons, def[0],
+			func() -> void: apply_constraint(def[1]), String(def[2]))
 		cb.name = String(def[0]) + "ConBtn"
+		# Icon-only, same reason as the tool strip (title in the tooltip).
+		if cb.icon != null:
+			cb.text = ""
+		cb.custom_minimum_size = Vector2(34, 30)
 
 	# Browser on the left, canvas on the right — the browser is a sibling of
 	# the canvas, not an overlay on it, so it never eats viewport clicks.
@@ -913,13 +965,113 @@ func _build_ui() -> void:
 	_status_zoom = _label(status, "")
 
 
-func _button(parent: Control, text: String, handler: Callable) -> Button:
+func _button(parent: Control, text: String, handler: Callable,
+		icon_name := "") -> Button:
 	var b := Button.new()
 	b.text = text
+	b.icon = ThemeService.icon(icon_name)
+	b.tooltip_text = text
 	b.focus_mode = Control.FOCUS_NONE   # keys belong to the canvas, not buttons
 	b.pressed.connect(handler)
 	parent.add_child(b)
 	return b
+
+
+## A shelf group (M26): captioned panel of buttons inside a shelf row. The
+## returned container is what buttons get added to; the panel is registered
+## under `caption` so _refresh_ui can show/hide whole groups per mode.
+## The button row is an HBox (never wraps) so the group's minimum size is the
+## full button strip — the OUTER flow rows wrap whole groups instead. An
+## HFlow here reported one button as its minimum width and collapsed every
+## group into a one-button-wide tower that swallowed the viewport.
+func _shelf_group(parent: Control, caption: String) -> HBoxContainer:
+	var panel := PanelContainer.new()
+	panel.name = caption + "Group"
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 0)
+	panel.add_child(v)
+	var row := HBoxContainer.new()
+	row.name = "Buttons"
+	v.add_child(row)
+	var cap := Label.new()
+	cap.text = caption
+	cap.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	cap.add_theme_font_size_override("font_size", 10)
+	cap.modulate.a = 0.65
+	v.add_child(cap)
+	parent.add_child(panel)
+	_shelf_groups[caption] = panel
+	return row
+
+
+func _tool_group_for(tid: String, g_select: Control, g_create: Control,
+		g_modify: Control, g_dim: Control) -> Control:
+	if tid == "select":
+		return g_select
+	if tid == "dimension":
+		return g_dim
+	if tid in ["trim", "extend", "offset", "mirror", "fillet", "project"]:
+		return g_modify
+	return g_create
+
+
+## --- theme + preferences (M26) ----------------------------------------------
+
+func set_dark_theme(on: bool) -> void:
+	if ThemeService.dark == on:
+		return
+	ThemeService.dark = on
+	ThemeService.save_settings()
+	apply_theme()
+
+
+## Push the current ThemeService palette everywhere it is consumed.
+func apply_theme() -> void:
+	theme = ThemeService.build_theme()
+	if world != null:
+		world.apply_theme()
+	if sketch_view != null:
+		sketch_view.queue_redraw()
+	if overlay != null:
+		overlay.queue_redraw()
+	if _theme_pick != null:
+		_theme_pick.select(0 if ThemeService.dark else 1)
+
+
+func _open_prefs_dialog() -> void:
+	if _prefs_dialog == null:
+		_prefs_dialog = Window.new()
+		_prefs_dialog.name = "PrefsDialog"
+		_prefs_dialog.title = "Preferences"
+		_prefs_dialog.size = Vector2i(260, 96)
+		_prefs_dialog.exclusive = false
+		_prefs_dialog.close_requested.connect(
+			func() -> void: _prefs_dialog.hide())
+		var box := VBoxContainer.new()
+		box.set_anchors_preset(Control.PRESET_FULL_RECT)
+		_prefs_dialog.add_child(box)
+		var row := HBoxContainer.new()
+		box.add_child(row)
+		var lab := Label.new()
+		lab.text = "Theme"
+		row.add_child(lab)
+		_theme_pick = OptionButton.new()
+		_theme_pick.name = "ThemePick"
+		_theme_pick.focus_mode = Control.FOCUS_NONE
+		_theme_pick.add_item("Dark", 0)
+		_theme_pick.add_item("Light", 1)
+		_theme_pick.select(0 if ThemeService.dark else 1)
+		_theme_pick.item_selected.connect(func(i: int) -> void:
+			set_dark_theme(i == 0))
+		row.add_child(_theme_pick)
+		var okb := Button.new()
+		okb.name = "PrefsCloseBtn"
+		okb.text = "Close"
+		okb.focus_mode = Control.FOCUS_NONE
+		okb.pressed.connect(func() -> void: _prefs_dialog.hide())
+		box.add_child(okb)
+		add_child(_prefs_dialog)
+	_prefs_dialog.popup_centered()
 
 
 func _label(parent: Control, text: String) -> Label:
@@ -2613,11 +2765,10 @@ func _on_stack_changed() -> void:
 
 func _refresh_ui() -> void:
 	var in_sketch := mode == Mode.SKETCH
-	_btn_create.visible = not in_sketch
-	_btn_extrude.visible = not in_sketch
-	_btn_revolve.visible = not in_sketch
-	_btn_offset_plane.visible = not in_sketch
-	_btn_finish.visible = in_sketch
+	# M26 shelf: whole groups flip with the mode, so no empty panels linger.
+	for cap in ["Solids", "Construct"]:
+		(_shelf_groups[cap] as Control).visible = not in_sketch
+	(_shelf_groups["Sketch"] as Control).visible = in_sketch
 	_tool_bar.visible = in_sketch
 	_constraint_bar.visible = in_sketch
 	if in_sketch and not dof.is_empty():
