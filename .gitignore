@@ -6,3 +6,4 @@ __pycache__/
 *.py[co]
 *.swp
 tests/M21*.dxf
+tests/M24*.stl
