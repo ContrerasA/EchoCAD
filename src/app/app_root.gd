@@ -893,6 +893,11 @@ func _build_ui() -> void:
 	vbox.add_child(timeline)
 	timeline.refresh()
 	browser.refresh()
+	# Boolean bakes land a frame after the model change — re-list bodies when
+	# they do, or the browser shows stale rows (deferred: the rebuild can be
+	# triggered from inside a Tree mouse callback, where refresh must not run).
+	world.bodies_rebuilt.connect(func() -> void:
+		browser.refresh.call_deferred())
 	# The rig emitted `moved` from its own _ready, before the connect above.
 	world.set_grid_unit(doc.display_unit)
 	world.update_grid(rig.view_height_mm())
@@ -1093,6 +1098,8 @@ func _on_extrude_pressed() -> void:
 	picking_revolve = false
 	picking_revolve_axis = false
 	world.clear_face_hover()
+	world.clear_axis_hover()
+	world.hide_axis_candidates()
 	_refresh_ui()
 
 
@@ -1106,6 +1113,8 @@ func _on_revolve_pressed() -> void:
 	_pending_revolve = {}
 	world.clear_face_hover()
 	world.clear_profile_hover()
+	world.clear_axis_hover()
+	world.hide_axis_candidates()
 	_refresh_ui()
 
 
@@ -1253,25 +1262,28 @@ func _on_finish_sketch() -> void:
 
 ## --- revolve (M23) -------------------------------------------------------------
 
-## The axis-pick ray: nearest LINE entity of the pending revolve's sketch
-## within a screen-ish tolerance. "" on a miss.
-func _axis_line_under_ray(origin: Vector3, dir: Vector3) -> String:
+## The axis-pick ray: nearest candidate of the pending revolve's sketch
+## within a screen-ish tolerance — a LINE entity, or one of the sketch's own
+## u/v axes (drawn by show_axis_candidates while the pick is armed).
+## -> {"axis": String ("x"/"y"/entity id), "a": Vector2, "b": Vector2} in
+## sketch uv, {} on a miss.
+func _axis_pick_under_ray(origin: Vector3, dir: Vector3) -> Dictionary:
 	var sf := doc.sketch_feature(String(_pending_revolve.get("sketch_id", "")))
 	if sf == null:
-		return ""
+		return {}
 	var xf := sf.plane_transform()
 	var n: Vector3 = xf.basis.z
 	var denom := dir.dot(n)
 	if absf(denom) < 1e-9:
-		return ""
+		return {}
 	var t := (xf.origin - origin).dot(n) / denom
 	if t <= 0.0:
-		return ""
+		return {}
 	var local := xf.affine_inverse() * (origin + dir * t)
 	var uv := Vector2(local.x, local.y)
 	# ~8 px worth of world millimetres at the current model-view zoom.
 	var tol := rig.view_height_mm() * 8.0 / maxf(float(_viewport.size.y), 1.0)
-	var best := ""
+	var best := {}
 	var best_d := tol
 	for e in sf.sketch.entities():
 		if e.kind() != "line":
@@ -1285,8 +1297,24 @@ func _axis_line_under_ray(origin: Vector3, dir: Vector3) -> String:
 			uv, p0.pos, p1.pos).distance_to(uv)
 		if dd < best_d:
 			best_d = dd
-			best = e.id
+			best = {"axis": e.id, "a": p0.pos, "b": p1.pos}
+	# The sketch axes, as drawn in the viewport (QA §M23.1: keyboard-only
+	# axis choice). Entity lines win ties — they sit above the axes visually.
+	var axl := CadWorld.AXIS_LEN
+	for cand: Array in [
+			["x", Vector2(-axl, 0), Vector2(axl, 0)],
+			["y", Vector2(0, -axl), Vector2(0, axl)]]:
+		var dd2 := Geometry2D.get_closest_point_to_segment(
+			uv, cand[1] as Vector2, cand[2] as Vector2).distance_to(uv)
+		if dd2 < best_d:
+			best_d = dd2
+			best = {"axis": cand[0], "a": cand[1], "b": cand[2]}
 	return best
+
+
+## Width (mm) of the axis hover band: ~4 px at the current model-view zoom.
+func _axis_hover_width_mm() -> float:
+	return rig.view_height_mm() * 4.0 / maxf(float(_viewport.size.y), 1.0)
 
 
 func _open_revolve_dialog() -> void:
@@ -1617,6 +1645,7 @@ func open_from(path: String) -> bool:
 ## --- DXF import (M25) ----------------------------------------------------------
 
 var _dxf_import_dialog: FileDialog
+var _dxf_import_plane: OptionButton = null
 
 
 ## Import a DXF file as a NEW sketch on `plane` (an origin-plane name or a
@@ -1656,8 +1685,42 @@ func import_dxf_interactive() -> void:
 		_dxf_import_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
 		_dxf_import_dialog.size = Vector2i(640, 440)
 		_dxf_import_dialog.file_selected.connect(
-			func(path: String) -> void: import_dxf(path))
+			func(path: String) -> void:
+				import_dxf(path, String(_dxf_import_plane.get_item_metadata(
+					_dxf_import_plane.selected))))
+		# Target plane rides inside the file dialog (QA §M25.1): DXF is a 2D
+		# format, so the sketch's plane is the importer's to choose — it used
+		# to land on XY unconditionally.
+		var prow := HBoxContainer.new()
+		var plab := Label.new()
+		plab.text = "Sketch plane:"
+		prow.add_child(plab)
+		_dxf_import_plane = OptionButton.new()
+		_dxf_import_plane.name = "DxfImportPlanePick"
+		_dxf_import_plane.focus_mode = Control.FOCUS_NONE
+		prow.add_child(_dxf_import_plane)
+		_dxf_import_dialog.get_vbox().add_child(prow)
 		add_child(_dxf_import_dialog)
+	# Re-list the planes every open: construction planes come and go.
+	var prev := ""
+	if _dxf_import_plane.selected >= 0:
+		prev = String(_dxf_import_plane.get_item_metadata(
+			_dxf_import_plane.selected))
+	_dxf_import_plane.clear()
+	for plane_name: String in SketchFeature.PLANES:
+		_dxf_import_plane.add_item(plane_name)
+		_dxf_import_plane.set_item_metadata(
+			_dxf_import_plane.item_count - 1, plane_name)
+	for f in doc.live_features():
+		if f is PlaneFeature:
+			_dxf_import_plane.add_item((f as PlaneFeature).name)
+			_dxf_import_plane.set_item_metadata(
+				_dxf_import_plane.item_count - 1, f.id)
+	_dxf_import_plane.selected = 0
+	for i in _dxf_import_plane.item_count:
+		if String(_dxf_import_plane.get_item_metadata(i)) == prev:
+			_dxf_import_plane.selected = i
+			break
 	_dxf_import_dialog.popup_centered()
 
 
@@ -1665,6 +1728,7 @@ func import_dxf_interactive() -> void:
 
 var _stl_dialog: FileDialog
 var _stl_ascii_chk: CheckBox = null
+var _stl_unit_pick: OptionButton = null
 ## Body chosen when the dialog opened ("" = every visible body), so a
 ## selection change while the file dialog is up cannot swap the target.
 var _stl_export_body := ""
@@ -1701,7 +1765,8 @@ func export_stl_interactive(body_id := "") -> void:
 		_stl_dialog.file_selected.connect(
 			func(path: String) -> void:
 				export_stl(path, _stl_export_body,
-					_stl_ascii_chk.button_pressed))
+					_stl_ascii_chk.button_pressed,
+					0.001 if _stl_unit_pick.selected == 1 else 1.0))
 		# Binary is the slicer default; ASCII rides as an option for
 		# diffable/debuggable output.
 		_stl_ascii_chk = CheckBox.new()
@@ -1709,21 +1774,40 @@ func export_stl_interactive(body_id := "") -> void:
 		_stl_ascii_chk.text = "ASCII STL (text, larger)"
 		_stl_ascii_chk.button_pressed = false
 		_stl_dialog.get_vbox().add_child(_stl_ascii_chk)
+		# STL carries no units. Slicers assume 1 unit = 1 mm (the default
+		# here); Blender maps 1 unit = 1 m, so an "mm" file lands 1000x too
+		# big there (QA §M24.3) — the metres option scales for it.
+		var urow := HBoxContainer.new()
+		var ulab := Label.new()
+		ulab.text = "Units:"
+		urow.add_child(ulab)
+		_stl_unit_pick = OptionButton.new()
+		_stl_unit_pick.name = "StlUnitPick"
+		_stl_unit_pick.add_item("millimetres (slicers)", 0)
+		_stl_unit_pick.add_item("metres (Blender)", 1)
+		_stl_unit_pick.selected = 0
+		_stl_unit_pick.focus_mode = Control.FOCUS_NONE
+		urow.add_child(_stl_unit_pick)
+		_stl_dialog.get_vbox().add_child(urow)
 		add_child(_stl_dialog)
 	_stl_dialog.current_file = "export.stl"
 	_stl_dialog.popup_centered()
 
 
-## Write the STL. Returns true on success (status bar reports either way).
-func export_stl(path: String, body_id := "", ascii := false) -> bool:
+## Write the STL. `scale` multiplies coordinates on the way out (1.0 = mm,
+## 0.001 = metres for Blender). Returns true on success (status bar reports
+## either way).
+func export_stl(path: String, body_id := "", ascii := false,
+		scale := 1.0) -> bool:
 	if not path.to_lower().ends_with(".stl"):
 		path += ".stl"
-	var res := StlExporter.write(_stl_bodies(body_id), path, ascii)
+	var res := StlExporter.write(_stl_bodies(body_id), path, ascii, scale)
 	if not bool(res["ok"]):
 		set_status_hint("Export STL failed: " + String(res["error"]))
 		return false
-	set_status_hint("Exported %d triangles (mm) to %s"
-		% [int(res["triangles"]), path])
+	set_status_hint("Exported %d triangles (%s) to %s"
+		% [int(res["triangles"]),
+		"mm" if absf(scale - 1.0) < 1e-12 else "m", path])
 	return true
 
 
@@ -1985,15 +2069,19 @@ func _on_viewport_input(event: InputEvent) -> void:
 				picking_revolve = false
 				picking_revolve_axis = true
 				_pending_revolve = rhit
+				world.show_axis_candidates(
+					doc.sketch_feature(String(rhit["sketch_id"])))
 				_refresh_ui()
 		elif mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT \
 				and picking_revolve_axis:
 			var raya := rig.pixel_ray(mb.position)
-			var line_id := _axis_line_under_ray(raya[0], raya[1])
-			if line_id != "":
-				_revolve_axis = line_id
+			var apick := _axis_pick_under_ray(raya[0], raya[1])
+			if not apick.is_empty():
+				_revolve_axis = String(apick["axis"])
 				picking_revolve_axis = false
 				world.clear_profile_hover()
+				world.clear_axis_hover()
+				world.hide_axis_candidates()
 				_open_revolve_dialog()
 				_refresh_ui()
 		elif mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT:
@@ -2041,6 +2129,18 @@ func _on_viewport_input(event: InputEvent) -> void:
 			else:
 				world.set_profile_hover(
 					doc.sketch_feature(hitp["sketch_id"]), hitp["at"])
+		elif picking_revolve_axis:
+			# Pre-highlight the axis candidate the click would take (QA
+			# §M23.6): line entities and the drawn sketch axes alike.
+			var raym := rig.pixel_ray(mm.position)
+			var cand := _axis_pick_under_ray(raym[0], raym[1])
+			if cand.is_empty():
+				world.clear_axis_hover()
+			else:
+				world.set_axis_hover(
+					doc.sketch_feature(String(_pending_revolve["sketch_id"])),
+					String(cand["axis"]), cand["a"] as Vector2,
+					cand["b"] as Vector2, _axis_hover_width_mm())
 
 
 func _unhandled_key_input(event: InputEvent) -> void:
@@ -2073,6 +2173,8 @@ func handle_app_key(k: InputEventKey) -> bool:
 			else RevolveFeature.AXIS_Y
 		picking_revolve_axis = false
 		world.clear_profile_hover()
+		world.clear_axis_hover()
+		world.hide_axis_candidates()
 		_open_revolve_dialog()
 		_refresh_ui()
 		return true
@@ -2105,6 +2207,8 @@ func handle_app_key(k: InputEventKey) -> bool:
 			world.set_plane_hover("")
 			world.clear_profile_hover()
 			world.clear_face_hover()
+			world.clear_axis_hover()
+			world.hide_axis_candidates()
 			world.set_planes_visible(false)
 			_refresh_ui()
 			return true
@@ -2536,8 +2640,8 @@ func _refresh_ui() -> void:
 	elif picking_revolve:
 		_status_hint.text = "Select the profile to revolve (Esc to cancel)"
 	elif picking_revolve_axis:
-		_status_hint.text = ("Select the axis: click a sketch line, or press "
-			+ "X / Y for the sketch axes (Esc to cancel)")
+		_status_hint.text = ("Select the axis: click a sketch line or one of "
+			+ "the drawn sketch axes, or press X / Y (Esc to cancel)")
 	elif in_sketch and sketch_orbit:
 		var fo := doc.sketch_feature(active_sketch_id)
 		_status_hint.text = ("Off-axis — sketching continues on %s; click its "

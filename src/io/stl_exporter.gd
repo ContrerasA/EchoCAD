@@ -28,11 +28,18 @@ static func mesh_triangles(mesh: ArrayMesh) -> PackedVector3Array:
 
 
 ## Write `bodies` — [{name: String, mesh: ArrayMesh}] — to `path`.
+## `scale` multiplies every coordinate: 1.0 writes mm (the slicer
+## convention), 0.001 writes metres for tools like Blender that map one STL
+## unit to a metre (QA §M24.3).
 ## -> {"ok": bool, "triangles": int, "error": String}
-static func write(bodies: Array, path: String, ascii := false) -> Dictionary:
+static func write(bodies: Array, path: String, ascii := false,
+		scale := 1.0) -> Dictionary:
 	var tris := PackedVector3Array()
 	for b: Dictionary in bodies:
 		tris.append_array(mesh_triangles(b.get("mesh") as ArrayMesh))
+	if absf(scale - 1.0) > 1e-12:
+		for i in tris.size():
+			tris[i] *= scale
 	if tris.is_empty():
 		return {"ok": false, "triangles": 0,
 			"error": "nothing to export — no solid bodies"}
@@ -44,7 +51,8 @@ static func write(bodies: Array, path: String, ascii := false) -> Dictionary:
 	if ascii:
 		_write_ascii(f, tris)
 	else:
-		_write_binary(f, tris, count)
+		_write_binary(f, tris, count,
+			"mm" if absf(scale - 1.0) < 1e-12 else "m")
 	f.close()
 	return {"ok": true, "triangles": count, "error": ""}
 
@@ -55,10 +63,10 @@ static func _normal_of(a: Vector3, b: Vector3, c: Vector3) -> Vector3:
 
 
 static func _write_binary(f: FileAccess, tris: PackedVector3Array,
-		count: int) -> void:
+		count: int, unit := "mm") -> void:
 	# 80-byte header. Must NOT begin with "solid" or sloppy readers treat the
 	# file as ASCII.
-	var header := "EchoCAD binary STL (units: mm)".to_ascii_buffer()
+	var header := ("EchoCAD binary STL (units: %s)" % unit).to_ascii_buffer()
 	header.resize(80)
 	f.store_buffer(header)
 	f.store_32(count)

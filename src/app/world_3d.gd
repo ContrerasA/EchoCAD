@@ -132,6 +132,16 @@ var _bodies: Array = []
 ## sketch rebuilds cannot orphan it mid-gesture).
 var _profile_hover_mi: MeshInstance3D = null
 var _profile_hover_key := ""
+## Revolve axis picking (M23): the sketch-axis candidate lines drawn while an
+## axis is awaited, and the hover highlight over whichever candidate the
+## cursor is on.
+var _axis_candidates_mi: MeshInstance3D = null
+var _axis_hover_mi: MeshInstance3D = null
+var _axis_hover_key := ""
+
+## Emitted after a BodyBuilder pass lands (possibly a frame after the model
+## change when CSG booleans bake). The browser tree re-lists bodies off it.
+signal bodies_rebuilt
 
 
 func _ready() -> void:
@@ -1001,6 +1011,86 @@ func clear_profile_hover() -> void:
 	_profile_hover_key = ""
 
 
+## Revolve axis picking (M23): draw the sketch's own u/v axes through its
+## origin as clickable candidates (red = X, green = Y), on the sketch's
+## plane — origin planes and offset planes alike.
+func show_axis_candidates(sf: SketchFeature) -> void:
+	hide_axis_candidates()
+	if sf == null:
+		return
+	var xf := sf.plane_transform()
+	var im := ImmediateMesh.new()
+	for axis: Array in [
+			[Vector2(-AXIS_LEN, 0), Vector2(AXIS_LEN, 0), Color(0.85, 0.30, 0.30)],
+			[Vector2(0, -AXIS_LEN), Vector2(0, AXIS_LEN), Color(0.35, 0.80, 0.35)]]:
+		im.surface_begin(Mesh.PRIMITIVE_LINES)
+		im.surface_set_color(axis[2])
+		var a: Vector2 = axis[0]
+		var b: Vector2 = axis[1]
+		im.surface_add_vertex(xf * Vector3(a.x, a.y, 0.0))
+		im.surface_add_vertex(xf * Vector3(b.x, b.y, 0.0))
+		im.surface_end()
+	_axis_candidates_mi = MeshInstance3D.new()
+	_axis_candidates_mi.name = "AxisCandidates"
+	_axis_candidates_mi.mesh = im
+	var mat := _line_material(Color.WHITE)
+	# The pick must read over region fills and bodies, like the hover does.
+	mat.no_depth_test = true
+	mat.render_priority = 9
+	_axis_candidates_mi.material_override = mat
+	add_child(_axis_candidates_mi)
+
+
+func hide_axis_candidates() -> void:
+	if _axis_candidates_mi != null:
+		_axis_candidates_mi.queue_free()
+		_axis_candidates_mi = null
+
+
+## Highlight one axis candidate (a line entity or a sketch axis) as a thick
+## amber band along uv segment a..b on `sf`'s plane. `width_mm` is the band's
+## full width — the caller derives it from the view zoom so it stays a few
+## pixels wide on screen.
+func set_axis_hover(sf: SketchFeature, key: String, a: Vector2, b: Vector2,
+		width_mm: float) -> void:
+	if sf == null or key == "":
+		clear_axis_hover()
+		return
+	var k := sf.id + "|" + key + "|%.3f" % width_mm
+	if k == _axis_hover_key and _axis_hover_mi != null:
+		return
+	clear_axis_hover()
+	var d := b - a
+	if d.length() < 1e-9:
+		return
+	var perp := Vector2(-d.y, d.x).normalized() * (width_mm * 0.5)
+	var xf := sf.plane_transform()
+	var quad := [a + perp, b + perp, b - perp, a - perp]
+	var tris := PackedVector3Array()
+	for i in [0, 1, 2, 0, 2, 3]:
+		var p: Vector2 = quad[i]
+		tris.append(xf * Vector3(p.x, p.y, 0.0))
+	var mesh := ArrayMesh.new()
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = tris
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	_axis_hover_mi = MeshInstance3D.new()
+	_axis_hover_mi.name = "AxisHover"
+	_axis_hover_mi.mesh = mesh
+	_axis_hover_mi.material_override = _fill_material(
+		Color(1.0, 0.72, 0.25, 0.85), true)
+	add_child(_axis_hover_mi)
+	_axis_hover_key = k
+
+
+func clear_axis_hover() -> void:
+	if _axis_hover_mi != null:
+		_axis_hover_mi.queue_free()
+		_axis_hover_mi = null
+	_axis_hover_key = ""
+
+
 ## Rebuild solid bodies via BodyBuilder. Runs to completion synchronously
 ## when no CSG boolean is involved (all extrudes are plain new bodies), so
 ## code that counts solids right after a stack change keeps working; with
@@ -1023,6 +1113,7 @@ func _rebuild_bodies(doc: CadDocument) -> void:
 
 func _apply_bodies(bodies: Array) -> void:
 	_bodies = bodies
+	bodies_rebuilt.emit()
 	for c in _sketch_root.get_children():
 		if (c as Node).has_meta("is_body"):
 			c.free()   # immediate: the replacement is added THIS call

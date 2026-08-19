@@ -107,12 +107,19 @@ func refresh() -> void:
 	bodies.set_selectable(COL_NAME, false)
 	bodies.collapsed = not expanded.get("Bodies", true)
 	var selected := app.world.selected_body()
-	for f in app.doc.live_features():
-		if not (f is SolidFeature):
+	# List the BUILT bodies, not the raw solid features: a Join/Cut feature
+	# contributes to an existing body rather than owning a row of its own
+	# (QA §M23 — a cut revolve listed as a phantom "Revolve" body whose eye
+	# did nothing). Bodies fully consumed by cuts have no mesh left and are
+	# skipped, matching what the 3D view instances.
+	for b: Dictionary in app.world.bodies():
+		var mesh: ArrayMesh = b.get("mesh")
+		if mesh == null or mesh.get_surface_count() == 0:
 			continue
-		var row := _add_row(bodies, "body", f.id, f.name,
-			app.world.body_shown(f.id))
-		if f.id == selected:
+		var fid := String(b["id"])
+		var row := _add_row(bodies, "body", fid, String(b["name"]),
+			app.world.body_shown(fid))
+		if fid == selected:
 			row.select(COL_NAME)
 
 
@@ -170,7 +177,10 @@ func _on_item_selected() -> void:
 	var meta: Dictionary = _rows[row]
 	match String(meta["kind"]):
 		"body":
-			app.select_body(String(meta["id"]))
+			# Deferred: select_body refreshes this tree, and Godot forbids
+			# clear/create_item from inside a Tree mouse-selection callback
+			# (QA §M23 — the "tree cannot be cleared" error spam).
+			app.select_body.call_deferred(String(meta["id"]))
 		"sketch":
 			# A single click just selects the row (double-click edits, the
 			# context menu exports) — matching how bodies behave.
@@ -207,6 +217,12 @@ var _body_menu_target := ""
 
 const BODY_MENU_EXPORT_STL := 0
 
+var _cplane_menu: PopupMenu = null
+var _cplane_menu_target := ""
+
+const CPLANE_MENU_EDIT := 0
+const CPLANE_MENU_DELETE := 1
+
 
 func _on_item_mouse_selected(pos: Vector2, mouse_button_index: int) -> void:
 	if mouse_button_index != MOUSE_BUTTON_RIGHT:
@@ -226,6 +242,21 @@ func _on_item_mouse_selected(pos: Vector2, mouse_button_index: int) -> void:
 			add_child(_body_menu)
 		_body_menu.position = Vector2i(get_screen_position() + pos)
 		_body_menu.popup()
+		return
+	if String(meta["kind"]) == "cplane":
+		# Construction-plane rows: edit the offset or delete the plane (QA
+		# §M22.8 — deletion refuses via app.request_delete_feature when a
+		# sketch or another plane still uses it).
+		_cplane_menu_target = String(meta["id"])
+		if _cplane_menu == null:
+			_cplane_menu = PopupMenu.new()
+			_cplane_menu.name = "CplaneContextMenu"
+			_cplane_menu.add_item("Edit Offset...", CPLANE_MENU_EDIT)
+			_cplane_menu.add_item("Delete", CPLANE_MENU_DELETE)
+			_cplane_menu.id_pressed.connect(_on_cplane_menu_pressed)
+			add_child(_cplane_menu)
+		_cplane_menu.position = Vector2i(get_screen_position() + pos)
+		_cplane_menu.popup()
 		return
 	if String(meta["kind"]) != "sketch":
 		return
@@ -253,3 +284,11 @@ func _on_body_menu_pressed(id: int) -> void:
 	match id:
 		BODY_MENU_EXPORT_STL:
 			app.export_stl_interactive(_body_menu_target)
+
+
+func _on_cplane_menu_pressed(id: int) -> void:
+	match id:
+		CPLANE_MENU_EDIT:
+			app.edit_plane_offset(_cplane_menu_target)
+		CPLANE_MENU_DELETE:
+			app.request_delete_feature(_cplane_menu_target)
