@@ -42,6 +42,10 @@ const COLOR_AXIS_Y := Color(0.35, 0.80, 0.35, 0.8)
 const COLOR_REGION_FILL := Color(0.30, 0.62, 0.96, 0.10)
 
 var bridge: RenderBridge = null
+## M30: supplies reference images for the ACTIVE sketch plane —
+## [{tex, center, width_mm, height_mm, rotation, opacity}] — drawn under
+## the grid so geometry and chrome always win.
+var canvases_provider: Callable = Callable()
 ## The unit whose steps the grid follows (document display unit).
 var grid_unit: UnitConverter.Unit = UnitConverter.Unit.IN
 ## Tool input hook: Callable(world: Vector2, screen: Vector2, event) -> bool.
@@ -388,6 +392,20 @@ func _draw() -> void:
 	else:
 		draw_rect(Rect2(Vector2.ZERO, size),
 			Color(bg.r, bg.g, bg.b, MODEL_VEIL_ALPHA))
+	# Reference images (M30) under everything else on the canvas.
+	if canvases_provider.is_valid():
+		for c: Dictionary in canvases_provider.call():
+			var tex: Texture2D = c["tex"]
+			if tex == null:
+				continue
+			var scr := world_to_screen(c["center"])
+			var wpx: float = float(c["width_mm"]) * _zoom
+			var hpx: float = float(c["height_mm"]) * _zoom
+			# Screen space is Y-down: the plane rotation negates.
+			draw_set_transform(scr, -float(c["rotation"]), Vector2.ONE)
+			draw_texture_rect(tex, Rect2(-wpx * 0.5, -hpx * 0.5, wpx, hpx),
+				false, Color(1, 1, 1, float(c["opacity"])))
+			draw_set_transform_matrix(Transform2D.IDENTITY)
 	# TWO LEVELS, cross-faded, exactly as the 3D grid does it — see
 	# `step_levels`. The spacing snaps between rungs of the 1/2/5 ladder, so
 	# drawing only the chosen rung makes every intermediate line appear or

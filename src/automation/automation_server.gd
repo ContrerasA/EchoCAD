@@ -432,6 +432,62 @@ func _cmd_action_apply_view(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Var
 	return null
 
 
+## --- M30 canvases ------------------------------------------------------------
+
+func _cmd_action_import_canvas(a: Dictionary, p: StreamPeerTCP,
+		id: Variant) -> Variant:
+	var fid := app.import_canvas(String(a.get("path", "")),
+		String(a.get("plane", "")), float(a.get("width", 0.0)))
+	if fid == "":
+		_reply_err(p, id, "bad_args", "canvas import failed (see status)")
+		return null
+	return _canvas_info(fid)
+
+
+func _cmd_action_set_canvas(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
+	var fid := String(a.get("feature", ""))
+	if app.doc.feature_by_id(fid) as CanvasFeature == null:
+		_reply_err(p, id, "not_found", "no canvas %s" % fid)
+		return null
+	var props := {}
+	if a.has("center"):
+		props["center"] = _vec2(a["center"])
+	for k in ["width_mm", "rotation", "opacity"]:
+		if a.has(k):
+			props[k] = float(a[k])
+	if a.has("locked"):
+		props["locked"] = bool(a["locked"])
+	app.stack.push_no_merge(CmdSetCanvasProps.new(fid, props))
+	return _canvas_info(fid)
+
+
+func _cmd_action_calibrate_canvas(a: Dictionary, p: StreamPeerTCP,
+		id: Variant) -> Variant:
+	var err := app.apply_canvas_calibration(String(a.get("feature", "")),
+		_vec2(a.get("a", [0, 0])), _vec2(a.get("b", [0, 0])),
+		float(a.get("distance", 0.0)))
+	if err != "":
+		_reply_err(p, id, "bad_args", err)
+		return null
+	return _canvas_info(String(a.get("feature", "")))
+
+
+func _cmd_query_canvas(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
+	var fid := String(a.get("feature", ""))
+	if app.doc.feature_by_id(fid) as CanvasFeature == null:
+		_reply_err(p, id, "not_found", "no canvas %s" % fid)
+		return null
+	return _canvas_info(fid)
+
+
+func _canvas_info(fid: String) -> Dictionary:
+	var cf := app.doc.feature_by_id(fid) as CanvasFeature
+	return {"feature": cf.id, "name": cf.name, "plane": cf.plane,
+		"center": [cf.center.x, cf.center.y], "width_mm": cf.width_mm,
+		"height_mm": cf.height_mm(), "rotation": cf.rotation,
+		"opacity": cf.opacity, "locked": cf.locked}
+
+
 ## Measurement of a selection (or explicit ids) — same numbers the status
 ## readout formats. args: {ids?: [..]} (defaults to the live selection).
 func _cmd_query_measure(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:

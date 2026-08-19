@@ -74,6 +74,8 @@ func _on_chip_input(fid: String, ev: InputEvent) -> void:
 			app.edit_sketch(fid)
 		elif f is PlaneFeature:
 			app.edit_plane_offset(fid)
+		elif f is CanvasFeature:
+			app.open_canvas_dialog(fid)
 	elif mb.pressed and mb.button_index == MOUSE_BUTTON_RIGHT:
 		_menu_feature = fid
 		_menu.clear()
@@ -95,6 +97,8 @@ func _on_menu(id: int) -> void:
 				app.edit_sketch(fid)
 			elif f is PlaneFeature:
 				app.edit_plane_offset(fid)
+			elif f is CanvasFeature:
+				app.open_canvas_dialog(fid)
 		1:
 			var f := app.doc.feature_by_id(fid)
 			if f != null:

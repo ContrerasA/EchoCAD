@@ -391,3 +391,32 @@ Status: PENDING sign-off
    the polygon but keeps it regular; dimensioning the circle pins the size.
 - [ ] 7. Pattern a spline; mirror-check bends. **Expect:** copies keep the
    exact bezier shape (handle overrides travel).
+
+## §M30 — Reference images (canvases)
+
+Status: PENDING sign-off
+
+- [ ] 1. **Canvas** button → pick a photo (PNG/JPEG). **Expect:** the image
+   lands on the plane (active sketch plane if sketching, else XY), a
+   Canvases folder appears in the browser, a timeline chip appears, and
+   the placement dialog opens.
+- [ ] 2. In the dialog set Center/Width/Rotation/Opacity (unit suffixes
+   work), Apply. **Expect:** the image moves/scales/tilts live in both the
+   3D view and inside a sketch on that plane; Ctrl+Z reverts the edit in
+   one step.
+- [ ] 3. Right-click the browser row → **Calibrate…** (inside a sketch on
+   its plane): click two recognizable points on the image, type the real
+   distance. **Expect:** the image rescales so those points measure right
+   (check with a dimension); the first pick stays put. Esc mid-pick
+   cancels.
+- [ ] 4. Trace geometry over the image. **Expect:** the image never steals
+   clicks (it is not snappable/pickable); lines/splines draw over it; the
+   grid stays visible above it.
+- [ ] 5. Browser eye off/on; suppress via the timeline chip. **Expect:**
+   the image hides in BOTH modes; suppress also removes it from replay.
+- [ ] 6. Save, reopen. **Expect:** the image comes back exactly (bytes are
+   embedded in the .ecad — move the original file away first to prove it).
+- [ ] 7. Lock in the edit dialog. **Expect:** the lock shows in the browser
+   row (🔒).
+- [ ] 8. Import a renamed .txt as .png. **Expect:** refused with a status
+   message; nothing added.

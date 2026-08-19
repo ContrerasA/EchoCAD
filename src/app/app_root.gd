@@ -135,6 +135,16 @@ var _btn_ortho: Button = null
 var _views_pick: OptionButton = null
 var _unit_pick: OptionButton = null
 var _status_measure: Label = null
+## M30 canvases: import dialog, placement editor, calibration pick state.
+var _canvas_file_dialog: FileDialog = null
+var _canvas_dialog: Window = null
+var _canvas_dialog_fid := ""
+var _canvas_fields := {}
+var picking_calibrate := false
+var _calib_fid := ""
+var _calib_picks: Array = []
+var _calib_dialog: Window = null
+var _calib_dist: LineEdit = null
 var _status_mode: Label
 var _status_hint: Label
 ## Wall-clock ms until which a posted hint outranks the cursor readout.
@@ -756,6 +766,9 @@ func _build_ui() -> void:
 	var dxfi := _button(g_io, "Import DXF", import_dxf_interactive,
 		"import_dxf")
 	dxfi.name = "ImportDxfBtn"
+	var canvb := _button(g_io, "Canvas", import_canvas_interactive, "canvas")
+	canvb.name = "ImportCanvasBtn"
+	canvb.tooltip_text = "Insert a reference image (PNG/JPEG) on a plane"
 	var dxfb := _button(g_io, "Export DXF", export_dxf_interactive,
 		"export_dxf")
 	dxfb.name = "ExportDxfBtn"
@@ -955,6 +968,23 @@ func _build_ui() -> void:
 	sketch_view.tool_input = _on_tool_input
 	sketch_view.key_handler = handle_app_key
 	sketch_view.orbit_request = _on_sketch_orbit_request
+	# Reference images on the active sketch plane (M30).
+	sketch_view.canvases_provider = func() -> Array:
+		var out: Array = []
+		if mode != Mode.SKETCH:
+			return out
+		var sf := doc.sketch_feature(active_sketch_id)
+		if sf == null:
+			return out
+		for f in doc.live_features():
+			var cf := f as CanvasFeature
+			if cf == null or cf.plane != sf.plane \
+					or not world.canvas_shown(cf.id):
+				continue
+			out.append({"tex": cf.texture(), "center": cf.center,
+				"width_mm": cf.width_mm, "height_mm": cf.height_mm(),
+				"rotation": cf.rotation, "opacity": cf.opacity})
+		return out
 	stack_area.add_child(sketch_view)
 
 	overlay = Control.new()
@@ -1250,6 +1280,229 @@ func _update_measure_label() -> void:
 		return
 	_status_measure.text = "" if mode != Mode.SKETCH \
 		else Measure.describe(active_sketch(), selection, doc.display_unit)
+
+
+## --- reference images / canvases (M30) ---------------------------------------
+
+## Insert an image file as a canvas feature. Plane defaults to the active
+## sketch's plane (or XY in model mode). Returns the feature id or "".
+func import_canvas(path: String, plane := "", width := 0.0) -> String:
+	var cf := CanvasFeature.new()
+	var err := cf.load_file(path)
+	if err != "":
+		set_status_hint("Canvas: " + err)
+		return ""
+	cf.id = doc.next_feature_id()
+	cf.name = doc.auto_name("Canvas")
+	if plane != "":
+		if not SketchFeature.PLANES.has(plane) \
+				and doc.plane_feature(plane) == null:
+			set_status_hint("Canvas: no such plane %s" % plane)
+			return ""
+		cf.plane = plane
+	elif mode == Mode.SKETCH:
+		var sf := doc.sketch_feature(active_sketch_id)
+		cf.plane = sf.plane if sf != null else "XY"
+	if width > 0.0:
+		cf.width_mm = width
+	stack.push_no_merge(CmdAddFeature.new(cf))
+	set_status_hint("%s inserted on %s (double-click its chip to edit)"
+		% [cf.name, cf.plane_label()])
+	return cf.id
+
+
+func import_canvas_interactive() -> void:
+	if _canvas_file_dialog == null:
+		_canvas_file_dialog = FileDialog.new()
+		_canvas_file_dialog.name = "CanvasFileDialog"
+		_canvas_file_dialog.access = FileDialog.ACCESS_FILESYSTEM
+		_canvas_file_dialog.filters = ["*.png, *.jpg, *.jpeg ; Images"]
+		_canvas_file_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
+		_canvas_file_dialog.size = Vector2i(640, 440)
+		_canvas_file_dialog.file_selected.connect(func(p: String) -> void:
+			var fid := import_canvas(p)
+			if fid != "":
+				open_canvas_dialog(fid))
+		add_child(_canvas_file_dialog)
+	_canvas_file_dialog.popup_centered()
+
+
+## Placement editor: center / width / rotation / opacity / lock. Numeric
+## fields commit on Enter or Apply; every commit is one merged undo step.
+func open_canvas_dialog(fid: String) -> void:
+	var cf := doc.feature_by_id(fid) as CanvasFeature
+	if cf == null:
+		return
+	_canvas_dialog_fid = fid
+	if _canvas_dialog == null:
+		_canvas_dialog = Window.new()
+		_canvas_dialog.name = "CanvasDialog"
+		_canvas_dialog.size = Vector2i(280, 230)
+		_canvas_dialog.exclusive = false
+		_canvas_dialog.close_requested.connect(
+			func() -> void: _canvas_dialog.hide())
+		var box := VBoxContainer.new()
+		box.set_anchors_preset(Control.PRESET_FULL_RECT)
+		_canvas_dialog.add_child(box)
+		_canvas_fields = {}
+		for def: Array in [["Center X", "cx"], ["Center Y", "cy"],
+				["Width", "w"], ["Rotation °", "rot"], ["Opacity", "op"]]:
+			var row := HBoxContainer.new()
+			box.add_child(row)
+			var lab := Label.new()
+			lab.text = def[0]
+			lab.custom_minimum_size = Vector2(80, 0)
+			row.add_child(lab)
+			var edit := LineEdit.new()
+			edit.name = "Canvas" + String(def[1]).capitalize() + "Edit"
+			edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			edit.text_submitted.connect(
+				func(_t: String) -> void: _commit_canvas_dialog())
+			row.add_child(edit)
+			_canvas_fields[def[1]] = edit
+		var lock := CheckBox.new()
+		lock.name = "CanvasLockChk"
+		lock.text = "Lock"
+		lock.focus_mode = Control.FOCUS_NONE
+		box.add_child(lock)
+		_canvas_fields["lock"] = lock
+		var brow := HBoxContainer.new()
+		box.add_child(brow)
+		var calb := Button.new()
+		calb.name = "CanvasCalibrateBtn"
+		calb.text = "Calibrate"
+		calb.focus_mode = Control.FOCUS_NONE
+		calb.pressed.connect(func() -> void:
+			_canvas_dialog.hide()
+			start_canvas_calibrate(_canvas_dialog_fid))
+		brow.add_child(calb)
+		var okb := Button.new()
+		okb.name = "CanvasApplyBtn"
+		okb.text = "Apply"
+		okb.focus_mode = Control.FOCUS_NONE
+		okb.pressed.connect(_commit_canvas_dialog)
+		brow.add_child(okb)
+		add_child(_canvas_dialog)
+	_canvas_dialog.title = cf.name
+	var u := doc.display_unit
+	(_canvas_fields["cx"] as LineEdit).text = UnitConverter.format(cf.center.x, u)
+	(_canvas_fields["cy"] as LineEdit).text = UnitConverter.format(cf.center.y, u)
+	(_canvas_fields["w"] as LineEdit).text = UnitConverter.format(cf.width_mm, u)
+	(_canvas_fields["rot"] as LineEdit).text = "%.1f" % rad_to_deg(cf.rotation)
+	(_canvas_fields["op"] as LineEdit).text = "%.2f" % cf.opacity
+	(_canvas_fields["lock"] as CheckBox).set_pressed_no_signal(cf.locked)
+	_canvas_dialog.popup_centered()
+
+
+func _commit_canvas_dialog() -> void:
+	var cf := doc.feature_by_id(_canvas_dialog_fid) as CanvasFeature
+	if cf == null:
+		return
+	var u := doc.display_unit
+	var props := {}
+	var cx := UnitConverter.parse((_canvas_fields["cx"] as LineEdit).text, u)
+	var cy := UnitConverter.parse((_canvas_fields["cy"] as LineEdit).text, u)
+	if cx["ok"] and cy["ok"]:
+		props["center"] = Vector2(float(cx["mm"]), float(cy["mm"]))
+	var w := UnitConverter.parse((_canvas_fields["w"] as LineEdit).text, u)
+	if w["ok"] and float(w["mm"]) > 0.0:
+		props["width_mm"] = float(w["mm"])
+	var rot_text := (_canvas_fields["rot"] as LineEdit).text
+	if rot_text.is_valid_float():
+		props["rotation"] = deg_to_rad(rot_text.to_float())
+	var op_text := (_canvas_fields["op"] as LineEdit).text
+	if op_text.is_valid_float():
+		props["opacity"] = clampf(op_text.to_float(), 0.05, 1.0)
+	props["locked"] = (_canvas_fields["lock"] as CheckBox).button_pressed
+	stack.push_no_merge(CmdSetCanvasProps.new(_canvas_dialog_fid, props))
+	_canvas_dialog.hide()
+
+
+## Calibrate: two picks on the image + a real distance rescale the canvas
+## about the FIRST pick (so the picked feature stays put).
+func start_canvas_calibrate(fid: String) -> void:
+	var cf := doc.feature_by_id(fid) as CanvasFeature
+	if cf == null:
+		return
+	if mode != Mode.SKETCH:
+		set_status_hint("Calibrate: open a sketch on %s first"
+			% cf.plane_label())
+		return
+	picking_calibrate = true
+	_calib_fid = fid
+	_calib_picks = []
+	set_status_hint("Calibrate: click two points a known distance apart "
+		+ "(Esc to cancel)")
+
+
+func _on_calibrate_pick(world_pos: Vector2) -> void:
+	_calib_picks.append(world_pos)
+	if _calib_picks.size() < 2:
+		set_status_hint("Calibrate: click the second point")
+		return
+	picking_calibrate = false
+	# Ask for the real distance.
+	if _calib_dialog == null:
+		_calib_dialog = Window.new()
+		_calib_dialog.name = "CalibrateDialog"
+		_calib_dialog.title = "Calibrate"
+		_calib_dialog.size = Vector2i(240, 84)
+		_calib_dialog.exclusive = false
+		_calib_dialog.close_requested.connect(
+			func() -> void: _calib_dialog.hide())
+		var box := VBoxContainer.new()
+		box.set_anchors_preset(Control.PRESET_FULL_RECT)
+		_calib_dialog.add_child(box)
+		_calib_dist = LineEdit.new()
+		_calib_dist.name = "CalibrateDistEdit"
+		_calib_dist.placeholder_text = "Real distance (e.g. 2.5in)"
+		box.add_child(_calib_dist)
+		var okb := Button.new()
+		okb.name = "CalibrateOkBtn"
+		okb.text = "OK"
+		okb.pressed.connect(_commit_calibrate)
+		box.add_child(okb)
+		_calib_dist.text_submitted.connect(
+			func(_t: String) -> void: _commit_calibrate())
+		add_child(_calib_dialog)
+	_calib_dist.text = ""
+	_calib_dialog.popup_centered()
+	_calib_dist.grab_focus()
+
+
+func _commit_calibrate() -> void:
+	var r := UnitConverter.parse(_calib_dist.text, doc.display_unit)
+	if not r["ok"] or float(r["mm"]) <= 0.0:
+		set_status_hint("Calibrate: enter the real distance")
+		return
+	_calib_dialog.hide()
+	apply_canvas_calibration(_calib_fid, _calib_picks[0], _calib_picks[1],
+		float(r["mm"]))
+
+
+## Pure calibration math + command push (shared with RPC): scale the canvas
+## so |a-b| measures `real_mm`, holding `a` fixed on the plane.
+func apply_canvas_calibration(fid: String, a: Vector2, b: Vector2,
+		real_mm: float) -> String:
+	var cf := doc.feature_by_id(fid) as CanvasFeature
+	if cf == null:
+		return "no such canvas"
+	var picked := a.distance_to(b)
+	if picked < 1e-6 or real_mm <= 0.0:
+		return "degenerate calibration"
+	var s := real_mm / picked
+	stack.push_no_merge(CmdSetCanvasProps.new(fid, {
+		"width_mm": cf.width_mm * s,
+		"center": a + (cf.center - a) * s,
+	}))
+	set_status_hint("Calibrated %s (×%.4f)" % [cf.name, s])
+	return ""
+
+
+## Browser eye for canvases (M30).
+func set_canvas_shown(fid: String, shown: bool) -> void:
+	world.set_canvas_shown(fid, shown)
+	sketch_view.queue_redraw()
 
 
 ## Body properties popup (M27): volume + bounding box, in the display unit.
@@ -2555,6 +2808,11 @@ func handle_app_key(k: InputEventKey) -> bool:
 		_refresh_ui()
 		return true
 	if k.keycode == KEY_ESCAPE:
+		if picking_calibrate:
+			picking_calibrate = false
+			_calib_picks = []
+			set_status_hint("Calibrate cancelled")
+			return true
 		if mode == Mode.SKETCH:
 			# Esc ends the gesture AND drops back to Select, Fusion-style —
 			# a cancelled draw should not leave the tool armed for another
@@ -2740,6 +2998,11 @@ func _on_tool_input(world_pos: Vector2, screen: Vector2, event: InputEvent) -> b
 		return false
 	if event is InputEventMouseButton:
 		var mb := event as InputEventMouseButton
+		# Canvas calibration picks (M30) intercept clicks before tools.
+		if picking_calibrate and mb.pressed \
+				and mb.button_index == MOUSE_BUTTON_LEFT:
+			_on_calibrate_pick(world_pos)
+			return true
 		if mb.pressed:
 			return tools.handle_pointer_down(world_pos, screen, mb)
 		return tools.handle_pointer_up(world_pos, screen, mb)

@@ -122,6 +122,8 @@ var _body_hidden := {}
 ## shown. Governs the 3D line mesh AND the sketch-mode reference geometry, so
 ## one tick means the same thing in both modes.
 var _sketch_hidden := {}
+## Canvas feature ids hidden via the browser eye (M30). Absent = shown.
+var _canvas_hidden := {}
 ## Body rebuild state (M18). Bodies come from BodyBuilder, which is a
 ## coroutine when CSG booleans are involved: a rebuild may land a frame or
 ## two after the model change. `_bodies_building` serializes overlapping
@@ -564,6 +566,25 @@ func sketch_shown(fid: String) -> bool:
 	return not bool(_sketch_hidden.get(fid, false))
 
 
+## Browser eye for a reference image (M30) — 3D quad + sketch-mode draw.
+func set_canvas_shown(fid: String, shown: bool) -> void:
+	if shown:
+		_canvas_hidden.erase(fid)
+	else:
+		_canvas_hidden[fid] = true
+	if _sketch_root == null:
+		return
+	for c in _sketch_root.get_children():
+		var mi := c as MeshInstance3D
+		if mi != null and mi.has_meta("canvas_id") \
+				and String(mi.get_meta("canvas_id")) == fid:
+			mi.visible = shown
+
+
+func canvas_shown(fid: String) -> bool:
+	return not bool(_canvas_hidden.get(fid, false))
+
+
 ## Highlight the selected solid; "" clears. View state only — recolouring a
 ## material is not a model mutation, so this never touches the command stack.
 func set_selected_body(fid: String) -> void:
@@ -863,6 +884,9 @@ func rebuild_sketches(doc: CadDocument) -> void:
 	for f in doc.live_features():
 		if f is SolidFeature:
 			continue   # bodies are rebuilt below, boolean-aware
+		if f is CanvasFeature:
+			_add_canvas_quad(f as CanvasFeature)
+			continue
 		if not (f is SketchFeature):
 			continue
 		var sf := f as SketchFeature
@@ -1311,6 +1335,47 @@ func _entity_polyline(sk: Sketch, e: SketchEntity) -> PackedVector2Array:
 		"spline":
 			out = (e as SketchSpline).polyline(sk)
 	return out
+
+
+## Reference image (M30): a textured quad on the canvas's plane, a hair
+## above it so it wins the depth fight with the grid, under sketch lines.
+func _add_canvas_quad(cf: CanvasFeature) -> void:
+	var tex := cf.texture()
+	if tex == null:
+		return
+	var w := cf.width_mm
+	var h := cf.height_mm()
+	var mesh := ArrayMesh.new()
+	var verts := PackedVector3Array()
+	var uvs := PackedVector2Array()
+	var rot := Basis(Vector3(0, 0, 1), cf.rotation)
+	for corner: Array in [[-0.5, -0.5, 0.0, 1.0], [0.5, -0.5, 1.0, 1.0],
+			[0.5, 0.5, 1.0, 0.0], [-0.5, 0.5, 0.0, 0.0]]:
+		verts.append(rot * Vector3(corner[0] * w, corner[1] * h, 0.0)
+			+ Vector3(cf.center.x, cf.center.y, 0.0))
+		uvs.append(Vector2(corner[2], corner[3]))
+	var idx := PackedInt32Array([0, 1, 2, 0, 2, 3, 2, 1, 0, 3, 2, 0])
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = verts
+	arrays[Mesh.ARRAY_TEX_UV] = uvs
+	arrays[Mesh.ARRAY_INDEX] = idx
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.albedo_texture = tex
+	mat.albedo_color = Color(1, 1, 1, cf.opacity)
+	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	var mi := MeshInstance3D.new()
+	mi.name = "Canvas_" + cf.id
+	mi.mesh = mesh
+	mi.material_override = mat
+	mi.transform = cf.plane_transform() \
+		* Transform3D(Basis.IDENTITY, Vector3(0, 0, 0.02))
+	mi.set_meta("canvas_id", cf.id)
+	mi.visible = canvas_shown(cf.id)
+	_sketch_root.add_child(mi)
 
 
 func _line_material(color: Color) -> StandardMaterial3D:

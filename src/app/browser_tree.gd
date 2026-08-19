@@ -101,6 +101,23 @@ func refresh() -> void:
 		if sf.id == app.active_sketch_id:
 			srow.set_custom_color(COL_NAME, Color(1.0, 0.85, 0.3))
 
+	# Reference images (M30), Fusion's "Canvases" folder.
+	var live_canvases: Array = []
+	for f in app.doc.live_features():
+		if f is CanvasFeature:
+			live_canvases.append(f)
+	if not live_canvases.is_empty():
+		var canv := create_item(root)
+		canv.set_text(COL_NAME, "Canvases")
+		canv.set_selectable(COL_EYE, false)
+		canv.set_selectable(COL_NAME, false)
+		canv.collapsed = not expanded.get("Canvases", true)
+		for cf: CanvasFeature in live_canvases:
+			var crow := _add_row(canv, "canvas", cf.id,
+				cf.name + ("  🔒" if cf.locked else ""),
+				app.world.canvas_shown(cf.id))
+			crow.set_selectable(COL_NAME, true)
+
 	var bodies := create_item(root)
 	bodies.set_text(COL_NAME, "Bodies")
 	bodies.set_selectable(COL_EYE, false)
@@ -168,6 +185,8 @@ func _on_item_edited() -> void:
 			app.world.set_body_shown(String(meta["id"]), shown)
 		"sketch":
 			app.set_sketch_shown(String(meta["id"]), shown)
+		"canvas":
+			app.set_canvas_shown(String(meta["id"]), shown)
 
 
 func _on_item_selected() -> void:
@@ -210,6 +229,10 @@ func _on_item_activated() -> void:
 	if row != null and _rows.has(row) \
 			and String((_rows[row] as Dictionary)["kind"]) == "cplane":
 		app.edit_plane_offset(String((_rows[row] as Dictionary)["id"]))
+		return
+	if row != null and _rows.has(row) \
+			and String((_rows[row] as Dictionary)["kind"]) == "canvas":
+		app.open_canvas_dialog(String((_rows[row] as Dictionary)["id"]))
 
 
 var _body_menu: PopupMenu = null
@@ -223,6 +246,13 @@ var _cplane_menu_target := ""
 
 const CPLANE_MENU_EDIT := 0
 const CPLANE_MENU_DELETE := 1
+
+var _canvas_menu: PopupMenu = null
+var _canvas_menu_target := ""
+
+const CANVAS_MENU_EDIT := 0
+const CANVAS_MENU_CALIBRATE := 1
+const CANVAS_MENU_DELETE := 2
 
 
 func _on_item_mouse_selected(pos: Vector2, mouse_button_index: int) -> void:
@@ -260,6 +290,19 @@ func _on_item_mouse_selected(pos: Vector2, mouse_button_index: int) -> void:
 		_cplane_menu.position = Vector2i(get_screen_position() + pos)
 		_cplane_menu.popup()
 		return
+	if String(meta["kind"]) == "canvas":
+		_canvas_menu_target = String(meta["id"])
+		if _canvas_menu == null:
+			_canvas_menu = PopupMenu.new()
+			_canvas_menu.name = "CanvasContextMenu"
+			_canvas_menu.add_item("Edit Canvas...", CANVAS_MENU_EDIT)
+			_canvas_menu.add_item("Calibrate...", CANVAS_MENU_CALIBRATE)
+			_canvas_menu.add_item("Delete", CANVAS_MENU_DELETE)
+			_canvas_menu.id_pressed.connect(_on_canvas_menu_pressed)
+			add_child(_canvas_menu)
+		_canvas_menu.position = Vector2i(get_screen_position() + pos)
+		_canvas_menu.popup()
+		return
 	if String(meta["kind"]) != "sketch":
 		return
 	_menu_target = String(meta["id"])
@@ -288,6 +331,16 @@ func _on_body_menu_pressed(id: int) -> void:
 			app.export_stl_interactive(_body_menu_target)
 		BODY_MENU_PROPERTIES:
 			app.show_body_properties(_body_menu_target)
+
+
+func _on_canvas_menu_pressed(id: int) -> void:
+	match id:
+		CANVAS_MENU_EDIT:
+			app.open_canvas_dialog(_canvas_menu_target)
+		CANVAS_MENU_CALIBRATE:
+			app.start_canvas_calibrate(_canvas_menu_target)
+		CANVAS_MENU_DELETE:
+			app.request_delete_feature(_canvas_menu_target)
 
 
 func _on_cplane_menu_pressed(id: int) -> void:
