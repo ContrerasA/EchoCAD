@@ -81,8 +81,8 @@ func draw_overlay(overlay: Control) -> void:
 		if cc.get("ok", false):
 			preview_arc(overlay, v.world_to_screen(cc["pos"]),
 				float(cc["radius"]) * v.zoom(), 0, TAU, 64,
-				Color(1, 1, 1, 0.7), 1.0)
+				ghost(0.7), 1.0)
 	elif _picked.size() == 1:
 		overlay.draw_line(v.world_to_screen(_picked[0]),
-			v.world_to_screen(_preview), Color(1, 1, 1, 0.35), 1.0)
-	overlay.draw_circle(v.world_to_screen(_preview), 2.0, Color(1, 1, 1, 0.7))
+			v.world_to_screen(_preview), ghost(0.35), 1.0)
+	overlay.draw_circle(v.world_to_screen(_preview), 2.0, ghost(0.7))

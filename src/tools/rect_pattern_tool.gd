@@ -9,8 +9,9 @@ extends SketchTool
 
 var _hover := false
 var _preview := Vector2.ZERO
-## N, M are plain counts; DX, DY are lengths in the display unit.
-var _fields := DimFields.new(["N", "M", "DX", "DY"])
+## Cols/Rows are plain counts; the spacings are lengths in the display unit.
+var _fields := DimFields.new(["Cols", "Rows", "Spacing X", "Spacing Y"],
+	["int", "int", "len", "len"])
 var _source: Array = []
 var _anchor := Vector2.ZERO
 
@@ -33,8 +34,8 @@ func activate() -> void:
 			"Rect Pattern: select geometry first, then pick the tool")
 		return
 	_anchor = _bbox_min(sketch(), _source)
-	app.set_status_hint("Rect Pattern: move to set spacing, type N/M/DX/DY, "
-		+ "click to commit")
+	app.set_status_hint("Rect Pattern: move to set spacing, type "
+		+ "Cols/Rows/Spacing (Tab cycles), click to commit")
 
 
 func deactivate() -> void:
@@ -69,21 +70,24 @@ static func _bbox_min(sk: Sketch, ids: Array) -> Vector2:
 	return lo if lo.x < INF else Vector2.ZERO
 
 
-## Counts come from the fields (raw numbers: parsed as mm against MM so "4"
-## reads as 4); spacings honor the display unit; the cursor supplies both
-## spacings when the fields are empty.
+## Counts come from the fields as raw numbers; spacings honor the display
+## unit; the cursor supplies both spacings when the fields are empty.
 func _params() -> Dictionary:
-	var n := _fields.value_mm(0, UnitConverter.Unit.MM)
-	var m := _fields.value_mm(1, UnitConverter.Unit.MM)
+	var n := _fields.value_num(0)
+	var m := _fields.value_num(1)
 	var dx := _fields.value_mm(2, app.doc.display_unit)
 	var dy := _fields.value_mm(3, app.doc.display_unit)
 	var d := _preview - _anchor
-	return {
+	var p := {
 		"cols": clampi(int(n) if not is_nan(n) else 2, 1, 64),
 		"rows": clampi(int(m) if not is_nan(m) else 1, 1, 64),
 		"dx": dx if not is_nan(dx) else d.x,
 		"dy": dy if not is_nan(dy) else d.y,
 	}
+	# A 1-count axis has no spacing to ask for — hide its field (QA §M29.1).
+	_fields.set_enabled(2, int(p["cols"]) > 1)
+	_fields.set_enabled(3, int(p["rows"]) > 1)
+	return p
 
 
 func pointer_move(world: Vector2, _screen: Vector2, _e: InputEventMouseMotion) -> bool:
@@ -142,6 +146,6 @@ func draw_overlay(overlay: Control) -> void:
 				for k in poly.size() - 1:
 					preview_line(overlay, v.world_to_screen(poly[k] + off),
 						v.world_to_screen(poly[k + 1] + off),
-						Color(1, 1, 1, 0.5), 1.0)
+						ghost(0.5), 1.0)
 	_fields.draw(overlay, v.world_to_screen(_preview), app.doc.display_unit,
-		[2, 1, _preview.x - _anchor.x, _preview.y - _anchor.y])
+		[p["cols"], p["rows"], p["dx"], p["dy"]])

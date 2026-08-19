@@ -34,6 +34,8 @@ const DARK := {
 	"text_dim": Color(0.60, 0.63, 0.68),
 	"icon": Color(0.88, 0.90, 0.94),
 	"accent": Color(0.30, 0.62, 0.96),
+	"dim_line": Color(0.85, 0.87, 0.92),
+	"dim_driven": Color(0.65, 0.68, 0.75),
 }
 
 const LIGHT := {
@@ -54,12 +56,20 @@ const LIGHT := {
 	"text_dim": Color(0.40, 0.43, 0.48),
 	"icon": Color(0.20, 0.22, 0.26),
 	"accent": Color(0.12, 0.42, 0.80),
+	"dim_line": Color(0.13, 0.15, 0.20),
+	"dim_driven": Color(0.38, 0.41, 0.48),
 }
 
 
 static func col(key: String) -> Color:
 	var pal: Dictionary = DARK if dark else LIGHT
 	return pal.get(key, Color.MAGENTA)
+
+
+## Release engine resources held in statics before shutdown — statics
+## outlive the servers and get reported as leaks otherwise (QA §M31).
+static func drop_static_caches() -> void:
+	_icon_cache.clear()
 
 
 ## Icons ship as white-stroke SVGs; the Button theme's icon colors tint them
@@ -140,10 +150,26 @@ static func build_theme() -> Theme:
 	var panel := StyleBoxFlat.new()
 	panel.bg_color = col("panel")
 	t.set_stylebox("panel", "PanelContainer", panel)
+	# Plain Panel serves as the themed backdrop behind the shelf rows and
+	# inside raw Window dialogs (see AppRoot) — without it both kept the
+	# engine's dark clear color under the light theme (QA §M26.5).
+	var plain := StyleBoxFlat.new()
+	plain.bg_color = col("panel_alt")
+	t.set_stylebox("panel", "Panel", plain)
 	var wpanel := StyleBoxFlat.new()
 	wpanel.bg_color = col("panel_alt")
 	t.set_stylebox("panel", "Window", wpanel)
 	t.set_color("title_color", "Window", text)
+	# AcceptDialog (and FileDialog) draw their own "panel" — theme it too or
+	# the popup body stays default-dark in the light theme.
+	for cls in ["AcceptDialog", "ConfirmationDialog", "FileDialog"]:
+		var dpanel := StyleBoxFlat.new()
+		dpanel.bg_color = col("panel_alt")
+		dpanel.content_margin_left = 8.0
+		dpanel.content_margin_right = 8.0
+		dpanel.content_margin_top = 8.0
+		dpanel.content_margin_bottom = 8.0
+		t.set_stylebox("panel", cls, dpanel)
 	var ppanel := _flat(col("panel"), border, 3)
 	t.set_stylebox("panel", "PopupMenu", ppanel)
 	t.set_color("font_color", "PopupMenu", text)

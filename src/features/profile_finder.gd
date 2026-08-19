@@ -102,12 +102,33 @@ static func profiles(sk: Sketch) -> Array:
 					if closed_poly[0].distance_to(
 							closed_poly[closed_poly.size() - 1]) < MERGE_EPS:
 						closed_poly.remove_at(closed_poly.size() - 1)
+					# Normalize to CCW: hole attachment compares areas and a
+					# CW-drawn (or Y-flip-imported) loop carried a NEGATIVE one.
+					var closed_area := _area(closed_poly)
+					if closed_area < 0.0:
+						closed_poly.reverse()
+						closed_area = -closed_area
 					out.append({"polygon": closed_poly,
-						"area": _area(closed_poly), "entities": [e.id]})
+						"area": closed_area, "entities": [e.id]})
 					continue
 				var nsa: String = find.call(sp.points[0])
 				var nsb: String = find.call(sp.points[sp.points.size() - 1])
 				if nsa == nsb:
+					# An OPEN spline whose two ends land on the same node is a
+					# loop all the same (imported outlines close this way) —
+					# it is its own face, like a closed spline or a circle.
+					var loop_poly := spoly.duplicate()
+					if loop_poly[0].distance_to(
+							loop_poly[loop_poly.size() - 1]) < MERGE_EPS:
+						loop_poly.remove_at(loop_poly.size() - 1)
+					if loop_poly.size() >= 3:
+						var loop_area := _area(loop_poly)
+						if loop_area < 0.0:
+							loop_poly.reverse()
+							loop_area = -loop_area
+						if loop_area > MERGE_EPS:
+							out.append({"polygon": loop_poly,
+								"area": loop_area, "entities": [e.id]})
 					continue
 				edges.append({"id": e.id, "a": nsa, "b": nsb, "poly": spoly})
 

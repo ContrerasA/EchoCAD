@@ -123,7 +123,7 @@ func draw_overlay(overlay: Control) -> void:
 		var poly := SketchSpline.positions_polyline(ps, [], false)
 		for i in poly.size() - 1:
 			preview_line(overlay, v.world_to_screen(poly[i]),
-				v.world_to_screen(poly[i + 1]), Color(1, 1, 1, 0.9), 1.0)
+				v.world_to_screen(poly[i + 1]), ghost(0.9), 1.0)
 		for p in _pts:
 			var sp := v.world_to_screen(p)
 			overlay.draw_rect(Rect2(sp - Vector2(3, 3), Vector2(6, 6)),
@@ -139,4 +139,4 @@ func draw_overlay(overlay: Control) -> void:
 		SnapEngine.KIND_CURVE:
 			overlay.draw_circle(p2, 4.0, Color(0.9, 0.75, 0.35, 0.9))
 		_:
-			overlay.draw_circle(p2, 2.0, Color(1, 1, 1, 0.7))
+			overlay.draw_circle(p2, 2.0, ghost(0.7))

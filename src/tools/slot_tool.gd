@@ -175,7 +175,7 @@ func draw_overlay(overlay: Control) -> void:
 		overlay.draw_circle(v.world_to_screen(p), 3.0, Color(0.35, 0.9, 0.55))
 	if _picks.size() == 1:
 		overlay.draw_line(v.world_to_screen(_picks[0]),
-			v.world_to_screen(_preview), Color(1, 1, 1, 0.35), 1.0)
+			v.world_to_screen(_preview), ghost(0.35), 1.0)
 	elif _picks.size() == 2:
 		var w := _resolve_width()
 		if w > 1e-6:
@@ -194,7 +194,7 @@ func _draw_slot_preview(overlay: Control, width: float) -> void:
 		return
 	var n := Vector2(-d.y, d.x)
 	var r := width * 0.5
-	var col := Color(1, 1, 1, 0.85)
+	var col := ghost(0.85)
 	preview_line(overlay, v.world_to_screen(wa + n * r),
 		v.world_to_screen(wb + n * r), col, 1.0)
 	preview_line(overlay, v.world_to_screen(wa - n * r),

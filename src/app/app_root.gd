@@ -197,6 +197,15 @@ func _ready() -> void:
 	get_window().title = "EchoCAD — build " + BUILD
 
 
+## Static GDScript vars are torn down AFTER the servers at exit, so any
+## engine resources still held there (the theme icon textures, a compiled
+## RegEx) are reported as leaked RIDs / unreferenced StringNames on the
+## way out (QA §M31 shutdown note). Drop them while the tree is alive.
+func _exit_tree() -> void:
+	ThemeService.drop_static_caches()
+	CadExpression.drop_static_caches()
+
+
 ## Drives the active tool's per-frame tick. Tools are RefCounted and have no
 ## _process of their own, and gestures that must not run faster than the
 ## display (drag re-solves) rely on this — see `SketchTool.tick`.
@@ -716,6 +725,17 @@ func _build_ui() -> void:
 	# Theme before any control exists, so everything is born themed (M26).
 	ThemeService.load_settings()
 	theme = ThemeService.build_theme()
+	# Themed backdrop behind everything: the space around the shelf groups is
+	# otherwise the engine's dark clear color, which stayed dark under the
+	# light theme (QA §M26.5). A Panel re-reads its stylebox on theme change.
+	var backdrop := Panel.new()
+	backdrop.name = "Backdrop"
+	backdrop.set_anchors_preset(Control.PRESET_FULL_RECT)
+	backdrop.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(backdrop)
+	# Every lazily-created dialog is a raw Window with the same dark clear
+	# color problem — give each one a themed backdrop as it enters the tree.
+	child_entered_tree.connect(_on_child_entered)
 	var vbox := VBoxContainer.new()
 	vbox.name = "Root"
 	vbox.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -744,11 +764,13 @@ func _build_ui() -> void:
 	var filb := _button(g_solids, "Fillet Edges", func() -> void:
 		open_edge_treat_dialog("", EdgeTreatFeature.KIND_FILLET), "fillet_3d")
 	filb.name = "FilletEdgesBtn"
-	filb.tooltip_text = "Round a plain extrude's edges (corners and/or rims)"
+	filb.tooltip_text = ("Round edges of a plain extrude: select the body, "
+		+ "then click the edges to round")
 	var chab := _button(g_solids, "Chamfer Edges", func() -> void:
 		open_edge_treat_dialog("", EdgeTreatFeature.KIND_CHAMFER), "chamfer_3d")
 	chab.name = "ChamferEdgesBtn"
-	chab.tooltip_text = "Chamfer a plain extrude's edges (corners and/or rims)"
+	chab.tooltip_text = ("Chamfer edges of a plain extrude: select the body, "
+		+ "then click the edges to cut")
 	var moveb := _button(g_solids, "Move Body",
 		func() -> void: open_move_dialog(""), "move_body")
 	moveb.name = "MoveBodyBtn"
@@ -979,7 +1001,7 @@ func _build_ui() -> void:
 		if view_cube != null:
 			view_cube.sync_orientation(rig.rotation)
 		# Grid density follows the camera, like the sketch canvas's follows zoom.
-		world.update_grid(rig.view_height_mm())
+		world.update_grid(rig.view_height_mm(), rig.target)
 		# Off-axis sketching projects the overlay chrome (vertex markers,
 		# selection, badges) through this camera — every camera move must
 		# repaint it, or the points trail the 3D lines until the orbit ends.
@@ -1050,7 +1072,7 @@ func _build_ui() -> void:
 		browser.refresh.call_deferred())
 	# The rig emitted `moved` from its own _ready, before the connect above.
 	world.set_grid_unit(doc.display_unit)
-	world.update_grid(rig.view_height_mm())
+	world.update_grid(rig.view_height_mm(), rig.target)
 
 	var status := HBoxContainer.new()
 	status.name = "StatusBar"
@@ -1084,6 +1106,28 @@ func _button(parent: Control, text: String, handler: Callable,
 ## full button strip — the OUTER flow rows wrap whole groups instead. An
 ## HFlow here reported one button as its minimum width and collapsed every
 ## group into a one-button-wide tower that swallowed the viewport.
+## Raw Window dialogs clear to the engine's dark default rather than the
+## theme (a plain Window paints no panel of its own). Slip a themed Panel
+## under each one's content the moment it joins the tree — deferred, because
+## the incoming node is still being set up inside this signal. Window
+## SUBCLASSES (AcceptDialog/FileDialog alerts, PopupMenus) draw their own
+## themed panel and must not get an opaque child shoved under their items.
+func _on_child_entered(node: Node) -> void:
+	if node != null and node.get_class() == "Window":
+		_add_dialog_backdrop.call_deferred(node)
+
+
+func _add_dialog_backdrop(win: Window) -> void:
+	if not is_instance_valid(win) or win.has_node("ThemeBackdrop"):
+		return
+	var p := Panel.new()
+	p.name = "ThemeBackdrop"
+	p.set_anchors_preset(Control.PRESET_FULL_RECT)
+	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	win.add_child(p)
+	win.move_child(p, 0)
+
+
 func _shelf_group(parent: Control, caption: String) -> HBoxContainer:
 	var panel := PanelContainer.new()
 	panel.name = caption + "Group"
@@ -2368,32 +2412,33 @@ func import_dxf_interactive() -> void:
 
 
 ## --- 3D fillet / chamfer (M35) -----------------------------------------------
+## Fusion-style edge selection (QA §M35.1): the shelf button arms a pick —
+## every treatable edge of the selected body draws in the viewport, hover
+## highlights, clicks toggle (rims toggle as a loop), a small dialog holds
+## the size, Apply commits. Editing an existing treatment (timeline
+## double-click) edits its size; the edge set stays as picked.
 
 var _treat_dialog: Window = null
 var _treat_fields := {}
 var _treat_edit_fid := ""
 var _treat_body := ""
 var _treat_kind := EdgeTreatFeature.KIND_FILLET
+var picking_treat_edges := false
+var _treat_pick_edges: Array = []      # EdgeTreatFeature.pickable_edges
+var _treat_selected := {}              # edge key -> true
 
 
 func open_edge_treat_dialog(edit_fid: String, p_kind := "") -> void:
 	var et := doc.feature_by_id(edit_fid) as EdgeTreatFeature
-	_treat_edit_fid = edit_fid if et != null else ""
-	_treat_body = et.body if et != null else world.selected_body()
-	_treat_kind = et.treat if et != null else p_kind
-	if _treat_body == "":
-		set_status_hint("Fillet/Chamfer: select a body first (click it)")
-		return
 	if et == null:
-		var root := doc.feature_by_id(_treat_body) as ExtrudeFeature
-		if root == null:
-			set_status_hint("Fillet/Chamfer: prismatic scope — works on "
-				+ "plain extrude bodies only (no booleans/revolves/sweeps)")
-			return
+		_start_edge_treat_pick(p_kind)
+		return
+	_treat_edit_fid = edit_fid
+	_treat_kind = et.treat
 	if _treat_dialog == null:
 		_treat_dialog = Window.new()
 		_treat_dialog.name = "EdgeTreatDialog"
-		_treat_dialog.size = Vector2i(270, 190)
+		_treat_dialog.size = Vector2i(280, 130)
 		_treat_dialog.exclusive = false
 		_treat_dialog.close_requested.connect(
 			func() -> void: _treat_dialog.hide())
@@ -2414,15 +2459,10 @@ func open_edge_treat_dialog(edit_fid: String, p_kind := "") -> void:
 			func(_t: String) -> void: _commit_edge_treat())
 		row.add_child(edit)
 		_treat_fields["size"] = edit
-		for def: Array in [["Side corners", "lateral", true],
-				["Top rim", "top", true], ["Bottom rim", "bottom", false]]:
-			var chk := CheckBox.new()
-			chk.name = "Treat" + String(def[1]).capitalize() + "Chk"
-			chk.text = def[0]
-			chk.focus_mode = Control.FOCUS_NONE
-			chk.set_pressed_no_signal(def[2])
-			box.add_child(chk)
-			_treat_fields[def[1]] = chk
+		var desc := Label.new()
+		desc.name = "TreatEdgesLabel"
+		box.add_child(desc)
+		_treat_fields["desc"] = desc
 		var okb := Button.new()
 		okb.name = "TreatOkBtn"
 		okb.text = "OK"
@@ -2432,19 +2472,27 @@ func open_edge_treat_dialog(edit_fid: String, p_kind := "") -> void:
 		add_child(_treat_dialog)
 	_treat_dialog.title = "Fillet Edges" \
 		if _treat_kind == EdgeTreatFeature.KIND_FILLET else "Chamfer Edges"
-	var u := doc.display_unit
-	if et != null:
-		(_treat_fields["size"] as LineEdit).text = \
-			UnitConverter.format(et.size_mm, u)
-		(_treat_fields["lateral"] as CheckBox).set_pressed_no_signal(et.lateral)
-		(_treat_fields["top"] as CheckBox).set_pressed_no_signal(et.top)
-		(_treat_fields["bottom"] as CheckBox).set_pressed_no_signal(et.bottom)
-	else:
-		(_treat_fields["size"] as LineEdit).text = \
-			UnitConverter.format(3.0, u)
+	(_treat_fields["size"] as LineEdit).text = \
+		UnitConverter.format(et.size_mm, doc.display_unit)
+	(_treat_fields["desc"] as Label).text = _describe_treat_edges(et)
 	_treat_dialog.popup_centered()
 
 
+static func _describe_treat_edges(et: EdgeTreatFeature) -> String:
+	var bits: PackedStringArray = []
+	if et.lateral:
+		bits.append("all side corners" if et.corners.is_empty()
+			else "%d side corner%s" % [et.corners.size(),
+				"" if et.corners.size() == 1 else "s"])
+	if et.top:
+		bits.append("top rim")
+	if et.bottom:
+		bits.append("bottom rim")
+	return "Edges: " + ", ".join(bits)
+
+
+## Edit commit: the size is the parametric knob; the picked edge set rides
+## the feature unchanged.
 func _commit_edge_treat() -> void:
 	var r := UnitConverter.parse((_treat_fields["size"] as LineEdit).text,
 		doc.display_unit)
@@ -2452,38 +2500,155 @@ func _commit_edge_treat() -> void:
 		set_status_hint("Fillet/Chamfer: enter a size")
 		return
 	_treat_dialog.hide()
-	var size := float(r["mm"])
-	var lat := (_treat_fields["lateral"] as CheckBox).button_pressed
-	var top := (_treat_fields["top"] as CheckBox).button_pressed
-	var bot := (_treat_fields["bottom"] as CheckBox).button_pressed
 	if _treat_edit_fid != "":
-		var batch := CmdMergeBatch.new("Edit Treatment", [])
-		stack.push_no_merge(batch)
-		stack.push(CmdSetFeatureFlag.new(_treat_edit_fid, "size_mm", size))
-		stack.push(CmdSetFeatureFlag.new(_treat_edit_fid, "lateral", lat))
-		stack.push(CmdSetFeatureFlag.new(_treat_edit_fid, "top", top))
-		stack.push(CmdSetFeatureFlag.new(_treat_edit_fid, "bottom", bot))
-		batch.seal()
+		stack.push_no_merge(CmdSetFeatureFlag.new(_treat_edit_fid, "size_mm",
+			float(r["mm"])))
+
+
+## --- the edge pick (create flow) ---------------------------------------------
+
+var _treat_pick_dialog: Window = null
+var _treat_pick_size: LineEdit = null
+var _treat_pick_count: Label = null
+
+
+func _start_edge_treat_pick(p_kind: String) -> void:
+	_treat_kind = p_kind if p_kind != "" else EdgeTreatFeature.KIND_FILLET
+	_treat_body = world.selected_body()
+	if _treat_body == "":
+		set_status_hint("Fillet/Chamfer: select a body first (click it)")
 		return
-	edge_treat(_treat_body, _treat_kind, size, lat, top, bot)
+	var root := _edge_treat_root(_treat_body)
+	if root == null:
+		return
+	_treat_pick_edges = EdgeTreatFeature.pickable_edges(doc, root)
+	if _treat_pick_edges.is_empty():
+		set_status_hint("Fillet/Chamfer: no treatable edges on this body")
+		return
+	_treat_selected = {}
+	picking_treat_edges = true
+	world.show_treat_edges(_treat_pick_edges, _treat_selected,
+		_axis_hover_width_mm())
+	_open_treat_pick_dialog()
+	_refresh_ui()
 
 
-## Create the treatment (shared with RPC). Returns feature id or "".
-func edge_treat(body_id: String, p_kind: String, size: float,
-		lat := true, top := true, bot := false) -> String:
+func _open_treat_pick_dialog() -> void:
+	if _treat_pick_dialog == null:
+		_treat_pick_dialog = Window.new()
+		_treat_pick_dialog.name = "EdgeTreatPickDialog"
+		_treat_pick_dialog.size = Vector2i(300, 130)
+		_treat_pick_dialog.exclusive = false
+		_treat_pick_dialog.close_requested.connect(_end_edge_treat_pick)
+		var box := VBoxContainer.new()
+		box.set_anchors_preset(Control.PRESET_FULL_RECT)
+		_treat_pick_dialog.add_child(box)
+		var row := HBoxContainer.new()
+		box.add_child(row)
+		var lab := Label.new()
+		lab.text = "Size"
+		lab.custom_minimum_size = Vector2(60, 0)
+		row.add_child(lab)
+		_treat_pick_size = LineEdit.new()
+		_treat_pick_size.name = "TreatPickSizeEdit"
+		_treat_pick_size.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_treat_pick_size.text_submitted.connect(
+			func(_t: String) -> void: _commit_edge_treat_pick())
+		row.add_child(_treat_pick_size)
+		_treat_pick_count = Label.new()
+		_treat_pick_count.name = "TreatPickCountLabel"
+		box.add_child(_treat_pick_count)
+		var okb := Button.new()
+		okb.name = "TreatPickApplyBtn"
+		okb.text = "Apply"
+		okb.focus_mode = Control.FOCUS_NONE
+		okb.pressed.connect(_commit_edge_treat_pick)
+		box.add_child(okb)
+		add_child(_treat_pick_dialog)
+	_treat_pick_dialog.title = "Fillet Edges" \
+		if _treat_kind == EdgeTreatFeature.KIND_FILLET else "Chamfer Edges"
+	_treat_pick_size.text = UnitConverter.format(3.0, doc.display_unit)
+	_update_treat_pick_count()
+	# Top-right corner, not centered: the user is about to click edges in
+	# the viewport and a centered window would sit right on top of the body.
+	_treat_pick_dialog.position = Vector2i(
+		int(get_viewport().get_visible_rect().size.x) - 320, 80)
+	_treat_pick_dialog.show()
+
+
+func _update_treat_pick_count() -> void:
+	if _treat_pick_count == null:
+		return
+	var n := _treat_selected.size()
+	_treat_pick_count.text = "%d edge set%s selected — click edges in the view" \
+		% [n, "" if n == 1 else "s"]
+
+
+func _commit_edge_treat_pick() -> void:
+	if not picking_treat_edges:
+		return
+	var r := UnitConverter.parse(_treat_pick_size.text, doc.display_unit)
+	if not r["ok"] or float(r["mm"]) <= 0.0:
+		set_status_hint("Fillet/Chamfer: enter a size")
+		return
+	if _treat_selected.is_empty():
+		set_status_hint("Fillet/Chamfer: click at least one edge in the view")
+		return
+	var corner_list: Array = []
+	for key in _treat_selected:
+		if String(key).begins_with("corner:"):
+			corner_list.append(int(String(key).substr(7)))
+	corner_list.sort()
+	var fid := edge_treat(_treat_body, _treat_kind, float(r["mm"]),
+		not corner_list.is_empty(), _treat_selected.has("top"),
+		_treat_selected.has("bottom"), corner_list)
+	if fid == "":
+		return   # hint already set; stay in the pick so the user can adjust
+	_end_edge_treat_pick()
+
+
+func _end_edge_treat_pick() -> void:
+	picking_treat_edges = false
+	_treat_pick_edges = []
+	_treat_selected = {}
+	world.hide_treat_edges()
+	if _treat_pick_dialog != null:
+		_treat_pick_dialog.hide()
+	_refresh_ui()
+
+
+## The treat edge (by key) nearest the ray, within a few screen pixels of
+## it. "" on a miss.
+func _treat_edge_under_ray(origin: Vector3, dir: Vector3) -> String:
+	var best := ""
+	var best_d := _axis_hover_width_mm() * 2.0
+	var far := origin + dir * 1.0e6
+	for e: Dictionary in _treat_pick_edges:
+		var pts := Geometry3D.get_closest_points_between_segments(
+			origin, far, e["a"] as Vector3, e["b"] as Vector3)
+		var d := pts[0].distance_to(pts[1])
+		if d < best_d:
+			best_d = d
+			best = String(e["key"])
+	return best
+
+
+## Prismatic-scope guard shared by the pick flow and edge_treat: the body
+## must root at a plain extrude, untreated, with no boolean touching it (a
+## body any join/cut touches is a boolean body — same AABB rule BodyBuilder
+## targets by). null with the reason hinted.
+func _edge_treat_root(body_id: String) -> ExtrudeFeature:
 	var root := doc.feature_by_id(body_id) as ExtrudeFeature
 	if root == null:
-		set_status_hint("Fillet/Chamfer: prismatic scope — plain extrude "
-			+ "bodies only")
-		return ""
-	# A body any join/cut touches is a boolean body — same AABB rule
-	# BodyBuilder targets by — and out of the prismatic scope.
+		set_status_hint("Fillet/Chamfer: prismatic scope — works on "
+			+ "plain extrude bodies only (no booleans/revolves/sweeps)")
+		return null
 	var root_part := root.solid_part(doc)
 	for f in doc.live_features():
 		if f is EdgeTreatFeature and (f as EdgeTreatFeature).body == body_id:
 			set_status_hint("Fillet/Chamfer: this body is already treated "
 				+ "(edit that feature instead)")
-			return ""
+			return null
 		var sf2 := f as SolidFeature
 		if sf2 != null and sf2 != root \
 				and sf2.operation != SolidFeature.OP_NEW_BODY \
@@ -2493,7 +2658,19 @@ func edge_treat(body_id: String, p_kind: String, size: float,
 					root_part["aabb"] as AABB):
 				set_status_hint("Fillet/Chamfer: this body carries booleans "
 					+ "— prismatic scope covers plain extrudes only")
-				return ""
+				return null
+	return root
+
+
+## Create the treatment (shared with RPC). `corner_list` limits the lateral
+## pass to those profile-polygon corner indices (empty = every eligible
+## corner). Returns feature id or "".
+func edge_treat(body_id: String, p_kind: String, size: float,
+		lat := true, top := true, bot := false,
+		corner_list: Array = []) -> String:
+	var root := _edge_treat_root(body_id)
+	if root == null:
+		return ""
 	if not (lat or top or bot):
 		set_status_hint("Fillet/Chamfer: pick at least one edge set")
 		return ""
@@ -2507,6 +2684,8 @@ func edge_treat(body_id: String, p_kind: String, size: float,
 	et.lateral = lat
 	et.top = top
 	et.bottom = bot
+	for c in corner_list:
+		et.corners.append(int(c))
 	if et.build_treated_mesh(doc, root) == null:
 		set_status_hint("Fillet/Chamfer failed: size too large for the "
 			+ "body, or the profile has holes")
@@ -2631,8 +2810,8 @@ func sweep(profile_sketch: String, at: Vector2, path_sk: String,
 	f.name = doc.auto_name("Sweep")
 	f.doc_ref = weakref(doc)
 	if f.build_mesh(doc) == null:
-		set_status_hint("Sweep failed: no profile/path, a closed-loop path, "
-			+ "or a bend tighter than the profile (self-intersection)")
+		set_status_hint("Sweep failed: " + (f.last_error if f.last_error != ""
+			else "no profile/path"))
 		return ""
 	stack.push_no_merge(CmdAddFeature.new(f))
 	return f.id
@@ -3133,11 +3312,20 @@ func copy_body(body_id: String, t: Vector3) -> String:
 
 
 ## Body appearance (M32): color lives on the body's ROOT solid feature.
+## Copies inherit their source's color until given one of their own
+## (QA §M32.5) — so they are colorable too.
 func pick_body_color(body_id: String) -> void:
-	var sf := doc.feature_by_id(body_id) as SolidFeature
-	if sf == null:
-		set_status_hint("Color: copies inherit their source body's color")
+	var f := doc.feature_by_id(body_id)
+	if not (f is SolidFeature or f is CopyBodyFeature):
+		set_status_hint("Color: select a body (mirror/pattern instances "
+			+ "follow their source)")
 		return
+	var body_color: Color = f.get("color")
+	if f is CopyBodyFeature and body_color.a <= 0.0:
+		# Uncolored copy: seed the picker with the inherited source color.
+		var src := doc.feature_by_id((f as CopyBodyFeature).source)
+		if src is SolidFeature:
+			body_color = (src as SolidFeature).color
 	_color_target = body_id
 	if _color_dialog == null:
 		_color_dialog = Window.new()
@@ -3163,15 +3351,15 @@ func pick_body_color(body_id: String) -> void:
 			set_body_color(_color_target, _color_picker.color))
 		box.add_child(okb)
 		add_child(_color_dialog)
-	_color_picker.color = Color(sf.color.r, sf.color.g, sf.color.b) \
-		if sf.color.a > 0.0 else Color(0.62, 0.66, 0.72)
+	_color_picker.color = Color(body_color.r, body_color.g, body_color.b) \
+		if body_color.a > 0.0 else Color(0.62, 0.66, 0.72)
 	_color_dialog.popup_centered()
 
 
 func set_body_color(body_id: String, c: Color) -> String:
-	var sf := doc.feature_by_id(body_id) as SolidFeature
-	if sf == null:
-		return "no solid feature roots body %s" % body_id
+	var f := doc.feature_by_id(body_id)
+	if not (f is SolidFeature or f is CopyBodyFeature):
+		return "no colorable feature roots body %s" % body_id
 	stack.push_no_merge(CmdSetFeatureFlag.new(body_id, "color",
 		Color(c.r, c.g, c.b, 1.0)))
 	return ""
@@ -3182,11 +3370,16 @@ func set_body_color(body_id: String, c: Color) -> String:
 var _svg_import_dialog: FileDialog = null
 var _svg_import_plane: OptionButton = null
 var _svg_import_width: LineEdit = null
+var _svg_import_wlab: Label = null
+var _svg_import_dpi: LineEdit = null
 
 
 ## Import an SVG as a NEW sketch on `plane`. `width_mm` > 0 rescales the
-## whole drawing uniformly to that overall width. Returns the feature id.
-func import_svg(path: String, plane := "XY", width_mm := 0.0) -> String:
+## whole drawing uniformly to that overall width. `dpi` > 0 reinterprets a
+## UNITLESS file's pixels at that density instead of the CSS default of 96
+## (files with a physical width/height ignore it). Returns the feature id.
+func import_svg(path: String, plane := "XY", width_mm := 0.0,
+		dpi := 0.0) -> String:
 	if not SketchFeature.PLANES.has(plane) and doc.plane_feature(plane) == null:
 		set_status_hint("Import SVG: unknown plane %s" % plane)
 		return ""
@@ -3198,6 +3391,11 @@ func import_svg(path: String, plane := "XY", width_mm := 0.0) -> String:
 		set_status_hint("Import SVG failed: " + String(parsed["error"]))
 		return ""
 	var ents: Array = parsed["ents"]
+	if dpi > 0.0 and not bool(parsed.get("physical", false)) \
+			and absf(dpi - 96.0) > 1e-6:
+		# Parsing assumed CSS's 96 px/in; rescale to the requested density.
+		_svg_scale_ents(ents, 96.0 / dpi)
+		parsed["size"] = (parsed["size"] as Vector2) * (96.0 / dpi)
 	if width_mm > 0.0:
 		var natural := (parsed["size"] as Vector2).x
 		if natural <= 0.0:
@@ -3259,9 +3457,11 @@ func import_svg_interactive() -> void:
 			func(path: String) -> void:
 				var w := UnitConverter.parse(_svg_import_width.text,
 					doc.display_unit)
+				var dpi_txt := _svg_import_dpi.text.strip_edges()
 				import_svg(path, String(_svg_import_plane.get_item_metadata(
 					_svg_import_plane.selected)),
-					float(w["mm"]) if w["ok"] else 0.0))
+					float(w["mm"]) if w["ok"] else 0.0,
+					dpi_txt.to_float() if dpi_txt.is_valid_float() else 0.0))
 		var prow := HBoxContainer.new()
 		var plab := Label.new()
 		plab.text = "Sketch plane:"
@@ -3270,16 +3470,31 @@ func import_svg_interactive() -> void:
 		_svg_import_plane.name = "SvgImportPlanePick"
 		_svg_import_plane.focus_mode = Control.FOCUS_NONE
 		prow.add_child(_svg_import_plane)
-		var wlab := Label.new()
-		wlab.text = "  Width:"
-		prow.add_child(wlab)
+		# Overall width in the display unit (suffixes like "40mm" work too).
+		_svg_import_wlab = Label.new()
+		prow.add_child(_svg_import_wlab)
 		_svg_import_width = LineEdit.new()
 		_svg_import_width.name = "SvgImportWidthEdit"
 		_svg_import_width.placeholder_text = "native"
 		_svg_import_width.custom_minimum_size = Vector2(90, 0)
+		_svg_import_width.tooltip_text = ("Scale the drawing to this overall "
+			+ "width (display unit; suffixes like 40mm / 2in work)")
 		prow.add_child(_svg_import_width)
+		# DPI: how to read a unitless file's pixels (CSS default is 96).
+		var dlab := Label.new()
+		dlab.text = "  DPI:"
+		prow.add_child(dlab)
+		_svg_import_dpi = LineEdit.new()
+		_svg_import_dpi.name = "SvgImportDpiEdit"
+		_svg_import_dpi.placeholder_text = "96"
+		_svg_import_dpi.custom_minimum_size = Vector2(60, 0)
+		_svg_import_dpi.tooltip_text = ("Pixel density for files with no "
+			+ "physical size (width in mm/in ignores this)")
+		prow.add_child(_svg_import_dpi)
 		_svg_import_dialog.get_vbox().add_child(prow)
 		add_child(_svg_import_dialog)
+	_svg_import_wlab.text = "  Width (%s):" \
+		% UnitConverter.suffix(doc.display_unit).strip_edges()
 	var prev := ""
 	if _svg_import_plane.selected >= 0:
 		prev = String(_svg_import_plane.get_item_metadata(
@@ -3720,6 +3935,18 @@ func _on_viewport_input(event: InputEvent) -> void:
 				world.hide_axis_candidates()
 				_open_revolve_dialog()
 				_refresh_ui()
+		elif mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT \
+				and picking_treat_edges:
+			var rayt := rig.pixel_ray(mb.position)
+			var tkey := _treat_edge_under_ray(rayt[0], rayt[1])
+			if tkey != "":
+				if _treat_selected.has(tkey):
+					_treat_selected.erase(tkey)
+				else:
+					_treat_selected[tkey] = true
+				world.show_treat_edges(_treat_pick_edges, _treat_selected,
+					_axis_hover_width_mm())
+				_update_treat_pick_count()
 		elif mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT:
 			# Plain click in model mode: pick a body, or clear on a miss.
 			var ray3 := rig.pixel_ray(mb.position)
@@ -3778,6 +4005,11 @@ func _on_viewport_input(event: InputEvent) -> void:
 					doc.sketch_feature(String(_pending_revolve["sketch_id"])),
 					String(cand["axis"]), cand["a"] as Vector2,
 					cand["b"] as Vector2, _axis_hover_width_mm())
+		elif picking_treat_edges:
+			# Pre-highlight the edge (or whole rim) the click would toggle.
+			var raye := rig.pixel_ray(mm.position)
+			world.set_treat_edge_hover(_treat_edge_under_ray(raye[0], raye[1]),
+				_treat_pick_edges, _axis_hover_width_mm())
 
 
 func _unhandled_key_input(event: InputEvent) -> void:
@@ -3820,6 +4052,10 @@ func handle_app_key(k: InputEventKey) -> bool:
 			picking_calibrate = false
 			_calib_picks = []
 			set_status_hint("Calibrate cancelled")
+			return true
+		if picking_treat_edges:
+			_end_edge_treat_pick()
+			set_status_hint("Fillet/Chamfer cancelled")
 			return true
 		if mode == Mode.SKETCH:
 			# Esc ends the gesture AND drops back to Select, Fusion-style —
@@ -4085,7 +4321,7 @@ func _sync_camera_to_sketch_view() -> void:
 		# `camera.size` does not fire the rig's `moved` signal, so the grid
 		# would otherwise never hear about a sketch zoom — leaving its
 		# level cross-fade frozen and the popping back.
-		world.update_grid(rig.view_height_mm())
+		world.update_grid(rig.view_height_mm(), rig.target)
 
 
 ## Editor chrome: sketch points, selection highlights, then the active
@@ -4325,6 +4561,11 @@ func _refresh_ui() -> void:
 	elif picking_loft:
 		_status_hint.text = ("Loft: click 2+ profiles in order, then OK in "
 			+ "the dialog (Esc to cancel)")
+	elif picking_treat_edges:
+		_status_hint.text = (("Fillet" if _treat_kind
+			== EdgeTreatFeature.KIND_FILLET else "Chamfer")
+			+ ": click edges to select — rims select as a loop, click again "
+			+ "to deselect — then Apply (Esc to cancel)")
 	elif picking_plane:
 		_status_hint.text = "Select a plane or a flat body face (Esc to cancel)"
 	elif picking_offset_base:

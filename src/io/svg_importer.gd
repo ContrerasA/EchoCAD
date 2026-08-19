@@ -24,7 +24,10 @@ const PX_TO_MM := 25.4 / 96.0
 ## Fit points sampled per cubic bezier span (chain junctions shared).
 const SAMPLES_PER_CUBIC := 3
 
-## -> {"ok", "error", "ents", "skipped", "size": Vector2 (mm)}
+## -> {"ok", "error", "ents", "skipped", "size": Vector2 (mm),
+##     "physical": bool — the root carried a real-world width/height
+##     (mm/cm/in/pt); false means px-at-96-dpi was assumed and a caller
+##     may rescale for a different DPI (M31 QA note)}
 ## ents: {"kind": "line"|"circle"|"arc"|"spline", ...} all in mm, Y-up.
 static func parse(text: String) -> Dictionary:
 	var xml := XMLParser.new()
@@ -37,6 +40,7 @@ static func parse(text: String) -> Dictionary:
 	var root := Transform2D.IDENTITY
 	var saw_svg := false
 	var size_mm := Vector2.ZERO
+	var physical := false
 	while xml.read() == OK:
 		var t := xml.get_node_type()
 		if t == XMLParser.NODE_ELEMENT_END:
@@ -56,6 +60,7 @@ static func parse(text: String) -> Dictionary:
 				var r := _root_transform(xml)
 				root = r["xf"]
 				size_mm = r["size"]
+				physical = r["physical"]
 				stack = [root]
 			"g":
 				var xf: Transform2D = _tip(stack) * _transform_of(xml)
@@ -89,7 +94,7 @@ static func parse(text: String) -> Dictionary:
 		return {"ok": false, "error": "no importable geometry", "ents": [],
 			"skipped": skipped}
 	return {"ok": true, "error": "", "ents": ents, "skipped": skipped,
-		"size": size_mm}
+		"size": size_mm, "physical": physical}
 
 
 static func _tip(stack: Array) -> Transform2D:
@@ -114,6 +119,16 @@ static func _len_mm(s: String) -> float:
 			s = s.trim_suffix(suffix_def[0]).strip_edges()
 			break
 	return s.to_float() * mult if s.is_valid_float() else NAN
+
+
+## Does the length string carry a REAL-WORLD unit (mm/cm/in/pt)? Bare
+## numbers and px are screen units, subject to a DPI assumption.
+static func _len_physical(s: String) -> bool:
+	s = s.strip_edges()
+	for suffix in ["mm", "cm", "in", "pt"]:
+		if s.ends_with(suffix):
+			return true
+	return false
 
 
 ## The svg element's user-space -> mm Y-up transform + document size (mm).
@@ -147,7 +162,10 @@ static func _root_transform(xml: XMLParser) -> Dictionary:
 	# (x, y)user -> ((x-minx)*s, (miny+vh-y)*s): Y flip, origin bottom-left.
 	var xf := Transform2D(Vector2(s, 0), Vector2(0, -s),
 		Vector2(-minx * s, (miny + vh) * s))
-	return {"xf": xf, "size": Vector2(vw * s, vh * s)}
+	var physical := _len_physical(
+			xml.get_named_attribute_value_safe("width")) \
+		or _len_physical(xml.get_named_attribute_value_safe("height"))
+	return {"xf": xf, "size": Vector2(vw * s, vh * s), "physical": physical}
 
 
 ## `transform` attribute -> Transform2D (SVG matrix order, left-to-right).
@@ -288,6 +306,14 @@ static func _parse_path(d: String, xf: Transform2D, ents: Array) -> void:
 			var out: Array = []
 			for p in chain:
 				out.append(xf * p)
+			# A chain that loops back onto its own start IS a closed curve —
+			# mark it so, or ProfileFinder sees an open spline whose welded
+			# endpoints collapse to one node and drops it, which is exactly
+			# why all-curve outlines (circles drawn as beziers, blobs) never
+			# highlighted in Extrude picking (QA §M31.2/7).
+			if not closed and out.size() > 2 and (out[0] as Vector2) \
+					.distance_to(out[out.size() - 1]) < WELD_MM:
+				closed = true
 			ents.append({"kind": "spline", "pts": out, "closed": closed})
 		chain.clear()
 
@@ -391,8 +417,8 @@ static func _parse_path(d: String, xf: Transform2D, ents: Array) -> void:
 				cur = to5
 			_:
 				return   # unknown command: stop parsing this path safely
-	# Close a trailing curve chain; if it loops back to the subpath start
-	# it still comes in open — welding closes the profile.
+	# Close a trailing curve chain (flush marks it closed itself when it
+	# loops back onto its start).
 	flush_chain.call()
 
 

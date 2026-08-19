@@ -207,7 +207,7 @@ func draw_overlay(overlay: Control) -> void:
 	# Rubber-band segment.
 	if _chain:
 		preview_line(overlay, v.world_to_screen(_anchor), p,
-			Color(1, 1, 1, 0.9), 1.0)
+			ghost(0.9), 1.0)
 	# Snap marker.
 	var snap: Dictionary = _inference["snap"]
 	match String(snap.get("kind", "")):
@@ -219,7 +219,7 @@ func draw_overlay(overlay: Control) -> void:
 		SnapEngine.KIND_CURVE:
 			overlay.draw_circle(p, 4.0, Color(0.9, 0.75, 0.35, 0.9))
 		_:
-			overlay.draw_circle(p, 2.0, Color(1, 1, 1, 0.7))
+			overlay.draw_circle(p, 2.0, ghost(0.7))
 	# Axis glyph near the preview midpoint.
 	var axis := String(_inference["axis"])
 	if axis != "" and _chain:

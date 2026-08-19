@@ -63,6 +63,10 @@ static func duplicate_transformed(sk: Sketch, ids: Array,
 				for hi in sp.handles.size():
 					if sp.handles[hi] is Vector2:
 						nsp.handles[hi] = xf.basis_xform(sp.handles[hi])
+					elif sp.handles[hi] is Dictionary:
+						nsp.handles[hi] = {
+							"out": xf.basis_xform(sp.handles[hi]["out"]),
+							"in": xf.basis_xform(sp.handles[hi]["in"])}
 				ne = nsp
 		if ne == null:
 			continue

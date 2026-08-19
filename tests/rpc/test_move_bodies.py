@@ -68,14 +68,15 @@ def main():
     copy = next(x for x in bodies if x["id"] == r["feature"])
     check(near(copy["volume"], vol0, vol0 * 1e-5), "copy volume matches")
 
-    # Color.
+    # Color. A copy inherits the source color until it is given one of its
+    # own (QA fix round §M32.5) — so coloring a copy now SUCCEEDS.
     app.call("action.set_body_color", {"body": body, "color": [0.9, 0.1, 0.1]})
     try:
         app.call("action.set_body_color",
                  {"body": r["feature"], "color": [0, 1, 0]})
-        check(False, "coloring a copy refused (inherits source)")
+        check(True, "coloring a copy accepted (own color override)")
     except RpcError:
-        check(True, "coloring a copy refused (inherits source)")
+        check(False, "coloring a copy accepted (own color override)")
 
     # Shelf buttons + timeline features present.
     for name in ["MoveBodyBtn", "CopyBodyBtn"]:

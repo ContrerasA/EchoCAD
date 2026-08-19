@@ -107,9 +107,9 @@ func draw_overlay(overlay: Control) -> void:
 	if _armed:
 		var r := _resolve_radius()
 		var c := v.world_to_screen(_center)
-		preview_arc(overlay, c, r * v.zoom(), 0, TAU, 64, Color(1, 1, 1, 0.9), 1.0)
-		overlay.draw_line(c, v.world_to_screen(_preview), Color(1, 1, 1, 0.35), 1.0)
+		preview_arc(overlay, c, r * v.zoom(), 0, TAU, 64, ghost(0.9), 1.0)
+		overlay.draw_line(c, v.world_to_screen(_preview), ghost(0.35), 1.0)
 		_fields.draw(overlay, v.world_to_screen(_preview),
 			app.doc.display_unit, [r])
 	else:
-		overlay.draw_circle(v.world_to_screen(_preview), 2.0, Color(1, 1, 1, 0.7))
+		overlay.draw_circle(v.world_to_screen(_preview), 2.0, ghost(0.7))

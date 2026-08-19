@@ -99,6 +99,12 @@ var _grid_plane := "XY"
 var _grid_xf := Transform3D.IDENTITY
 var _grid_unit: UnitConverter.Unit = UnitConverter.Unit.IN
 var _grid_step := 0.0
+## Where the quad sits within its plane (plane-local mm), snapped to the
+## MAJOR lattice. The quad follows the camera target so its faded edge can
+## never wander into view when zoomed in away from the origin — the grid
+## used to be pinned at the plane origin with a fixed step count, so close
+## views far from the origin watched it end mid-screen (QA §M27 note).
+var _grid_center := Vector2.ZERO
 ## Cross-fade state for the zoom transition: how far the next FINER ladder rung
 ## has arrived (0..1) and the ratio between the two rungs. Both change
 ## continuously as the view scales, which is what removes the pop.
@@ -142,6 +148,13 @@ var _profile_hover_key := ""
 var _axis_candidates_mi: MeshInstance3D = null
 var _axis_hover_mi: MeshInstance3D = null
 var _axis_hover_key := ""
+## Edge-treat picking (M35): the candidate edge lines drawn while a
+## fillet/chamfer selection is in progress, the tubes over the selected
+## edges, and the hover tube set.
+var _treat_edges_mi: MeshInstance3D = null
+var _treat_sel_root: Node3D = null
+var _treat_hover_root: Node3D = null
+var _treat_hover_key := ""
 
 ## Emitted after a BodyBuilder pass lands (possibly a frame after the model
 ## change when CSG booleans bake). The browser tree re-lists bodies off it.
@@ -334,9 +347,11 @@ func _rebuild_grid() -> void:
 	quad.size = Vector2(half * 2.0, half * 2.0)
 	_grid.mesh = quad
 	# A hair below the plane, so coplanar geometry (axes, sketch lines on the
-	# plane) wins the depth test instead of z-fighting the grid.
+	# plane) wins the depth test instead of z-fighting the grid. The in-plane
+	# offset is a multiple of the major spacing, so the shader's local-space
+	# lines still land exactly on the world lattice.
 	_grid.transform = Transform3D(_grid_xf.basis,
-		_grid_xf * Vector3(0, 0, -GRID_SINK_MM))
+		_grid_xf * Vector3(_grid_center.x, _grid_center.y, -GRID_SINK_MM))
 	var mat := _grid.material_override as ShaderMaterial
 	if mat != null:
 		mat.set_shader_parameter("fade_mm", half * GRID_FADE_FRAC)
@@ -365,6 +380,7 @@ func set_grid_plane(key: String, xf: Variant = null) -> void:
 		return
 	_grid_plane = key
 	_grid_xf = want
+	_grid_center = Vector2.ZERO
 	_rebuild_grid()
 
 
@@ -386,7 +402,7 @@ func set_grid_unit(unit: UnitConverter.Unit) -> void:
 ##
 ## `view_height_mm` — the world height of the viewport (`OrbitCamera.
 ## view_height_mm`), NOT the camera distance.
-func update_grid(view_height_mm: float) -> void:
+func update_grid(view_height_mm: float, focus: Variant = null) -> void:
 	var levels := SketchView.step_levels(
 		_grid_unit, view_height_mm * GRID_TARGET_FRAC)
 	var step: float = levels["step"]
@@ -396,10 +412,18 @@ func update_grid(view_height_mm: float) -> void:
 	# the popping straight back.
 	_grid_blend = levels["blend"]
 	_grid_ratio = levels["ratio"]
-	if is_equal_approx(step, _grid_step):
+	# Keep the quad under the camera target (see `_grid_center`), snapped to
+	# the major lattice so the lines themselves never move.
+	var center := _grid_center
+	if focus is Vector3:
+		var local: Vector3 = _grid_xf.affine_inverse() * (focus as Vector3)
+		var snap := step * GRID_MAJOR_EVERY
+		center = Vector2(snappedf(local.x, snap), snappedf(local.y, snap))
+	if is_equal_approx(step, _grid_step) and center == _grid_center:
 		_push_grid_uniforms()
 		return
 	_grid_step = step
+	_grid_center = center
 	_rebuild_grid()
 
 
@@ -603,12 +627,27 @@ func set_selected_body(fid: String) -> void:
 		var mat := mi.get_surface_override_material(0) as StandardMaterial3D
 		if mat == null:
 			continue
-		mat.albedo_color = COLOR_BODY_SELECTED \
-			if String(mi.get_meta("feature_id")) == fid else COLOR_BODY
+		# Deselecting restores the body's OWN appearance — painting plain
+		# COLOR_BODY here erased the M32 per-body color the moment the body
+		# was deselected (QA §M27 issue note).
+		var mfid := String(mi.get_meta("feature_id"))
+		mat.albedo_color = COLOR_BODY_SELECTED if mfid == fid \
+			else _body_base_color(mfid)
 
 
 func selected_body() -> String:
 	return _selected_body
+
+
+## The shaded color a body wears when not selected: its per-body color
+## (M32) when one is set, the shared default otherwise.
+func _body_base_color(fid: String) -> Color:
+	for b: Dictionary in _bodies:
+		if String(b["id"]) == fid:
+			var own: Color = b.get("color", Color(0, 0, 0, 0))
+			if own.a > 0.0:
+				return Color(own.r, own.g, own.b)
+	return COLOR_BODY
 
 
 func _body_mesh(fid: String) -> MeshInstance3D:
@@ -1128,6 +1167,112 @@ func clear_axis_hover() -> void:
 		_axis_hover_mi.queue_free()
 		_axis_hover_mi = null
 	_axis_hover_key = ""
+
+
+## --- edge-treat picking (M35) --------------------------------------------
+
+const COLOR_TREAT_EDGE := Color(0.55, 0.75, 1.0)
+const COLOR_TREAT_SELECTED := Color(1.0, 0.72, 0.25)
+const COLOR_TREAT_HOVER := Color(1.0, 0.88, 0.55)
+
+
+## Show the selectable edges of the body being filleted/chamfered:
+## every candidate as a bright line, the `selected` keys as thick amber
+## tubes. `width_mm` is the tube diameter (view-scaled by the caller).
+## Call again after each toggle — the rebuild is cheap at these counts.
+func show_treat_edges(edges: Array, selected: Dictionary,
+		width_mm: float) -> void:
+	hide_treat_edges()
+	if edges.is_empty():
+		return
+	var im := ImmediateMesh.new()
+	im.surface_begin(Mesh.PRIMITIVE_LINES)
+	for e: Dictionary in edges:
+		im.surface_add_vertex(e["a"] as Vector3)
+		im.surface_add_vertex(e["b"] as Vector3)
+	im.surface_end()
+	_treat_edges_mi = MeshInstance3D.new()
+	_treat_edges_mi.name = "TreatEdgeCandidates"
+	_treat_edges_mi.mesh = im
+	var mat := _line_material(COLOR_TREAT_EDGE)
+	# Like the axis pick: the candidates must read over the body itself.
+	mat.no_depth_test = true
+	mat.render_priority = 9
+	_treat_edges_mi.material_override = mat
+	add_child(_treat_edges_mi)
+	_treat_sel_root = Node3D.new()
+	_treat_sel_root.name = "TreatEdgeSelection"
+	add_child(_treat_sel_root)
+	for e: Dictionary in edges:
+		if selected.has(String(e["key"])):
+			_treat_sel_root.add_child(_edge_tube(e["a"] as Vector3,
+				e["b"] as Vector3, width_mm, COLOR_TREAT_SELECTED))
+
+
+## Thick highlight over the edge (or whole rim — every edge sharing `key`)
+## the click would toggle. "" clears.
+func set_treat_edge_hover(key: String, edges: Array, width_mm: float) -> void:
+	if key == "":
+		clear_treat_edge_hover()
+		return
+	var k := "%s|%.3f" % [key, width_mm]
+	if k == _treat_hover_key and _treat_hover_root != null:
+		return
+	clear_treat_edge_hover()
+	_treat_hover_root = Node3D.new()
+	_treat_hover_root.name = "TreatEdgeHover"
+	add_child(_treat_hover_root)
+	for e: Dictionary in edges:
+		if String(e["key"]) == key:
+			_treat_hover_root.add_child(_edge_tube(e["a"] as Vector3,
+				e["b"] as Vector3, width_mm, COLOR_TREAT_HOVER))
+	_treat_hover_key = k
+
+
+func clear_treat_edge_hover() -> void:
+	if _treat_hover_root != null:
+		_treat_hover_root.queue_free()
+		_treat_hover_root = null
+	_treat_hover_key = ""
+
+
+func hide_treat_edges() -> void:
+	clear_treat_edge_hover()
+	if _treat_edges_mi != null:
+		_treat_edges_mi.queue_free()
+		_treat_edges_mi = null
+	if _treat_sel_root != null:
+		_treat_sel_root.queue_free()
+		_treat_sel_root = null
+
+
+## A thin unshaded tube along a..b — 3D line rendering has no width, so
+## highlighted edges are real geometry (like the 2D hover bands, but
+## orientation-free).
+func _edge_tube(a: Vector3, b: Vector3, width_mm: float,
+		color: Color) -> MeshInstance3D:
+	var mi := MeshInstance3D.new()
+	var cyl := CylinderMesh.new()
+	cyl.top_radius = width_mm * 0.5
+	cyl.bottom_radius = width_mm * 0.5
+	cyl.height = maxf(a.distance_to(b), 1e-3)
+	cyl.radial_segments = 8
+	cyl.rings = 1
+	mi.mesh = cyl
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.albedo_color = color
+	mat.no_depth_test = true
+	mat.render_priority = 10
+	mi.material_override = mat
+	# Cylinder axis is local Y: build a basis whose Y runs a -> b.
+	var y := (b - a).normalized()
+	var x := y.cross(Vector3(0, 0, 1))
+	if x.length() < 1e-3:
+		x = y.cross(Vector3(0, 1, 0))
+	x = x.normalized()
+	mi.transform = Transform3D(Basis(x, y, x.cross(y)), (a + b) * 0.5)
+	return mi
 
 
 ## Rebuild solid bodies via BodyBuilder. Runs to completion synchronously

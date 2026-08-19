@@ -65,11 +65,11 @@ func draw_overlay(overlay: Control) -> void:
 		var opposite := _anchor * 2.0 - second
 		var a := v.world_to_screen(opposite)
 		var b := v.world_to_screen(second)
-		preview_rect(overlay, Rect2(a, b - a).abs(), Color(1, 1, 1, 0.9), 1.0)
+		preview_rect(overlay, Rect2(a, b - a).abs(), ghost(0.9), 1.0)
 		var c := v.world_to_screen(_anchor)
-		overlay.draw_line(c - Vector2(4, 0), c + Vector2(4, 0), Color(1, 1, 1, 0.6))
-		overlay.draw_line(c - Vector2(0, 4), c + Vector2(0, 4), Color(1, 1, 1, 0.6))
+		overlay.draw_line(c - Vector2(4, 0), c + Vector2(4, 0), ghost(0.6))
+		overlay.draw_line(c - Vector2(0, 4), c + Vector2(0, 4), ghost(0.6))
 		_fields.draw(overlay, v.world_to_screen(_preview), app.doc.display_unit,
 			[absf(second.x - _anchor.x) * 2.0, absf(second.y - _anchor.y) * 2.0])
 	else:
-		overlay.draw_circle(v.world_to_screen(_preview), 2.0, Color(1, 1, 1, 0.7))
+		overlay.draw_circle(v.world_to_screen(_preview), 2.0, ghost(0.7))

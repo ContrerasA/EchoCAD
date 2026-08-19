@@ -11,7 +11,7 @@ var _hover := false
 var _armed := false
 var _center := Vector2.ZERO
 var _preview := Vector2.ZERO
-var _fields := DimFields.new(["N", "R"])
+var _fields := DimFields.new(["Sides", "Radius"], ["int", "len"])
 
 
 func _init() -> void:
@@ -46,7 +46,7 @@ func key_input(e: InputEventKey) -> bool:
 
 
 func _sides() -> int:
-	var n := _fields.value_mm(0, UnitConverter.Unit.MM)
+	var n := _fields.value_num(0)
 	return clampi(int(n) if not is_nan(n) else 6, 3, 64)
 
 
@@ -144,15 +144,15 @@ func draw_overlay(overlay: Control) -> void:
 			var ang := a0 + TAU * k / n
 			var p := _center + Vector2(cos(ang), sin(ang)) * r
 			preview_line(overlay, v.world_to_screen(prev),
-				v.world_to_screen(p), Color(1, 1, 1, 0.9), 1.0)
+				v.world_to_screen(p), ghost(0.9), 1.0)
 			prev = p
 		var c := v.world_to_screen(_center)
 		overlay.draw_line(c - Vector2(4, 0), c + Vector2(4, 0),
-			Color(1, 1, 1, 0.6))
+			ghost(0.6))
 		overlay.draw_line(c - Vector2(0, 4), c + Vector2(0, 4),
-			Color(1, 1, 1, 0.6))
+			ghost(0.6))
 		_fields.draw(overlay, v.world_to_screen(_preview),
-			app.doc.display_unit, [6, r])
+			app.doc.display_unit, [n, r])
 	else:
 		overlay.draw_circle(v.world_to_screen(_preview), 2.0,
-			Color(1, 1, 1, 0.7))
+			ghost(0.7))

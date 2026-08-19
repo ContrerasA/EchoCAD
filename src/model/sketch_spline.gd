@@ -13,8 +13,11 @@ extends SketchEntity
 ## previews show exactly the curve that will commit.
 
 var points: Array[String] = []
-## Parallel to `points`: null = auto tangent, or a Vector2 OUT-tangent (mm).
-## The IN tangent at a point mirrors the OUT tangent (G1-smooth).
+## Parallel to `points`: null = auto tangent; a Vector2 is a SYMMETRIC
+## override (the IN tangent mirrors the OUT tangent, G1-smooth); a
+## Dictionary {"out": Vector2, "in": Vector2} is an ASYMMETRIC override
+## (Alt-dragging one handle square, QA §M28.4) — the two sides are
+## independent and the point may kink.
 var handles: Array = []
 var closed := false
 
@@ -60,6 +63,15 @@ func tangent_at(sk: Sketch, i: int) -> Vector2:
 	return tangent_for(ps, handles, i, closed)
 
 
+## IN-tangent at fit point `i` (mm) — differs from the OUT tangent only
+## under an asymmetric override.
+func in_tangent_at(sk: Sketch, i: int) -> Vector2:
+	var ps := fit_positions(sk)
+	if ps.is_empty():
+		return Vector2.ZERO
+	return in_tangent_for(ps, handles, i, closed)
+
+
 ## The four bezier control points of span `i` (fit point i -> i+1, wrapping
 ## when closed). [] when a referenced point is missing.
 func span(sk: Sketch, i: int) -> Array:
@@ -83,10 +95,13 @@ func polyline(sk: Sketch, tol := FLAT_TOL) -> PackedVector2Array:
 
 ## --- static core (shared with tool previews) --------------------------------
 
-## Catmull-Rom tangent from the neighbours, or the explicit override.
+## Catmull-Rom OUT tangent from the neighbours, or the explicit override.
 static func tangent_for(ps: Array, hs: Array, i: int, is_closed: bool) -> Vector2:
-	if i >= 0 and i < hs.size() and hs[i] is Vector2:
-		return hs[i]
+	if i >= 0 and i < hs.size():
+		if hs[i] is Vector2:
+			return hs[i]
+		if hs[i] is Dictionary:
+			return (hs[i] as Dictionary).get("out", Vector2.ZERO)
 	var n := ps.size()
 	if n < 2:
 		return Vector2.ZERO
@@ -95,12 +110,19 @@ static func tangent_for(ps: Array, hs: Array, i: int, is_closed: bool) -> Vector
 	return (next - prev) * 0.5
 
 
+## IN tangent — mirrors the OUT tangent except under an asymmetric override.
+static func in_tangent_for(ps: Array, hs: Array, i: int, is_closed: bool) -> Vector2:
+	if i >= 0 and i < hs.size() and hs[i] is Dictionary:
+		return (hs[i] as Dictionary).get("in", Vector2.ZERO)
+	return tangent_for(ps, hs, i, is_closed)
+
+
 static func span_for(ps: Array, hs: Array, i: int, is_closed: bool) -> Array:
 	var n := ps.size()
 	var a: Vector2 = ps[i]
 	var b: Vector2 = ps[(i + 1) % n]
 	var ta := tangent_for(ps, hs, i, is_closed)
-	var tb := tangent_for(ps, hs, (i + 1) % n, is_closed)
+	var tb := in_tangent_for(ps, hs, (i + 1) % n, is_closed)
 	return [a, a + ta / 3.0, b - tb / 3.0, b]
 
 
@@ -149,7 +171,14 @@ func to_dict() -> Dictionary:
 	d["points"] = points.duplicate()
 	var hs: Array = []
 	for h in handles:
-		hs.append([h.x, h.y] if h is Vector2 else null)
+		if h is Vector2:
+			hs.append([h.x, h.y])
+		elif h is Dictionary:
+			var o: Vector2 = h["out"]
+			var inn: Vector2 = h["in"]
+			hs.append([[o.x, o.y], [inn.x, inn.y]])
+		else:
+			hs.append(null)
 	d["handles"] = hs
 	d["closed"] = closed
 	return d
@@ -161,7 +190,14 @@ static func from_dict(d: Dictionary) -> SketchSpline:
 	for id in d.get("points", []):
 		e.points.append(String(id))
 	for h in d.get("handles", []):
-		e.handles.append(Vector2(float(h[0]), float(h[1])) if h is Array else null)
+		if h is Array and (h as Array).size() == 2 and h[0] is Array:
+			e.handles.append({
+				"out": Vector2(float(h[0][0]), float(h[0][1])),
+				"in": Vector2(float(h[1][0]), float(h[1][1]))})
+		elif h is Array:
+			e.handles.append(Vector2(float(h[0]), float(h[1])))
+		else:
+			e.handles.append(null)
 	while e.handles.size() < e.points.size():
 		e.handles.append(null)
 	e.closed = bool(d.get("closed", false))

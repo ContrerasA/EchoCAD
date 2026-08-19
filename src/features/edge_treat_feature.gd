@@ -17,9 +17,13 @@ const KIND_CHAMFER := "chamfer"
 var body := ""              # root feature id (must be a plain extrude)
 var treat := KIND_FILLET
 var size_mm := 3.0          # radius (fillet) or leg distance (chamfer)
-var lateral := true         # round/cut every profile corner
+var lateral := true         # round/cut profile corners (see `corners`)
 var top := true             # treat the offset-cap rim
 var bottom := false         # treat the plane-cap rim
+## WHICH profile corners (indices into the ccw profile polygon) when
+## `lateral` — empty means every eligible corner, which is also what
+## pre-M35-QA documents deserialize to. Filled by the viewport edge pick.
+var corners: Array = []
 
 const FILLET_STEPS := 10
 const CORNER_ARC_STEPS := 16
@@ -40,6 +44,8 @@ func to_dict() -> Dictionary:
 	d["lateral"] = lateral
 	d["top"] = top
 	d["bottom"] = bottom
+	if not corners.is_empty():
+		d["corners"] = corners.duplicate()
 	return d
 
 
@@ -52,32 +58,45 @@ static func from_dict(d: Dictionary) -> EdgeTreatFeature:
 	f.lateral = bool(d.get("lateral", true))
 	f.top = bool(d.get("top", true))
 	f.bottom = bool(d.get("bottom", false))
+	for c in (d.get("corners", []) as Array):
+		f.corners.append(int(c))
 	return f
 
 
+## Is polygon vertex `cur` a treatable corner? Sharp enough (a tessellated
+## circle's vertices are not corners) and convex (a fillet on a reflex
+## corner needs material ADDED — out of scope). Shared by treat_corners
+## and the viewport edge pick so they agree on what is selectable.
+static func corner_eligible(prev: Vector2, cur: Vector2,
+		next: Vector2) -> bool:
+	var u := (prev - cur).normalized()
+	var w := (next - cur).normalized()
+	var theta := acos(clampf(u.dot(w), -1.0, 1.0))
+	if rad_to_deg(PI - theta) < CORNER_MIN_DEG:
+		return false
+	return (cur - prev).cross(next - cur) > 0.0
+
+
 ## Round/cut the sharp corners of a CCW ring in 2D. Fillet corners become
-## sampled arcs; chamfer corners become a straight cut. Returns the new
-## ring, or [] when the size does not fit an edge.
+## sampled arcs; chamfer corners become a straight cut. `only` (a set of
+## polygon indices) limits the treatment to those corners — empty treats
+## every eligible one. Returns the new ring, or [] when the size does not
+## fit an edge.
 static func treat_corners(poly: PackedVector2Array, p_treat: String,
-		size: float) -> PackedVector2Array:
+		size: float, only := {}) -> PackedVector2Array:
 	var n := poly.size()
 	var out := PackedVector2Array()
 	for i in n:
 		var prev := poly[(i - 1 + n) % n]
 		var cur := poly[i]
 		var next := poly[(i + 1) % n]
+		if not corner_eligible(prev, cur, next) \
+				or (not only.is_empty() and not only.has(i)):
+			out.append(cur)
+			continue
 		var u := (prev - cur).normalized()
 		var w := (next - cur).normalized()
 		var theta := acos(clampf(u.dot(w), -1.0, 1.0))
-		var turn := PI - theta
-		if rad_to_deg(turn) < CORNER_MIN_DEG:
-			out.append(cur)
-			continue
-		# Convex corners only (a fillet on a reflex corner needs material
-		# ADDED — out of scope; leave it sharp).
-		if (cur - prev).cross(next - cur) <= 0.0:
-			out.append(cur)
-			continue
 		var leg := size if p_treat == KIND_CHAMFER \
 			else size / tan(theta * 0.5)
 		if leg > prev.distance_to(cur) * 0.5 - 1e-6 \
@@ -97,6 +116,41 @@ static func treat_corners(poly: PackedVector2Array, p_treat: String,
 		for k in CORNER_ARC_STEPS + 1:
 			var a := a0 + sweep * k / CORNER_ARC_STEPS
 			out.append(center + Vector2(cos(a), sin(a)) * size)
+	return out
+
+
+## The selectable edges of `ef`'s prismatic body, for the M35 viewport
+## pick. -> [{key: String, a: Vector3, b: Vector3}] in world mm.
+## Each eligible profile corner is one lateral edge ("corner:<i>", i an
+## index into the ccw profile polygon); rim SEGMENTS all share the "top" /
+## "bottom" key, so clicking any of them selects the whole rim (per-edge
+## rim treatment needs variable insets — B-rep-kernel tier).
+static func pickable_edges(doc: CadDocument, ef: ExtrudeFeature) -> Array:
+	var sf := doc.sketch_feature(ef.sketch_id)
+	if sf == null:
+		return []
+	var prof := ProfileFinder.profile_at(sf.sketch, ef.anchor)
+	if prof.is_empty() or not (prof.get("holes", []) as Array).is_empty():
+		return []
+	var poly: PackedVector2Array = (prof["polygon"] as PackedVector2Array).duplicate()
+	if ExtrudeFeature._signed_area(poly) < 0.0:
+		poly.reverse()
+	var xf := sf.plane_transform()
+	var off: Vector3 = xf.basis.z * ef.distance
+	var out: Array = []
+	var n := poly.size()
+	for i in n:
+		if not corner_eligible(poly[(i - 1 + n) % n], poly[i],
+				poly[(i + 1) % n]):
+			continue
+		var base: Vector3 = xf * Vector3(poly[i].x, poly[i].y, 0.0)
+		out.append({"key": "corner:%d" % i, "a": base, "b": base + off})
+	for i in n:
+		var a: Vector3 = xf * Vector3(poly[i].x, poly[i].y, 0.0)
+		var b: Vector3 = xf * Vector3(poly[(i + 1) % n].x,
+			poly[(i + 1) % n].y, 0.0)
+		out.append({"key": "top", "a": a + off, "b": b + off})
+		out.append({"key": "bottom", "a": a, "b": b})
 	return out
 
 
@@ -128,7 +182,10 @@ func build_treated_mesh(doc: CadDocument, ef: ExtrudeFeature) -> ArrayMesh:
 	if ExtrudeFeature._signed_area(poly) < 0.0:
 		poly.reverse()
 	if lateral:
-		poly = treat_corners(poly, treat, size_mm)
+		var only := {}
+		for ci in corners:
+			only[int(ci)] = true
+		poly = treat_corners(poly, treat, size_mm, only)
 		if poly.is_empty():
 			return null
 	var h := absf(ef.distance)

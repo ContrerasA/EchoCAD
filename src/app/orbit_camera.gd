@@ -17,6 +17,13 @@ signal moved
 
 const PITCH_LIMIT := PI / 2.0 - 0.01
 const ANIM_TIME := 0.25
+## Model-mode ortho: keep the eye at least this many view-heights back from
+## the target. Ortho apparent size ignores distance, but the NEAR PLANE does
+## not — with the eye close, a grazing view of the ground grid crosses the
+## near plane inside the frustum and the grid visibly cuts off near the
+## camera (QA §M27.4 round 2). Parking the eye far back pushes that cut
+## outside the view box for any pitch above ~4°.
+const ORTHO_STANDOFF := 8.0
 
 ## Rotates the Z-up world frame into the camera's Y-up frame: world +Z becomes
 ## camera up, world +Y becomes camera forward.
@@ -172,11 +179,23 @@ func orbit(dx: float, dy: float) -> void:
 
 
 func pan(dx: float, dy: float) -> void:
-	var scale_mm := distance * 0.0015
+	# Speed keys off the VIEW HEIGHT, not the eye distance: under ortho the
+	# eye is parked far back (ORTHO_STANDOFF) with no effect on apparent
+	# size, so a distance-based pan raced across the screen. The factor
+	# matches the old distance-based feel under perspective.
+	var scale_mm := view_height_mm() * 0.001
 	target += global_transform.basis * Vector3(-dx * scale_mm, dy * scale_mm, 0)
 
 
 func zoom(factor: float) -> void:
+	# Orthographic apparent size lives in camera.size, not in the eye
+	# distance — scaling only `distance` left the wheel dead in ortho mode
+	# (QA §M27.4). The eye keeps its standoff so the near plane can never
+	# slice the grid; a later perspective switch recomputes distance anyway.
+	if is_orthographic():
+		camera.size = clampf(camera.size * factor, 0.1, 200000.0)
+		distance = maxf(distance * factor, camera.size * ORTHO_STANDOFF)
+		return
 	distance *= factor
 
 
@@ -307,6 +326,10 @@ func set_projection_ortho(on: bool) -> void:
 		return
 	if on:
 		set_orthographic(view_height_mm())
+		# Park the eye well back — see ORTHO_STANDOFF. (Not done inside
+		# set_orthographic: sketch mode calls that per frame, always views
+		# its plane square-on, and must not have its camera moved.)
+		distance = maxf(distance, camera.size * ORTHO_STANDOFF)
 	else:
 		to_perspective_preserving()
 	# Projection changes what view_height_mm derives from — grid listeners
@@ -325,9 +348,9 @@ func fit_bounds(aabb: AABB) -> void:
 	target = aabb.get_center()
 	if is_orthographic():
 		camera.size = maxf(vh, 0.001)
-		# Keep the eye clear of the model so near-plane clipping cannot eat
-		# it (the ortho near plane sits at -size/2 behind the eye).
-		distance = maxf(distance, radius * 2.0)
+		# Keep the eye parked far back so near-plane clipping cannot eat the
+		# model or the grid — see ORTHO_STANDOFF.
+		distance = maxf(distance, vh * ORTHO_STANDOFF)
 	else:
 		distance = vh / (2.0 * tan(deg_to_rad(camera.fov) * 0.5))
 	_apply()

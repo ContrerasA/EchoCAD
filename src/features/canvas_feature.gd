@@ -59,13 +59,29 @@ func height_mm() -> float:
 	return width_mm * _tex_aspect
 
 
+## The image format the bytes actually are, sniffed from their magic
+## number — "png", "jpg", or "" for anything else. Trusting the file
+## extension let renamed garbage reach the engine decoders, which spam
+## the console with driver-level errors before failing (QA §M30.8).
+static func sniff_format(bytes: PackedByteArray) -> String:
+	if bytes.size() >= 8 and bytes[0] == 0x89 and bytes[1] == 0x50 \
+			and bytes[2] == 0x4E and bytes[3] == 0x47:
+		return "png"
+	if bytes.size() >= 3 and bytes[0] == 0xFF and bytes[1] == 0xD8 \
+			and bytes[2] == 0xFF:
+		return "jpg"
+	return ""
+
+
 ## Load bytes from a file path; "" on success, else the reason.
 func load_file(path: String) -> String:
 	var bytes := FileAccess.get_file_as_bytes(path)
 	if bytes.is_empty():
 		return "cannot read %s" % path
-	var ext := path.get_extension().to_lower()
-	image_format = "jpg" if ext in ["jpg", "jpeg"] else "png"
+	var fmt := sniff_format(bytes)
+	if fmt == "":
+		return "not a PNG/JPEG image: %s" % path
+	image_format = fmt
 	image_data = bytes
 	_tex = null
 	if texture() == null:

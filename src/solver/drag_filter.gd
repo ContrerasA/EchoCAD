@@ -212,7 +212,7 @@ static func _expand(sk: Sketch, cols: Dictionary, held: Dictionary) -> bool:
 	for c in sk.constraints:
 		if c.driven or not _touches(sk, c, cols):
 			continue
-		for op in c.operands:
+		for op in _recruitable_operands(c):
 			var e := sk.entity(op)
 			if e == null:
 				continue
@@ -234,6 +234,17 @@ static func _expand(sk: Sketch, cols: Dictionary, held: Dictionary) -> bool:
 	return grew
 
 
+## The operands a constraint may pull into a drag. The SYMMETRY axis is a
+## DATUM: dragging a mirrored point must move its partner, never bend the
+## mirror line to satisfy the constraint (QA §M28.8 — editing the source
+## spline dragged the free construction axis along). The axis still joins a
+## drag that grabs IT directly — its points seed the column set then.
+static func _recruitable_operands(c: SketchConstraint) -> Array:
+	if c.type == SketchConstraint.Type.SYMMETRY and c.operands.size() >= 3:
+		return [c.operands[0], c.operands[1]]
+	return c.operands
+
+
 ## Sticky-drag recruitment: grow `cols` through COUPLING constraints only
 ## (2+ operands) — the tangent partner, the offset ring's other half — never
 ## through the dragged entity's own single-operand shape constraints (H/V),
@@ -246,7 +257,7 @@ static func _expand_coupled(sk: Sketch, cols: Dictionary, held: Dictionary) -> b
 			continue
 		if not _touches(sk, c, cols):
 			continue
-		for op in c.operands:
+		for op in _recruitable_operands(c):
 			var e := sk.entity(op)
 			if e == null:
 				continue

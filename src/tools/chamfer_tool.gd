@@ -120,7 +120,7 @@ func draw_overlay(overlay: Control) -> void:
 	if _corner != "":
 		overlay.draw_circle(v.world_to_screen(sketch().point(_corner).pos),
 			6.0, Color(0.35, 0.9, 0.55, 0.9))
-	overlay.draw_circle(v.world_to_screen(_preview), 2.0, Color(1, 1, 1, 0.6))
+	overlay.draw_circle(v.world_to_screen(_preview), 2.0, ghost(0.6))
 	if _fields.has_text(0):
 		_fields.draw(overlay, v.world_to_screen(_preview),
 			app.doc.display_unit, [DEFAULT_D])

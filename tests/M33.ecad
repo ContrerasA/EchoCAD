@@ -1,0 +1,130 @@
+{
+	"app": "EchoCAD",
+	"display_unit": "in",
+	"feature_counter": 3,
+	"features": [
+		{
+			"id": "f1",
+			"kind": "sketch",
+			"name": "Sketch1",
+			"plane": "XZ",
+			"sketch": {
+				"constraints": [
+					{
+						"operands": [
+							"e6"
+						],
+						"type": "HORIZONTAL"
+					},
+					{
+						"operands": [
+							"e8"
+						],
+						"type": "HORIZONTAL"
+					},
+					{
+						"operands": [
+							"e7"
+						],
+						"type": "VERTICAL"
+					},
+					{
+						"operands": [
+							"e9"
+						],
+						"type": "VERTICAL"
+					}
+				],
+				"entities": [
+					{
+						"id": "e1",
+						"kind": "point",
+						"pos": [
+							0.0,
+							0.0
+						]
+					},
+					{
+						"id": "e2",
+						"kind": "point",
+						"pos": [
+							-154.229766845703,
+							33.4414978027344
+						]
+					},
+					{
+						"id": "e3",
+						"kind": "point",
+						"pos": [
+							-78.0297622680664,
+							33.4414978027344
+						]
+					},
+					{
+						"id": "e4",
+						"kind": "point",
+						"pos": [
+							-78.0297622680664,
+							-30.058500289917
+						]
+					},
+					{
+						"id": "e5",
+						"kind": "point",
+						"pos": [
+							-154.229766845703,
+							-30.058500289917
+						]
+					},
+					{
+						"id": "e6",
+						"kind": "line",
+						"p0": "e2",
+						"p1": "e3"
+					},
+					{
+						"id": "e7",
+						"kind": "line",
+						"p0": "e3",
+						"p1": "e4"
+					},
+					{
+						"id": "e8",
+						"kind": "line",
+						"p0": "e4",
+						"p1": "e5"
+					},
+					{
+						"id": "e9",
+						"kind": "line",
+						"p0": "e5",
+						"p1": "e2"
+					}
+				],
+				"id_counter": 9,
+				"origin": "e1"
+			}
+		},
+		{
+			"anchor": [
+				-23.0332946777344,
+				19.7754974365234
+			],
+			"color": [
+				0.74609375,
+				0.728245735168457,
+				0.289183616638184
+			],
+			"distance": 50.8,
+			"id": "f2",
+			"kind": "extrude",
+			"name": "Extrude1",
+			"operation": "new_body",
+			"sketch_id": "f1"
+		}
+	],
+	"named_views": [],
+	"parameters": [],
+	"timeline_marker": 2,
+	"version": 1
+}

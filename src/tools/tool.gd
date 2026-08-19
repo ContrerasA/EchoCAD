@@ -69,6 +69,14 @@ func _preview_is_construction() -> bool:
 	return app != null and app.construction_mode
 
 
+## Ghost/marker ink at `alpha`: white on the dark theme, dark on the light
+## theme. Tools used to hardcode white, which vanished on the light canvas —
+## the ghost was invisible until the geometry committed (QA §M26.5).
+static func ghost(alpha: float) -> Color:
+	var ink := ThemeService.col("dim_line")
+	return Color(ink.r, ink.g, ink.b, alpha)
+
+
 static func _construction_tint(c: Color) -> Color:
 	var t := RenderBridge.COLOR_CONSTRUCTION
 	return Color(t.r, t.g, t.b, c.a)

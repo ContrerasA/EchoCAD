@@ -177,6 +177,12 @@ func _apply(sk: Sketch, axis: SketchLine, in_batch := false) -> void:
 					if sp.handles[hi] is Vector2:
 						var t: Vector2 = sp.handles[hi]
 						nsp.handles[hi] = d * t.dot(d) * 2.0 - t
+					elif sp.handles[hi] is Dictionary:
+						var o: Vector2 = sp.handles[hi]["out"]
+						var inn: Vector2 = sp.handles[hi]["in"]
+						nsp.handles[hi] = {
+							"out": d * o.dot(d) * 2.0 - o,
+							"in": d * inn.dot(d) * 2.0 - inn}
 				nsp.id = sk.next_id()
 				nsp.construction = sp.construction
 				adds.append(nsp)
@@ -201,4 +207,4 @@ func draw_overlay(overlay: Control) -> void:
 		var a := Vector2(-half, 0.0) if _hover_axis == "x" else Vector2(0.0, -half)
 		overlay.draw_line(v.world_to_screen(a), v.world_to_screen(-a), col, 3.0)
 	overlay.draw_circle(v.world_to_screen(_preview), 2.0,
-		Color(1, 1, 1, 0.6))
+		ghost(0.6))

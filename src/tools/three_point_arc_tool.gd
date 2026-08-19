@@ -108,7 +108,7 @@ func draw_overlay(overlay: Control) -> void:
 		overlay.draw_circle(v.world_to_screen(p), 3.0, Color(0.35, 0.9, 0.55))
 	if _picked.size() == 1:
 		overlay.draw_line(v.world_to_screen(_picked[0]),
-			v.world_to_screen(_preview), Color(1, 1, 1, 0.35), 1.0)
+			v.world_to_screen(_preview), ghost(0.35), 1.0)
 	elif _picked.size() == 2:
 		var cc := SketchGeometry.circumcircle(_picked[0], _picked[1], _preview)
 		if cc.get("ok", false):
@@ -119,5 +119,5 @@ func draw_overlay(overlay: Control) -> void:
 			var sweep := fposmod(a1 - a0, TAU) if ccw else fposmod(a1 - a0, TAU) - TAU
 			preview_arc(overlay, v.world_to_screen(c),
 				float(cc["radius"]) * v.zoom(),
-				-a0, -(a0 + sweep), 48, Color(1, 1, 1, 0.8), 1.0)
-	overlay.draw_circle(v.world_to_screen(_preview), 2.0, Color(1, 1, 1, 0.7))
+				-a0, -(a0 + sweep), 48, ghost(0.8), 1.0)
+	overlay.draw_circle(v.world_to_screen(_preview), 2.0, ghost(0.7))

@@ -6,9 +6,10 @@ extends RefCounted
 ## label hit rects for selection/drag/edit. Non-dimensional constraints are
 ## ConstraintOverlay's job.
 
-const COLOR := Color(0.85, 0.87, 0.92)
+## Line/text ink is theme-sourced (dim_line / dim_driven): the near-white it
+## used to hardcode vanished against the light theme (QA §M26.5). Selected
+## amber and conflict red read on both themes and stay fixed.
 const COLOR_SELECTED := Color(1.0, 0.85, 0.3)
-const COLOR_DRIVEN := Color(0.65, 0.68, 0.75)
 const COLOR_CONFLICT := Color(0.87, 0.39, 0.38)
 const ARROW_PX := 7.0
 const EXT_GAP_PX := 3.0
@@ -54,11 +55,11 @@ static func draw(overlay: Control, view: SketchView, sk: Sketch,
 			if groups_drawn.has(c.group):
 				continue
 			groups_drawn[c.group] = true
-		var color := COLOR
+		var color := ThemeService.col("dim_line")
 		if (analysis.get("conflicts", []) as Array).has(i):
 			color = COLOR_CONFLICT
 		elif c.driven:
-			color = COLOR_DRIVEN
+			color = ThemeService.col("dim_driven")
 		if i == selected:
 			color = COLOR_SELECTED
 		var rect := _draw_one(overlay, view, sk, c, color, unit)
@@ -112,7 +113,9 @@ static func _label_rect(overlay: Control, at: Vector2, text: String,
 	var font := ThemeDB.fallback_font
 	var sz := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, 12)
 	var rect := Rect2(at - sz * 0.5 - Vector2(3, 3), sz + Vector2(6, 6))
-	overlay.draw_rect(rect, Color(0.10, 0.11, 0.13, 0.9))
+	var chip := ThemeService.col("panel")
+	chip.a = 0.9
+	overlay.draw_rect(rect, chip)
 	overlay.draw_string(ThemeDB.fallback_font,
 		Vector2(rect.position.x + 3, rect.end.y - 5), text,
 		HORIZONTAL_ALIGNMENT_LEFT, -1, 12, color)

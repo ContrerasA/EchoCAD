@@ -33,6 +33,9 @@ var _label_down := Vector2.ZERO        # world pos at drag start
 var _handle_entity := ""
 var _handle_index := -1
 var _handle_sign := 1.0
+## The UNGRABBED side's tangent at drag start — an Alt-drag (QA §M28.4)
+## moves only the grabbed side and must hold this one where it was.
+var _handle_other := Vector2.ZERO
 var _dim_fields := DimFields.new(["Value"])   # edit box for selected dimension
 ## Coalesced drag state: pointer_move records where the drag wants to be and
 ## `tick` applies it once per frame. See pointer_move for why.
@@ -125,6 +128,12 @@ func pointer_down(world: Vector2, screen: Vector2, e: InputEventMouseButton) -> 
 		_handle_entity = String(hh["entity"])
 		_handle_index = int(hh["index"])
 		_handle_sign = float(hh["sign"])
+		var hsp := sketch().entity(_handle_entity) as SketchSpline
+		_handle_other = Vector2.ZERO
+		if hsp != null:
+			_handle_other = hsp.in_tangent_at(sketch(), _handle_index) \
+				if _handle_sign > 0.0 \
+				else hsp.tangent_at(sketch(), _handle_index)
 		_batch = CmdMergeBatch.new("Edit Handle", [])
 		app.stack.push_no_merge(_batch)
 		return true
@@ -151,20 +160,29 @@ func pointer_down(world: Vector2, screen: Vector2, e: InputEventMouseButton) -> 
 		app.set_selection(sel)
 	elif not app.selection.has(hit):
 		app.set_selection([hit])
-	# Arm a potential drag with the points this hit controls.
+	# Arm a potential drag with the points this hit controls. When the hit is
+	# part of a MULTI-selection (a marquee-selected polygon, say), the whole
+	# selection drags together — grabbing one edge of it and moving only that
+	# edge is never what the gesture meant (QA §M29.6).
 	_move_points.clear()
 	_start.clear()
-	var ent := sk.entity(hit)
-	var refs: Array[String] = []
-	if ent.kind() == "point":
-		refs = [ent.id]
-	else:
-		refs = ent.point_refs()
-	for pid in refs:
-		var p := sk.point(pid)
-		if p != null:
-			_move_points.append(pid)
-			_start[pid] = p.pos
+	var drag_ids: Array = [hit]
+	if app.selection.size() > 1 and app.selection.has(hit):
+		drag_ids = app.selection.duplicate()
+	for did in drag_ids:
+		var ent := sk.entity(String(did))
+		if ent == null or sk.is_origin(String(did)):
+			continue
+		var refs: Array[String] = []
+		if ent.kind() == "point":
+			refs = [ent.id]
+		else:
+			refs = ent.point_refs()
+		for pid in refs:
+			var p := sk.point(pid)
+			if p != null and not _start.has(pid):
+				_move_points.append(pid)
+				_start[pid] = p.pos
 	_down_world = world
 	_down_screen = screen
 	# A FULLY CONSTRAINED point cannot be dragged — its position is already
@@ -196,7 +214,7 @@ func _all_constrained(pids: Array) -> bool:
 	return true
 
 
-func pointer_move(world: Vector2, screen: Vector2, _e: InputEventMouseMotion) -> bool:
+func pointer_move(world: Vector2, screen: Vector2, e: InputEventMouseMotion) -> bool:
 	if _marq != Marq.NONE:
 		if _marq == Marq.ARMED \
 				and screen.distance_to(_marq_start_screen) > DEADZONE_PX:
@@ -221,8 +239,15 @@ func pointer_move(world: Vector2, screen: Vector2, _e: InputEventMouseMotion) ->
 			var fp := skh.point(sp.points[_handle_index])
 			if fp != null:
 				var t := (world - fp.pos) * 3.0 * _handle_sign
+				# Plain drag: SYMMETRIC override (both sides mirror — also how
+				# an Alt-kinked point is smoothed again). Alt-drag: only the
+				# grabbed side moves; the other keeps its drag-start tangent.
+				var to: Variant = t
+				if e != null and e.alt_pressed:
+					to = {"out": t, "in": _handle_other} if _handle_sign > 0.0 \
+						else {"out": _handle_other, "in": (fp.pos - world) * 3.0}
 				app.stack.push(CmdSetSplineHandle.new(app.active_sketch_id,
-					_handle_entity, _handle_index, t))
+					_handle_entity, _handle_index, to))
 				app.overlay.queue_redraw()
 		return true
 	if _label_drag >= 0:
@@ -439,21 +464,29 @@ func draw_overlay(overlay: Control) -> void:
 		return
 	# Tangent handles of the selected spline (M28): a thin bar through each
 	# fit point with a square at each control. Dragging one overrides the
-	# auto tangent; both sides mirror (G1).
-	var sel_sp := _selected_spline()
-	if sel_sp != null:
+	# auto tangent (both sides mirror; Alt-drag moves one side only). With a
+	# single FIT POINT selected, that point's handle shows too (QA §M28.4).
+	var hsel := _spline_selection()
+	if not hsel.is_empty():
+		var sel_sp: SketchSpline = hsel["sp"]
+		var only := int(hsel["only"])
 		var v2 := view()
 		var hcol := Color(0.9, 0.75, 0.35, 0.95)
 		for i in sel_sp.points.size():
+			if only >= 0 and i != only:
+				continue
 			var fp := sk.point(sel_sp.points[i])
 			if fp == null:
 				continue
 			var t := sel_sp.tangent_at(sk, i)
-			if t.length() < 1e-9:
+			var tin := sel_sp.in_tangent_at(sk, i)
+			if t.length() < 1e-9 and tin.length() < 1e-9:
 				continue
 			var a := v2.world_to_screen(fp.pos + t / 3.0)
-			var b := v2.world_to_screen(fp.pos - t / 3.0)
-			overlay.draw_line(b, a, Color(hcol.r, hcol.g, hcol.b, 0.5), 1.0)
+			var b := v2.world_to_screen(fp.pos - tin / 3.0)
+			var m := v2.world_to_screen(fp.pos)
+			overlay.draw_line(b, m, Color(hcol.r, hcol.g, hcol.b, 0.5), 1.0)
+			overlay.draw_line(m, a, Color(hcol.r, hcol.g, hcol.b, 0.5), 1.0)
 			overlay.draw_rect(Rect2(a - Vector2(3, 3), Vector2(6, 6)), hcol)
 			overlay.draw_rect(Rect2(b - Vector2(3, 3), Vector2(6, 6)), hcol)
 	if app.selected_constraint < 0 or not _dim_fields.has_text(0):
@@ -468,34 +501,50 @@ func draw_overlay(overlay: Control) -> void:
 	_dim_fields.draw(overlay, at, app.doc.display_unit, [c.value])
 
 
-## The single selected spline, or null (handles only show/edit then).
-func _selected_spline() -> SketchSpline:
+## What spline the handle overlay serves: the single selected spline
+## ({"sp": .., "only": -1}), or the spline owning the single selected FIT
+## POINT ({"sp": .., "only": index}); {} otherwise.
+func _spline_selection() -> Dictionary:
 	if app.selection.size() != 1:
-		return null
+		return {}
 	var sk := sketch()
 	if sk == null:
-		return null
-	return sk.entity(app.selection[0]) as SketchSpline
-
-
-## Which handle square (of the selected spline) is under `screen`, if any:
-## {entity, index, sign} — sign +1 for the out control, -1 for the mirror.
-func _handle_hit(screen: Vector2) -> Dictionary:
-	var sp := _selected_spline()
-	if sp == null:
 		return {}
+	var e := sk.entity(app.selection[0])
+	if e is SketchSpline:
+		return {"sp": e, "only": -1}
+	if e != null and e.kind() == "point":
+		for cand in sk.entities():
+			if cand is SketchSpline:
+				var idx := (cand as SketchSpline).points.find(e.id)
+				if idx >= 0:
+					return {"sp": cand, "only": idx}
+	return {}
+
+
+## Which handle square (of the selection's spline) is under `screen`, if
+## any: {entity, index, sign} — sign +1 for the out control, -1 for the in.
+func _handle_hit(screen: Vector2) -> Dictionary:
+	var hsel := _spline_selection()
+	if hsel.is_empty():
+		return {}
+	var sp: SketchSpline = hsel["sp"]
+	var only := int(hsel["only"])
 	var sk := sketch()
 	var v := view()
 	for i in sp.points.size():
+		if only >= 0 and i != only:
+			continue
 		var fp := sk.point(sp.points[i])
 		if fp == null:
 			continue
 		var t := sp.tangent_at(sk, i)
-		if t.length() < 1e-9:
-			continue
-		if v.world_to_screen(fp.pos + t / 3.0).distance_to(screen) <= 7.0:
+		var tin := sp.in_tangent_at(sk, i)
+		if t.length() > 1e-9 \
+				and v.world_to_screen(fp.pos + t / 3.0).distance_to(screen) <= 7.0:
 			return {"entity": sp.id, "index": i, "sign": 1.0}
-		if v.world_to_screen(fp.pos - t / 3.0).distance_to(screen) <= 7.0:
+		if tin.length() > 1e-9 \
+				and v.world_to_screen(fp.pos - tin / 3.0).distance_to(screen) <= 7.0:
 			return {"entity": sp.id, "index": i, "sign": -1.0}
 	return {}
 

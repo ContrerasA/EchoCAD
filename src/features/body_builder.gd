@@ -154,11 +154,14 @@ static func build(doc: CadDocument, host: Node) -> Array:
 			for b3: Dictionary in out.duplicate():
 				if String(b3["id"]) != cf.source:
 					continue
+				# Copies inherit the source color until they are given one of
+				# their own (QA §M32.5).
 				out.append({"id": cf.id, "name": cf.name,
 					"mesh": transformed_mesh(b3["mesh"],
 						Transform3D(Basis.IDENTITY, cf.translation)),
-					"feature_ids": [cf.id], "color": b3.get("color",
-						Color(0, 0, 0, 0))})
+					"feature_ids": [cf.id], "color": cf.color \
+						if cf.color.a > 0.0 \
+						else b3.get("color", Color(0, 0, 0, 0))})
 		elif f is MirrorBodyFeature:
 			var mf := f as MirrorBodyFeature
 			for b4: Dictionary in out.duplicate():

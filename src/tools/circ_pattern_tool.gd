@@ -8,7 +8,7 @@ extends SketchTool
 
 var _hover := false
 var _preview := Vector2.ZERO
-var _fields := DimFields.new(["N", "A"])
+var _fields := DimFields.new(["Count", "Angle"], ["int", "deg"])
 var _source: Array = []
 
 
@@ -29,7 +29,9 @@ func activate() -> void:
 		app.set_status_hint(
 			"Circ Pattern: select geometry first, then pick the tool")
 		return
-	app.set_status_hint("Circ Pattern: type N (and A°), click the center")
+	app.set_status_hint(
+		"Circ Pattern: type Count (and total Angle°, Tab cycles), "
+		+ "click the center")
 
 
 func deactivate() -> void:
@@ -51,8 +53,8 @@ func key_input(e: InputEventKey) -> bool:
 
 
 func _params() -> Dictionary:
-	var n := _fields.value_mm(0, UnitConverter.Unit.MM)
-	var a := _fields.value_mm(1, UnitConverter.Unit.MM)
+	var n := _fields.value_num(0)
+	var a := _fields.value_num(1)
 	return {
 		"count": clampi(int(n) if not is_nan(n) else 4, 2, 64),
 		"total": a if not is_nan(a) else 360.0,
@@ -118,8 +120,8 @@ func draw_overlay(overlay: Control) -> void:
 			for i in poly.size() - 1:
 				preview_line(overlay, v.world_to_screen(xf * poly[i]),
 					v.world_to_screen(xf * poly[i + 1]),
-					Color(1, 1, 1, 0.5), 1.0)
+					ghost(0.5), 1.0)
 	overlay.draw_circle(v.world_to_screen(_preview), 3.0,
 		Color(0.35, 0.9, 0.55, 0.9))
 	_fields.draw(overlay, v.world_to_screen(_preview), app.doc.display_unit,
-		[4, 360])
+		[count, float(p["total"])])

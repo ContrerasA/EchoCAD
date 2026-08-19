@@ -457,10 +457,15 @@ func _draw() -> void:
 		_rebuild_region_tris()
 	var ti := 0
 	while ti + 2 < _region_tris.size():
-		draw_colored_polygon(PackedVector2Array([
-			world_to_screen(_region_tris[ti]),
-			world_to_screen(_region_tris[ti + 1]),
-			world_to_screen(_region_tris[ti + 2])]), COLOR_REGION_FILL)
+		var ta := world_to_screen(_region_tris[ti])
+		var tb := world_to_screen(_region_tris[ti + 1])
+		var tc := world_to_screen(_region_tris[ti + 2])
+		# Sliver triangles (profiles through patterned splines produce some)
+		# collapse to zero screen area and fail Godot's re-triangulation with
+		# an "Invalid polygon data" error per frame; they paint nothing anyway.
+		if absf((tb - ta).cross(tc - ta)) > 0.05:
+			draw_colored_polygon(PackedVector2Array([ta, tb, tc]),
+				COLOR_REGION_FILL)
 		ti += 3
 	# Origin axes on top of the grid.
 	var o := world_to_screen(Vector2.ZERO)

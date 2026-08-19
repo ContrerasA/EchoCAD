@@ -226,4 +226,4 @@ func draw_overlay(overlay: Control) -> void:
 		c.value = ConstraintRules.measured_value(sk, t, _pending_ops)
 		c.label_offset = _preview - _anchor_world(sk, c)
 		DimensionOverlay._draw_one(overlay, v, sk, c,
-			Color(1, 1, 1, 0.8), app.doc.display_unit)
+			ghost(0.8), app.doc.display_unit)

@@ -28,6 +28,12 @@ const MAX_PASSES := 64
 static var _ident_re: RegEx = null
 
 
+## Release engine resources held in statics before shutdown — statics
+## outlive the servers and get reported as leaks otherwise (QA §M31).
+static func drop_static_caches() -> void:
+	_ident_re = null
+
+
 ## Every identifier token in `text`, in order, without duplicates.
 static func identifiers(text: String) -> Array[String]:
 	if _ident_re == null:

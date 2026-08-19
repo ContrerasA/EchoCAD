@@ -13,6 +13,10 @@ var anchor := Vector2.ZERO
 var path_sketch := ""
 var path_entity := ""        # any entity on the path chain
 
+## Why the last build_mesh returned null (display state, not serialized) —
+## so the UI can say what actually went wrong instead of guessing.
+var last_error := ""
+
 ## Sampling step for path polylines, mm-ish (curves already tessellate).
 const MIN_SEG_MM := 0.01
 
@@ -138,9 +142,11 @@ func _resolve(doc: CadDocument) -> Dictionary:
 	var sf := doc.sketch_feature(sketch_id)
 	var pf := doc.sketch_feature(path_sketch)
 	if sf == null or pf == null:
+		last_error = "the profile or path sketch no longer exists"
 		return {}
 	var prof := ProfileFinder.profile_at(sf.sketch, anchor)
 	if prof.is_empty():
+		last_error = "no closed profile at the picked spot"
 		return {}
 	var poly: PackedVector2Array = (prof["polygon"] as PackedVector2Array).duplicate()
 	if ExtrudeFeature._signed_area(poly) < 0.0:
@@ -153,6 +159,8 @@ func _resolve(doc: CadDocument) -> Dictionary:
 		holes_cw.append(hp)
 	var path2 := path_polyline(pf.sketch, path_entity)
 	if path2.size() < 2:
+		last_error = "no usable path — it must be an OPEN chain of " \
+			+ "lines/arcs/splines (closed loops have no start)"
 		return {}
 	var pxf := pf.plane_transform()
 	var path3 := PackedVector3Array()
@@ -233,6 +241,7 @@ static func min_bend_radius(path: PackedVector3Array) -> float:
 
 
 func build_mesh(doc: CadDocument) -> ArrayMesh:
+	last_error = ""
 	var res := _resolve(doc)
 	if res.is_empty():
 		return null
@@ -242,8 +251,16 @@ func build_mesh(doc: CadDocument) -> ArrayMesh:
 	var profile_xf: Transform3D = res["profile_xf"]
 
 	# Profile coords relative to the path start, in the profile plane.
+	# When the projected path start lands INSIDE the profile the drawn
+	# offset is kept (Fusion-style: the profile rides where it was drawn
+	# relative to the path). A profile drawn somewhere else entirely is
+	# CENTERED on the path instead — sweeping it at a 100 mm arm made the
+	# radial extent enormous and every gentle path read as "too tight"
+	# (QA §M34.1).
 	var s_local := profile_xf.affine_inverse() * path[0]
 	var s_uv := Vector2(s_local.x, s_local.y)
+	if not Geometry2D.is_point_in_polygon(s_uv, poly):
+		s_uv = _polygon_centroid(poly)
 	var max_ext := 0.0
 	var rings: Array = [poly]
 	rings.append_array(holes)
@@ -251,7 +268,9 @@ func build_mesh(doc: CadDocument) -> ArrayMesh:
 		for p in ring:
 			max_ext = maxf(max_ext, (p - s_uv).length())
 	if min_bend_radius(path) < max_ext:
-		return null   # would self-intersect; callers report the refusal
+		last_error = "a path bend is tighter than the profile " \
+			+ "(the swept walls would self-intersect)"
+		return null
 
 	# Per-SEGMENT transported frames + exact miter joints: the ring at an
 	# interior joint is the previous leg's prism sliced by the miter plane
@@ -259,6 +278,7 @@ func build_mesh(doc: CadDocument) -> ArrayMesh:
 	# pinch corners — an L sweep lost ~15% of its corner volume that way.
 	var joints := _joint_rings(path, profile_xf, s_uv, rings)
 	if joints.is_empty():
+		last_error = "the path doubles back on itself (hairpin joint)"
 		return null
 
 	var verts := PackedVector3Array()
@@ -327,6 +347,25 @@ func build_mesh(doc: CadDocument) -> ArrayMesh:
 	earr[Mesh.ARRAY_VERTEX] = edges
 	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_LINES, earr)
 	return mesh
+
+
+## Area-weighted centroid of a simple polygon (falls back to the vertex
+## mean when the area degenerates).
+static func _polygon_centroid(poly: PackedVector2Array) -> Vector2:
+	var a2 := 0.0
+	var c := Vector2.ZERO
+	for i in poly.size():
+		var p := poly[i]
+		var q := poly[(i + 1) % poly.size()]
+		var cr := p.cross(q)
+		a2 += cr
+		c += (p + q) * cr
+	if absf(a2) < 1e-9:
+		var m := Vector2.ZERO
+		for p in poly:
+			m += p
+		return m / maxf(float(poly.size()), 1.0)
+	return c / (3.0 * a2)
 
 
 ## Winding safety net shared by sweep + loft: if the assembled solid's

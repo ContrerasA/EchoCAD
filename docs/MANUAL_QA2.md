@@ -298,15 +298,39 @@ Status: PENDING sign-off
    buttons/panels/labels/status bar light, the 3D viewport background goes
    light with darker grid lines, the sketch canvas matches. Sketch line
    colors (blue/green/violet) stay legible.
-- [!] 5. In light theme, open a sketch, draw, dimension, orbit off-axis.
+- [X] 5. In light theme, open a sketch, draw, dimension, orbit off-axis.
    **Expect:** everything legible: grid, badges, dimension labels,
    selection highlight.
     Can't easily see dimension line. not enough contrast
+    Update:
+    When switching to light theme, popups like Preferences, are still dark, with only inputs and text changed. The tool shelf bacground is also dark, when drawing geometry, the ghost lines appear white on an alright light gray background. same for dimensions, and all other tooling. it's not till we accept the geometry that it turns into a contrasting color that we can see
 - [X] 6. Quit and relaunch. **Expect:** the light theme is remembered.
    Switch back to Dark; relaunch; dark comes back.
 - [X] 7. Icon check: hover every tool + constraint button once. **Expect:**
    each icon plausibly depicts its command (no blanks, no mismatches);
    both themes tint icons legibly.
+
+### §M26 fix log
+
+- Item 5 (2026-08-19): dimension lines/arrows hardcoded a near-white ink
+  that vanished on the light background. The dimension overlay ink is now
+  theme-sourced (`dim_line` / `dim_driven` palette entries — dark ink in
+  the light theme); the label chips behind dimension values and type-in
+  fields follow the theme panel color too, so their text stays legible in
+  both themes. Selected amber and conflict red are unchanged (legible on
+  both).
+  Round 2 (2026-08-19), from the update note: three more dark holdouts.
+  (a) GHOST previews — every drawing tool hardcoded white for its in-progress
+  lines/markers, invisible on the light canvas until commit. All 38 sites now
+  use a theme-following ghost ink (white on dark, near-black on light).
+  (b) DIALOGS — the lazily-built popups (Preferences, Extrude, Revolve,
+  Move, Color…, all 14) are raw Windows, which clear to the engine's dark
+  default instead of drawing a themed panel; each now gets a themed backdrop
+  panel injected as it is created, and AcceptDialog/FileDialog got themed
+  "panel" styles.
+  (c) SHELF — the space around the shelf groups was the same engine dark
+  clear color; the app root now paints a theme-following backdrop.
+  Covered by `tests/m29_qa_fixes.gd` (I).
 
 ## §M27 — Viewing: projection, look-at, units, measure
 
@@ -321,9 +345,11 @@ Status: PENDING sign-off
 - [X] 3. **Look At** → click the XZ plane, then again → click a flat body
    face. **Expect:** hover highlights planes/faces; the camera animates to
    face it square-on. Esc cancels the pick.
-- [!] 4. Orbit away, zoom far out, press **F** (or Fit). **Expect:** the
+- [X] 4. Orbit away, zoom far out, press **F** (or Fit). **Expect:** the
    model fills the view, centered, in both projections.
     Zoom does not work in ortho projection mode
+    Update:
+	Zoom does now work, however the camera is still clipping the nearby grid. like if it's near clipping pane is set too high
 - [X] 5. Views dropdown → **Save View**; orbit elsewhere; pick the saved
    view. **Expect:** the exact camera returns (angle, distance, and its
    projection). Save the file, reopen it: the view survives.
@@ -342,140 +368,353 @@ In ortho mode, can't zoom into the model
 Also the grid looks like it clips when close to the camera
 Changing the color of a body doesn't seem to change the color of it in the regular model mode
 
+### §M27 fix log
+
+- Item 4 / ortho zoom (2026-08-19): the wheel only scaled the eye DISTANCE,
+  which changes nothing under an orthographic camera — apparent size lives
+  in `camera.size`. Ortho zoom now scales the camera size (distance scales
+  alongside so the eye stays clear of the model and a later switch back to
+  perspective lands at a sane range). Covered by `tests/m29_qa_fixes.gd` (F).
+  Round 2 (2026-08-19), "still clipping the nearby grid": ortho ignores the
+  eye distance for apparent size but NOT for the near plane — with the eye
+  close, a grazing view of the ground grid crosses the near plane inside the
+  view and cuts off. The ortho eye is now parked at least 8 view-heights
+  back (toggle, zoom, and Fit all enforce it; pan speed keys off the view
+  height so it does not race with the far eye). Sketch mode is square-on to
+  its plane and is deliberately left alone. Covered by
+  `tests/m29_qa_fixes.gd` (F, standoff assertion).
+- Grid clipping (2026-08-19): the ground-grid quad was pinned at the plane
+  ORIGIN with a fixed step count each way, so a close-up view away from the
+  origin watched the grid fade out mid-screen ("clips near the camera").
+  The quad now follows the camera target, snapped to the major-line lattice
+  so the lines themselves never move — only the (off-screen) faded edge
+  re-centers.
+- Body color (2026-08-19): deselecting any body repainted EVERY body with
+  the shared default gray, erasing the M32 per-body color the moment the
+  colored body was no longer selected. Deselection now restores each
+  body's own color. Covered by `tests/m29_qa_fixes.gd` (G).
+
 ## §M28 — Sketch splines
 
 Status: PENDING sign-off
 
-- [ ] 1. Spline tool (B): click 4–5 points, Enter. **Expect:** a smooth
+- [X] 1. Spline tool (B): click 4–5 points, Enter. **Expect:** a smooth
    curve through every clicked point; ghost preview follows the cursor
    while drawing; ONE Ctrl+Z removes the whole curve.
-- [ ] 2. Draw a spline ending double-click. **Expect:** double-click
+- [X] 2. Draw a spline ending double-click. **Expect:** double-click
    finishes it (no extra point from the second click).
-- [ ] 3. Draw 4+ points, then click the FIRST point. **Expect:** the curve
+- [X] 3. Draw 4+ points, then click the FIRST point. **Expect:** the curve
    closes smoothly (no corner at the joint); the closed region shows the
    blue profile fill; Extrude accepts it.
-- [ ] 4. Select the spline. **Expect:** amber tangent handles at each fit
+- [X] 4. Select the spline. **Expect:** amber tangent handles at each fit
    point. Drag one: the curve reshapes live, both sides of the handle stay
    mirrored (no kink); the drag is ONE undo step.
-- [ ] 5. Drag a fit point with Select. **Expect:** the curve follows
+	Does work, however when i click on an individual point, i lose ability to edit the handles.
+	I'd like to see the handles if one point is selected as well
+	Also, alt + drag should adjust one single handle, not both at same time
+	Regular drag should reset the handles so that they're symetrical again
+- [X] 5. Drag a fit point with Select. **Expect:** the curve follows
    smoothly. Add a dimension/constraint to a fit point: it behaves like
    any sketch point (solver, DOF, badges).
-- [ ] 6. Construction toggle on, draw a spline. **Expect:** violet dashed
+- [X] 6. Construction toggle on, draw a spline. **Expect:** violet dashed
    construction curve; no profile from it.
-- [ ] 7. Trim/Extend/Offset on a spline. **Expect:** no crash — trim and
+- [X] 7. Trim/Extend/Offset on a spline. **Expect:** no crash — trim and
    extend find no cuts; Offset refuses with a status hint (documented
    limitation).
-- [ ] 8. Mirror a spline (with an override dragged in). **Expect:** the
+- [X] 8. Mirror a spline (with an override dragged in). **Expect:** the
    mirrored copy is the true reflection, including the reshaped bend.
-- [ ] 9. Export DXF with a spline; re-import. **Expect:** the curve comes
+   Look at docs/M28.ecad. The left spline is original. I've set it to miror around the construction line
+   When i move any points on the original spline left / right, the mirror line also moves. This shouldn't be happening
+- [X] 9. Export DXF with a spline; re-import. **Expect:** the curve comes
    back as a welded polyline in the right place (tessellation, documented).
-- [ ] 10. Save/reopen the document. **Expect:** the spline, its overrides,
+- [X] 10. Save/reopen the document. **Expect:** the spline, its overrides,
    and closure survive exactly.
+
+### §M28 fix log
+
+- Item 4 (2026-08-19): three parts. (a) Selecting a single FIT POINT now
+  shows that point's handle too — before, only selecting the whole spline
+  did, so clicking a point lost the handles. (b) Alt+drag moves ONE handle
+  side: the spline stores an asymmetric {out, in} override (the point may
+  kink); it survives save/reopen, mirror, and patterns. (c) A plain drag
+  stores a symmetric override again, so a kinked point is smoothed by
+  re-dragging its handle without Alt. Covered by `tests/m29_qa_fixes.gd`
+  (A, D).
+- Item 8 (2026-08-19): dragging an original spline point pulled the mirror
+  LINE along because the drag planner (DragFilter) grew its moving set
+  through the SYMMETRY constraint into the free construction axis — the
+  projection then spent part of the motion bending the axis. The axis
+  operand is now excluded from that recruitment (it is a datum: the
+  mirrored PARTNER follows a drag, the axis never does; grabbing the axis
+  itself still drags it). Covered by `tests/m29_qa_fixes.gd` (B).
 
 ## §M29 — Sketch patterns, chamfer, polygon
 
 Status: PENDING sign-off
 
-- [ ] 1. Draw a rect, select it (marquee), pick **Rect Pattern**. Move the
+- [X] 1. Draw a rect, select it (marquee), pick **Rect Pattern**. Move the
    cursor: a ghost grid follows. Type N/M (Tab cycles) and DX/DY with unit
    suffixes; click. **Expect:** the grid of copies lands; ONE Ctrl+Z
    removes all of it.
-- [ ] 2. Drag a point on a pattern copy. **Expect:** the copy keeps its
+    The input boxes don't make much sense since it's' abreviations. Fusion has icons, and a tool props panel on the right that opens and lets us edit the properties of the action being performed, as well as minimal ui with icons in the workspace
+    N doesn't make sense either since default value is a decimal in inches, but should be unitless whole number
+    Update:
+    If rows set to 1, then vertical spacing shouldn't be an option in the inputs
+    Same for horizontal
+- [X] 2. Drag a point on a pattern copy. **Expect:** the copy keeps its
    shape (its H/V/equal constraints came along) but may move/scale as a
    whole — Fusion-lite freedom, dimensions are not replicated.
-- [ ] 3. Select a circle + slot, pick **Circ Pattern**, type N=6, click a
+- [X] 3. Select a circle + slot, pick **Circ Pattern**, type N=6, click a
    center. **Expect:** 5 ghost copies preview around the center before the
    click; committed copies are evenly spaced; arcs/slots keep their shape.
-- [ ] 4. Circ Pattern with A=180, N=3. **Expect:** copies at 90° and 180°
+- [X] 4. Circ Pattern with A=180, N=3. **Expect:** copies at 90° and 180°
    exactly.
-- [ ] 5. **Chamfer**: hover a rect corner (highlights), type a distance,
+   A and N doesn't make sense since N is represented in inches, but should be unitless integer, and A is also represented in inches, but should be degrees. it starts off as 14.173 somehow being 365deg, and N = 0.157 somehow equaling 4
+- [X] 5. **Chamfer**: hover a rect corner (highlights), type a distance,
    click. **Expect:** a straight cut with equal legs; the two edges rewire
    to the cut points; ONE undo restores the corner. Constraints referencing
    the old corner disappear cleanly (no orphan badges).
-- [ ] 6. **Polygon**: click center, move (ghost n-gon), type N=8 and R,
+- [X] 6. **Polygon**: click center, move (ghost n-gon), type N=8 and R,
    click. **Expect:** regular octagon + construction circle through its
    vertices + construction center point; dragging a vertex rotates/scales
    the polygon but keeps it regular; dimensioning the circle pins the size.
-- [ ] 7. Pattern a spline; mirror-check bends. **Expect:** copies keep the
+   	Don't see a way to move polygon, no move tool apparent, and no move option appears when hovering over any part of polygon. if entire polygon is selected with box marquee too, and i drag an edge / point, only that edge / point move
+- [X] 7. Pattern a spline; mirror-check bends. **Expect:** copies keep the
    exact bezier shape (handle overrides travel).
+   Seemingly works, but there are errors in console
+   ERROR: Invalid polygon data, triangulation failed.
+   at: (servers/rendering/renderer_canvas_cull.cpp:1770)
+   GDScript backtrace (most recent call first):
+       [0] _draw (res://src/render/sketch_view.gd:460)
+ERROR: Invalid polygon data, triangulation failed.
+   at: (servers/rendering/renderer_canvas_cull.cpp:1770)
+   GDScript backtrace (most recent call first):
+       [0] _draw (res://src/render/sketch_view.gd:460)
+ERROR: Invalid polygon data, triangulation failed.
+   at: (servers/rendering/renderer_canvas_cull.cpp:1770)
+   GDScript backtrace (most recent call first):
+       [0] _draw (res://src/render/sketch_view.gd:460)
+ERROR: Invalid polygon data, triangulation failed.
+   at: (servers/rendering/renderer_canvas_cull.cpp:1770)
+   GDScript backtrace (most recent call first):
+       [0] _draw (res://src/render/sketch_view.gd:460)
+ERROR: Invalid polygon data, triangulation failed.
+   at: (servers/rendering/renderer_canvas_cull.cpp:1770)
+   GDScript backtrace (most recent call first):
+       [0] _draw (res://src/render/sketch_view.gd:460)
+
+### §M29 fix log
+
+- Items 1 + 4 (2026-08-19): the count/angle type-ins were formatted as
+  LENGTHS — the live value ran through the mm→display-unit conversion, so
+  N=4 showed as "0.157" (4 mm in inches) and 360° as "14.173". The fields
+  now carry a per-field kind: counts render as unitless whole numbers,
+  angles as degrees ("360°"), lengths as before; typed counts/angles parse
+  as raw numbers. Labels spell the field out instead of abbreviating:
+  Count/Angle (circular), Cols/Rows/Spacing X/Spacing Y (rectangular),
+  Sides/Radius (polygon), and the status hints name them. The Fusion-style
+  tool-properties side panel with icons is a larger UI rework — deferred to
+  a later milestone. Covered by `tests/m29_qa_fixes.gd` (C).
+  Round 2 (2026-08-19), from the update note: a 1-count axis no longer
+  offers its spacing — with Rows=1 the "Spacing Y" box is hidden (and with
+  Cols=1, "Spacing X"); the boxes reappear as soon as the count is typed
+  above 1, and Tab skips hidden fields. Covered by `tests/m29_qa_fixes.gd`
+  (H).
+- Item 6 (2026-08-19): dragging one entity of a MULTI-selection moved only
+  that entity. When the grabbed entity is part of the current selection the
+  whole selection now drags as one group — marquee the polygon, drag any of
+  its edges or points, and the polygon translates together. Covered by
+  `tests/m29_qa_fixes.gd` (E).
+- Item 7 (2026-08-19): the console spam came from the closed-region fill —
+  profiles through patterned splines yield some sliver triangles that
+  collapse to zero SCREEN area, and Godot's draw-time re-triangulation
+  fails on each with that error, once per frame. Zero-area triangles are
+  now skipped at draw (they paint nothing anyway).
 
 ## §M30 — Reference images (canvases)
 
 Status: PENDING sign-off
 
-- [ ] 1. **Canvas** button → pick a photo (PNG/JPEG). **Expect:** the image
+- [X] 1. **Canvas** button → pick a photo (PNG/JPEG). **Expect:** the image
    lands on the plane (active sketch plane if sketching, else XY), a
    Canvases folder appears in the browser, a timeline chip appears, and
    the placement dialog opens.
-- [ ] 2. In the dialog set Center/Width/Rotation/Opacity (unit suffixes
+- [X] 2. In the dialog set Center/Width/Rotation/Opacity (unit suffixes
    work), Apply. **Expect:** the image moves/scales/tilts live in both the
    3D view and inside a sketch on that plane; Ctrl+Z reverts the edit in
    one step.
-- [ ] 3. Right-click the browser row → **Calibrate…** (inside a sketch on
+- [X] 3. Right-click the browser row → **Calibrate…** (inside a sketch on
    its plane): click two recognizable points on the image, type the real
    distance. **Expect:** the image rescales so those points measure right
    (check with a dimension); the first pick stays put. Esc mid-pick
    cancels.
-- [ ] 4. Trace geometry over the image. **Expect:** the image never steals
+- [X] 4. Trace geometry over the image. **Expect:** the image never steals
    clicks (it is not snappable/pickable); lines/splines draw over it; the
    grid stays visible above it.
-- [ ] 5. Browser eye off/on; suppress via the timeline chip. **Expect:**
+- [X] 5. Browser eye off/on; suppress via the timeline chip. **Expect:**
    the image hides in BOTH modes; suppress also removes it from replay.
-- [ ] 6. Save, reopen. **Expect:** the image comes back exactly (bytes are
+- [X] 6. Save, reopen. **Expect:** the image comes back exactly (bytes are
    embedded in the .ecad — move the original file away first to prove it).
-- [ ] 7. Lock in the edit dialog. **Expect:** the lock shows in the browser
+- [X] 7. Lock in the edit dialog. **Expect:** the lock shows in the browser
    row (🔒).
-- [ ] 8. Import a renamed .txt as .png. **Expect:** refused with a status
+- [~] 8. Import a renamed .txt as .png. **Expect:** refused with a status
    message; nothing added.
+   	Works but errors in console
+   	[godot-thorvg] extension initialized; TVGCanvas registered.
+WARNING: Not a PNG file
+     at: check_error (drivers/png/png_driver_common.cpp:57)
+     GDScript backtrace (most recent call first):
+         [0] texture (res://src/features/canvas_feature.gd:48)
+         [1] load_file (res://src/features/canvas_feature.gd:71)
+         [2] import_canvas (res://src/app/app_root.gd:1357)
+         [3] <anonymous lambda> (res://src/app/app_root.gd:1389)
+ERROR: Condition "!success" is true. Returning: ERR_FILE_CORRUPT
+   at: png_to_image (drivers/png/png_driver_common.cpp:70)
+   GDScript backtrace (most recent call first):
+       [0] texture (res://src/features/canvas_feature.gd:48)
+       [1] load_file (res://src/features/canvas_feature.gd:71)
+       [2] import_canvas (res://src/app/app_root.gd:1357)
+       [3] <anonymous lambda> (res://src/app/app_root.gd:1389)
+ERROR: Condition "err" is true. Returning: Ref<Image>()
+   at: load_mem_png (drivers/png/image_loader_png.cpp:60)
+   GDScript backtrace (most recent call first):
+       [0] texture (res://src/features/canvas_feature.gd:48)
+       [1] load_file (res://src/features/canvas_feature.gd:71)
+       [2] import_canvas (res://src/app/app_root.gd:1357)
+       [3] <anonymous lambda> (res://src/app/app_root.gd:1389)
+ERROR: Condition "image.is_null()" is true. Returning: ERR_PARSE_ERROR
+   at: _load_from_buffer (core/io/image.cpp:4559)
+   GDScript backtrace (most recent call first):
+       [0] texture (res://src/features/canvas_feature.gd:48)
+       [1] load_file (res://src/features/canvas_feature.gd:71)
+       [2] import_canvas (res://src/app/app_root.gd:1357)
+       [3] <anonymous lambda> (res://src/app/app_root.gd:1389)
+
+### §M30 fix log
+
+- Item 8 (2026-08-19): the refusal worked but only AFTER handing the bytes to
+  the engine's PNG decoder, which logs driver-level errors on garbage before
+  failing. `CanvasFeature.load_file` now sniffs the magic number first (PNG
+  `89 50 4E 47` / JPEG `FF D8 FF`) and refuses anything else without ever
+  calling a decoder — silent console, same status message. The sniff also
+  decides the stored format, so a PNG renamed .jpg decodes correctly now
+  instead of failing. Covered by `tests/m35_qa_fixes.gd` (A).
+
+
+## Additional:
+crash when closed after this milestone check
+C:\Dev\Godot\EchoCAD>ERROR: BUG: Unreferenced static string to 0: Physics2DConstraintSolveIslands
+   at: unref (core/string/string_name.cpp:117)
+ERROR: BUG: Unreferenced static string to 0: Physics2DConstraintSetup
+   at: unref (core/string/string_name.cpp:117)
+ERROR: BUG: Unreferenced static string to 0: servers
+   at: unref (core/string/string_name.cpp:117)
+ERROR: BUG: Unreferenced static string to 0: _request_gizmo_for_id
+   at: unref (core/string/string_name.cpp:117)
+ERROR: BUG: Unreferenced static string to 0: _enter_world
+   at: unref (core/string/string_name.cpp:117)
+ERROR: 7 RID allocations of type '23NavMeshGeometryParser2D' were leaked at exit.
+ERROR: 6 RID allocations of type '23NavMeshGeometryParser3D' were leaked at exit.
+ERROR: Pages in use exist at exit in PagedAllocator: N12VariantPools11BucketLargeE
+   at: ~PagedAllocator (./core/templates/paged_allocator.h:170)
 
 ## §M31 — SVG import
 
 Status: PENDING sign-off
 
-- [ ] 1. **Import SVG** → pick a plane (and optional Width) → choose a
+- [X] 1. **Import SVG** → pick a plane (and optional Width) → choose a
    simple file (rect + circle). **Expect:** geometry lands on that plane
    at physical size (an SVG with width="40mm" measures 40mm), right side
    up (not mirrored/flipped); ONE Ctrl+Z removes the import.
-- [ ] 2. Import an Inkscape drawing (save as Plain SVG): outline with
+   	Units not given in open panel. Also instead of manually specifying width, we should be able to instead also do the dpi
+- [X] 2. Import an Inkscape drawing (save as Plain SVG): outline with
    curves. **Expect:** straight runs come in as lines, circular arcs as
    arcs, curved runs as splines; the outline welds — hover in Extrude
    picking highlights the closed region and extruding works.
-- [ ] 3. Import a file with grouped/transformed art (`<g transform=...>`,
+   	Only able to extrude squares / rectangles. Circles or complex closed paths not able to be extruded
+- [X] 3. Import a file with grouped/transformed art (`<g transform=...>`,
    rotated/scaled elements). **Expect:** everything lands where the
    browser shows it.
-- [ ] 4. Import a logo with text elements. **Expect:** text is skipped and
+- [X] 4. Import a logo with text elements. **Expect:** text is skipped and
    counted in the status message; paths still import. (Convert text to
    paths in the editor to bring it in.)
-- [ ] 5. Width override: type 100mm in the dialog. **Expect:** the drawing
+   	Text is still visible, but that may because it's exported as paths rather than text. check @tests/svg_text.svg to confirm
+- [X] 5. Width override: type 100mm in the dialog. **Expect:** the drawing
    is uniformly scaled to 100mm wide.
-- [ ] 6. Import a not-an-SVG (renamed .txt). **Expect:** refused with a
+- [X] 6. Import a not-an-SVG (renamed .txt). **Expect:** refused with a
    status message; the document is untouched.
-- [ ] 7. Open the imported sketch and edit: drag points, dimension the
+- [X] 7. Open the imported sketch and edit: drag points, dimension the
    spline's fit points, add constraints. **Expect:** behaves like drawn
    geometry.
+   	Does behave liek that with exception that it's not treated as a closed path, and can't be extruded as mentioned above
+
+### §M31 fix log
+
+- Items 2 + 7 (2026-08-19): all-curve outlines (a circle drawn as four
+  beziers, Inkscape blobs) imported as OPEN splines whose two endpoints
+  welded onto one node — and ProfileFinder silently DROPPED any open spline
+  whose ends collapse to the same node, so those shapes never highlighted in
+  Extrude picking. Two-sided fix: the importer now marks a curve chain that
+  loops back onto its own start as a CLOSED spline, and ProfileFinder treats
+  a welded-loop open spline as its own face (covers hand-drawn/DXF loops
+  too). `tests/svg.svg`'s bezier circle and blob both extrude now. Covered
+  by `tests/m35_qa_fixes.gd` (B, G).
+- Item 1 (2026-08-19): the import dialog's Width field now names the display
+  unit in its label (suffixes like `40mm` always worked; now it says so),
+  and a new **DPI** field (default 96) rescales UNITLESS files — an SVG with
+  no physical width/height is read at CSS's 96 px/in by default, and typing
+  e.g. 300 shrinks it to true print size. Files that declare mm/cm/in/pt
+  ignore the DPI (their size is already physical). Covered by
+  `tests/m35_qa_fixes.gd` (C).
+- Item 4 (2026-08-19): NOT a bug — `tests/svg_text.svg` contains zero
+  `<text>` elements (only three `<path>`es): the exporter converted the text
+  to outlines before saving, so importing it as geometry is correct. Real
+  `<text>` elements are still skipped and counted (see the parse's skip
+  list); nothing to change.
+- Shutdown errors (2026-08-19): the "Unreferenced static string" /
+  RID-leak spew at exit comes from resources held in GDScript STATIC vars
+  (the theme's icon-texture cache, a compiled RegEx), which are torn down
+  after the rendering servers. AppRoot now drops those caches in
+  `_exit_tree`. The NavMeshGeometryParser RID lines are engine-internal
+  Godot 4.7 exit noise (present in an empty project too) — harmless,
+  after the window has closed, no data at risk.
 
 ## §M32 — Move / copy bodies, appearance
 
 Status: PENDING sign-off
 
-- [ ] 1. Click a body, **Move Body**, type ΔX/ΔY/ΔZ (unit suffixes work)
+- [X] 1. Click a body, **Move Body**, type ΔX/ΔY/ΔZ (unit suffixes work)
    and/or an axis + angle, OK. **Expect:** the body moves/rotates (about
    its own center); a Move chip lands on the timeline; ONE Ctrl+Z undoes.
-- [ ] 2. Double-click the Move chip, change values, OK. **Expect:** the
+- [X] 2. Double-click the Move chip, change values, OK. **Expect:** the
    body re-places parametrically; suppress on the chip puts it back.
-- [ ] 3. Edit the source sketch of a MOVED body. **Expect:** the change
+- [X] 3. Edit the source sketch of a MOVED body. **Expect:** the change
    replays and the body stays moved.
-- [ ] 4. **Copy Body** on a selected body. **Expect:** a second body at the
+- [X] 4. **Copy Body** on a selected body. **Expect:** a second body at the
    default offset, its own browser row/eye, exports its own STL. Edit the
    SOURCE (extrude height): the copy follows.
-- [ ] 5. Browser → body → **Color…**, pick something loud. **Expect:** the
+- [X] 5. Browser → body → **Color…**, pick something loud. **Expect:** the
    body recolors (selection highlight still wins while selected); save +
    reopen keeps the color. Coloring a Copy is refused with a hint (it
    inherits the source).
-- [ ] 6. Move a body that participates in booleans, then add a new Cut
+   Copies should inherit color from source originally, but be allowed to color itself after
+- [X] 6. Move a body that participates in booleans, then add a new Cut
    overlapping its OLD position. **Expect (known limitation):** booleans
    still target by pre-move overlap — the cut hits where the body
    originally stood. Documented, not a bug for this milestone.
+
+### Additional:
+UI elements in the Body Color window are too large, they take up too much room. have to increase window height to see apply button, not able to scroll
+
+### §M32 fix log
+
+- Item 5 (2026-08-19): as requested — a fresh copy INHERITS its source's
+  color (recolor the source and every uncolored copy follows), and Color…
+  on the copy now works instead of refusing: it stores an own color on the
+  CopyBodyFeature that overrides the inherited one from then on (undoable,
+  saved in the .ecad). The picker opens pre-seeded with the inherited
+  color. Covered by `tests/m35_qa_fixes.gd` (D);
+  `tests/rpc/test_move_bodies.py` updated (it asserted the old refusal).
 
 ## §M33 — Solid mirror + patterns
 
@@ -504,11 +743,14 @@ Status: PENDING sign-off
 
 Status: PENDING sign-off
 
-- [ ] 1. Draw a small profile on XZ; a path (lines/arcs chained) on XY
+- [!] 1. Draw a small profile on XZ; a path (lines/arcs chained) on XY
    starting at/near the profile. **Sweep** → click the profile (region
    highlights) → click the path → op dialog OK. **Expect:** a solid runs
    the whole path, square corners at line joints (no pinched corners),
    caps at both ends.
+   	Fails with message about tight paths and intersections. See @tests/M24.ecad
+   	Update:
+   		Still fails M32-2.ecad
 - [ ] 2. Sweep along a spline path. **Expect:** a smooth tube-like solid
    following the curve; no twisting.
 - [ ] 3. Try a path with a hairpin tighter than the profile. **Expect:**
@@ -524,13 +766,30 @@ Status: PENDING sign-off
    sketch afterward. **Expect:** replay updates the solids.
 - [ ] 8. Export a swept part to STL and slice it. **Expect:** watertight.
 
+### §M34 fix log
+
+- Item 1 (2026-08-19), from `tests/M34.ecad` (the note says M24.ecad but the
+  file is M34): the profile circle sits on XZ at (12.7, 63.5) while the
+  spline path on XY starts ~150 mm away — and the sweep carried the profile
+  at its DRAWN OFFSET from the path start, so the swept ring's radial extent
+  was ~75 mm and every gentle bend read as "tighter than the profile".
+  Now: when the path start projects INSIDE the profile the drawn offset is
+  kept (Fusion-style offset sweeps still work); a profile drawn elsewhere is
+  re-anchored to its own centroid, so it simply travels along the path —
+  the M34.ecad case builds a clean tube. The refusal messages also say what
+  actually failed now (no profile / closed-loop path / bend tighter than
+  the profile / hairpin) instead of one catch-all. Covered by
+  `tests/m35_qa_fixes.gd` (E).
+
 ## §M35 — 3D fillet + chamfer (prismatic)
 
 Status: PENDING sign-off
 
-- [ ] 1. Extrude a rectangle; select the body; **Fillet Edges**, size,
+- [!] 1. Extrude a rectangle; select the body; **Fillet Edges**, size,
    Side corners only. **Expect:** all four vertical edges round; the
    silhouette reads clean; a Fillet chip lands on the timeline.
+   	Only front 8 edges have fillet, rear 4 don't. however this tool isn't supposed to fillet all edges, only the edges that we select. it should be select tool, then select all edges to fillet, adjust radius if needed, then accept. same for chamfer
+   	Update: Unable to individually select front edges of a the body. it instead wants to only select the entire rectangular loop. filleted side edges worked as expected
 - [ ] 2. Double-click the chip, change the size. **Expect:** re-rounds
    parametrically; suppress restores the sharp body.
 - [ ] 3. **Chamfer Edges** with Top rim on a fresh box. **Expect:** a flat
@@ -545,3 +804,38 @@ Status: PENDING sign-off
    mesh fillets are the B-rep-kernel tier tracked in the backlog).
 - [ ] 8. Fillet a real bracket (corners + top rim), export STL, slice.
    **Expect:** watertight, printable.
+
+### §M35 fix log
+
+- Item 1 (2026-08-19): reworked to the requested select-edges workflow. The
+  "front 8 / rear 4" split was the old defaults (side corners + top rim on,
+  bottom rim off) — gone with them. Now: select a body, press Fillet/Chamfer
+  Edges → every treatable edge draws highlighted in the viewport; hovering
+  thickens the edge under the cursor; clicking toggles it into the selection
+  (amber); the top/bottom RIM toggles as a whole loop (per-segment rim
+  treatment needs variable insets — B-rep-kernel tier); a small Size+Apply
+  panel sits top-right; Enter or Apply commits, Esc cancels. The feature
+  stores the picked corner set (`corners`), replays and serializes it, and
+  the timeline's double-click edit changes the size while keeping the picked
+  edges. RPC `fillet_edges`/`chamfer_edges` accept an optional `corners`
+  list; the old lateral/top/bottom args still mean "all corners" for
+  compatibility. NOTE for re-test of items 2–8: the flows are unchanged
+  except that "Side corners only" etc. is now expressed by which edges you
+  click. Covered by `tests/m35_qa_fixes.gd` (F) and the unchanged
+  `tests/m35_fillet_chamfer.gd`.
+
+### Additional
+commit changes
+  big bug i discovered.
+  create sketch of a cube > extrude it > Edit original Sketch > move all points > finish
+  sketch > extruded body disapears. No object available in bodies section in outliner
+  saved as @tests/M33.ecad
+  another thing to note, i have to explicitely always tell agents to add hover over
+  indicators for tools when we are adding new tools, or updating tools. for instance, when
+  performing sweep operation, first i click sweep button, then click on closed geometry,
+  then next step is to click another path to be the path that the geometry gets swept on.
+  choosing the second path, there is no indication that the geometry under the mouse
+  cursor will is valid until user clicks on it. there's no highlighting of the line like
+  in other tools. i don't want to explicitely state this anymore, and there are many more
+  tools that are similar that are broken like this. i want it to be a hard rule that when
+  we're adding some tool like this

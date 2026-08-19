@@ -450,7 +450,7 @@ func draw_overlay(overlay: Control) -> void:
 	var spec := _compute(sk)
 	if not bool(spec.get("ok", false)):
 		return
-	var col := Color(1, 1, 1, 0.8)
+	var col := ghost(0.8)
 	for rec: Dictionary in spec["elems"]:
 		var e: SketchEntity = rec["e"]
 		if e is SketchLine:
