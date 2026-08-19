@@ -283,27 +283,28 @@ Status: PENDING sign-off
 
 Status: PENDING sign-off
 
-- [ ] 1. Launch the app. **Expect:** the top bar is grouped into captioned
+- [X] 1. Launch the app. **Expect:** the top bar is grouped into captioned
    shelf groups (Solids / Construct / Inspect / History / File /
    Interchange / View); every button has an icon; hovering shows a tooltip
    (shortcuts included, e.g. "Undo (Ctrl+Z)").
-- [ ] 2. Enter a sketch. **Expect:** the Solids/Construct groups vanish, a
+- [X] 2. Enter a sketch. **Expect:** the Solids/Construct groups vanish, a
    "Sketch" group with Finish Sketch appears, and two shelf rows show:
    icon-only tool strip (Select / Create / Modify / Dimension / Options
    groups) and an icon-only Constraints strip. Tooltips name every tool
    with its shortcut; clicking activates it (button stays pressed).
-- [ ] 3. Resize the window narrow (~900px). **Expect:** whole groups wrap
+- [X] 3. Resize the window narrow (~900px). **Expect:** whole groups wrap
    to the next row; no button is pushed off-screen or clipped.
-- [ ] 4. Preferences → Theme → Light. **Expect:** the ENTIRE app recolors:
+- [X] 4. Preferences → Theme → Light. **Expect:** the ENTIRE app recolors:
    buttons/panels/labels/status bar light, the 3D viewport background goes
    light with darker grid lines, the sketch canvas matches. Sketch line
    colors (blue/green/violet) stay legible.
-- [ ] 5. In light theme, open a sketch, draw, dimension, orbit off-axis.
+- [!] 5. In light theme, open a sketch, draw, dimension, orbit off-axis.
    **Expect:** everything legible: grid, badges, dimension labels,
    selection highlight.
-- [ ] 6. Quit and relaunch. **Expect:** the light theme is remembered.
+    Can't easily see dimension line. not enough contrast
+- [X] 6. Quit and relaunch. **Expect:** the light theme is remembered.
    Switch back to Dark; relaunch; dark comes back.
-- [ ] 7. Icon check: hover every tool + constraint button once. **Expect:**
+- [X] 7. Icon check: hover every tool + constraint button once. **Expect:**
    each icon plausibly depicts its command (no blanks, no mismatches);
    both themes tint icons legibly.
 
@@ -311,29 +312,35 @@ Status: PENDING sign-off
 
 Status: PENDING sign-off
 
-- [ ] 1. Model mode with a body: press **P** (or the Ortho shelf toggle).
+- [X] 1. Model mode with a body: press **P** (or the Ortho shelf toggle).
    **Expect:** projection flips to orthographic with no size jump; parallel
    edges render parallel. P again returns to perspective, again no jump.
-- [ ] 2. Enter a sketch with Ortho ON, finish it. **Expect:** sketch mode
+- [X] 2. Enter a sketch with Ortho ON, finish it. **Expect:** sketch mode
    unaffected (always ortho); finishing returns to the ORTHO model view.
    Relaunch the app: the projection choice is remembered.
-- [ ] 3. **Look At** → click the XZ plane, then again → click a flat body
+- [X] 3. **Look At** → click the XZ plane, then again → click a flat body
    face. **Expect:** hover highlights planes/faces; the camera animates to
    face it square-on. Esc cancels the pick.
-- [ ] 4. Orbit away, zoom far out, press **F** (or Fit). **Expect:** the
+- [!] 4. Orbit away, zoom far out, press **F** (or Fit). **Expect:** the
    model fills the view, centered, in both projections.
-- [ ] 5. Views dropdown → **Save View**; orbit elsewhere; pick the saved
+    Zoom does not work in ortho projection mode
+- [X] 5. Views dropdown → **Save View**; orbit elsewhere; pick the saved
    view. **Expect:** the exact camera returns (angle, distance, and its
    projection). Save the file, reopen it: the view survives.
-- [ ] 6. Preferences → Units → Millimeters. **Expect:** dimension labels,
+- [X] 6. Preferences → Units → Millimeters. **Expect:** dimension labels,
    grid step readout, type-in defaults, and the Parameters dialog all speak
    mm; the model itself does not move. Switch to Feet and back.
-- [ ] 7. In a sketch select: one line; a circle; two points; two parallel
+- [X] 7. In a sketch select: one line; a circle; two points; two parallel
    edges; two angled lines; a point + a line. **Expect:** the status bar
    shows Length/∠, R/⌀, Dist ΔX ΔY, parallel Dist, ∠, and Dist
    respectively, in the display unit.
-- [ ] 8. Browser → right-click a body → **Properties…**. **Expect:** a
+- [X] 8. Browser → right-click a body → **Properties…**. **Expect:** a
    popup with volume and bounding size in the display unit (³ for volume).
+
+### Issues
+In ortho mode, can't zoom into the model
+Also the grid looks like it clips when close to the camera
+Changing the color of a body doesn't seem to change the color of it in the regular model mode
 
 ## §M28 — Sketch splines
 
