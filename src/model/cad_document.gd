@@ -152,6 +152,10 @@ static func feature_from_dict(d: Dictionary) -> Feature:
 			return MirrorBodyFeature.from_dict(d)
 		"pattern_body":
 			return PatternBodyFeature.from_dict(d)
+		"sweep":
+			return SweepFeature.from_dict(d)
+		"loft":
+			return LoftFeature.from_dict(d)
 	push_error("[CadDocument] unknown feature kind in file: %s"
 		% String(d.get("kind", "?")))
 	return null

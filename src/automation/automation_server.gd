@@ -432,6 +432,36 @@ func _cmd_action_apply_view(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Var
 	return null
 
 
+## --- M34 sweep + loft --------------------------------------------------------
+
+func _cmd_action_sweep(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
+	var fid := app.sweep(String(a.get("sketch", "")), _vec2(a.get("at", [0, 0])),
+		String(a.get("path_sketch", "")), String(a.get("path_entity", "")),
+		String(a.get("op", SolidFeature.OP_NEW_BODY)))
+	if fid == "":
+		_reply_err(p, id, "bad_args", "sweep refused (see status hint)")
+		return null
+	var f := app.doc.feature_by_id(fid) as SweepFeature
+	var mesh := f.build_mesh(app.doc)
+	return {"feature": fid,
+		"volume": BodyBuilder.mesh_volume(mesh) if mesh != null else 0.0}
+
+
+func _cmd_action_loft(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
+	var sections: Array = []
+	for sec in a.get("sections", []):
+		sections.append({"sketch": String((sec as Dictionary).get("sketch", "")),
+			"at": _vec2((sec as Dictionary).get("at", [0, 0]))})
+	var fid := app.loft(sections, String(a.get("op", SolidFeature.OP_NEW_BODY)))
+	if fid == "":
+		_reply_err(p, id, "bad_args", "loft refused (see status hint)")
+		return null
+	var f := app.doc.feature_by_id(fid) as LoftFeature
+	var mesh := f.build_mesh(app.doc)
+	return {"feature": fid,
+		"volume": BodyBuilder.mesh_volume(mesh) if mesh != null else 0.0}
+
+
 ## --- M33 solid mirror + patterns ---------------------------------------------
 
 func _cmd_action_mirror_body(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:

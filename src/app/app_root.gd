@@ -735,6 +735,12 @@ func _build_ui() -> void:
 	_btn_extrude.name = "ExtrudeBtn"
 	_btn_revolve = _button(g_solids, "Revolve", _on_revolve_pressed, "revolve")
 	_btn_revolve.name = "RevolveBtn"
+	var sweepb := _button(g_solids, "Sweep", _on_sweep_pressed, "sweep")
+	sweepb.name = "SweepBtn"
+	sweepb.tooltip_text = "Sweep a profile along a sketch path"
+	var loftb := _button(g_solids, "Loft", _on_loft_pressed, "loft")
+	loftb.name = "LoftBtn"
+	loftb.tooltip_text = "Loft between two or more profiles"
 	var moveb := _button(g_solids, "Move Body",
 		func() -> void: open_move_dialog(""), "move_body")
 	moveb.name = "MoveBodyBtn"
@@ -2353,6 +2359,190 @@ func import_dxf_interactive() -> void:
 	_dxf_import_dialog.popup_centered()
 
 
+## --- sweep + loft (M34) ------------------------------------------------------
+
+var picking_sweep_profile := false
+var picking_sweep_path := false
+var _pending_sweep := {}          # {sketch_id, at} then + path
+var picking_loft := false
+var _loft_sections: Array = []
+var _sweep_dialog: Window = null
+var _sweep_op: OptionButton = null
+var _loft_dialog: Window = null
+var _loft_op: OptionButton = null
+var _loft_count: Label = null
+
+
+func _on_sweep_pressed() -> void:
+	if mode != Mode.MODEL:
+		return
+	picking_sweep_profile = true
+	_pending_sweep = {}
+	_refresh_ui()
+
+
+func _on_loft_pressed() -> void:
+	if mode != Mode.MODEL:
+		return
+	picking_loft = true
+	_loft_sections = []
+	_open_loft_dialog()
+	_refresh_ui()
+
+
+## The nearest sketch CURVE under the ray, across every live sketch —
+## sweep's path pick. {sketch_id, entity_id} or {}.
+func _sweep_path_under_ray(origin: Vector3, dir: Vector3) -> Dictionary:
+	var best := {}
+	var best_d := _axis_hover_width_mm()
+	for f in doc.live_features():
+		var sf := f as SketchFeature
+		if sf == null:
+			continue
+		var xf := sf.plane_transform()
+		for e in sf.sketch.entities():
+			if e.kind() in ["point", "circle"]:
+				continue
+			if e.kind() == "spline" and (e as SketchSpline).closed:
+				continue
+			var poly := SketchGeometry.entity_polyline(sf.sketch, e)
+			for i in poly.size() - 1:
+				var a := xf * Vector3(poly[i].x, poly[i].y, 0.0)
+				var b := xf * Vector3(poly[i + 1].x, poly[i + 1].y, 0.0)
+				var d := _ray_segment_distance(origin, dir, a, b)
+				if d < best_d:
+					best_d = d
+					best = {"sketch_id": sf.id, "entity_id": e.id}
+	return best
+
+
+static func _ray_segment_distance(ro: Vector3, rd: Vector3, a: Vector3,
+		b: Vector3) -> float:
+	# Sampled closest approach — robust and plenty accurate for picking.
+	var best := INF
+	for k in 9:
+		var p := a.lerp(b, k / 8.0)
+		var t := maxf((p - ro).dot(rd), 0.0)
+		best = minf(best, (ro + rd * t).distance_to(p))
+	return best
+
+
+func _open_sweep_dialog() -> void:
+	if _sweep_dialog == null:
+		_sweep_dialog = Window.new()
+		_sweep_dialog.name = "SweepDialog"
+		_sweep_dialog.title = "Sweep"
+		_sweep_dialog.size = Vector2i(240, 96)
+		_sweep_dialog.exclusive = false
+		_sweep_dialog.close_requested.connect(
+			func() -> void: _sweep_dialog.hide())
+		var box := VBoxContainer.new()
+		box.set_anchors_preset(Control.PRESET_FULL_RECT)
+		_sweep_dialog.add_child(box)
+		_sweep_op = OptionButton.new()
+		_sweep_op.name = "SweepOpPick"
+		_sweep_op.focus_mode = Control.FOCUS_NONE
+		_sweep_op.add_item("New Body", 0)
+		_sweep_op.add_item("Join", 1)
+		_sweep_op.add_item("Cut", 2)
+		box.add_child(_sweep_op)
+		var okb := Button.new()
+		okb.name = "SweepOkBtn"
+		okb.text = "OK"
+		okb.focus_mode = Control.FOCUS_NONE
+		okb.pressed.connect(_commit_sweep)
+		box.add_child(okb)
+		add_child(_sweep_dialog)
+	_sweep_dialog.popup_centered()
+
+
+func _commit_sweep() -> void:
+	_sweep_dialog.hide()
+	var ops := [SolidFeature.OP_NEW_BODY, SolidFeature.OP_JOIN,
+		SolidFeature.OP_CUT]
+	var op: String = ops[_sweep_op.get_selected_id()]
+	sweep(String(_pending_sweep["sketch_id"]),
+		_pending_sweep["at"] as Vector2,
+		String(_pending_sweep["path_sketch"]),
+		String(_pending_sweep["path_entity"]), op)
+	_pending_sweep = {}
+
+
+func sweep(profile_sketch: String, at: Vector2, path_sk: String,
+		path_entity: String, op := SolidFeature.OP_NEW_BODY) -> String:
+	var f := SweepFeature.make(profile_sketch, at, path_sk, path_entity, op)
+	f.id = doc.next_feature_id()
+	f.name = doc.auto_name("Sweep")
+	f.doc_ref = weakref(doc)
+	if f.build_mesh(doc) == null:
+		set_status_hint("Sweep failed: no profile/path, a closed-loop path, "
+			+ "or a bend tighter than the profile (self-intersection)")
+		return ""
+	stack.push_no_merge(CmdAddFeature.new(f))
+	return f.id
+
+
+func _open_loft_dialog() -> void:
+	if _loft_dialog == null:
+		_loft_dialog = Window.new()
+		_loft_dialog.name = "LoftDialog"
+		_loft_dialog.title = "Loft"
+		_loft_dialog.size = Vector2i(250, 120)
+		_loft_dialog.exclusive = false
+		_loft_dialog.close_requested.connect(func() -> void:
+			_loft_dialog.hide()
+			picking_loft = false
+			_loft_sections = []
+			_refresh_ui())
+		var box := VBoxContainer.new()
+		box.set_anchors_preset(Control.PRESET_FULL_RECT)
+		_loft_dialog.add_child(box)
+		_loft_count = Label.new()
+		_loft_count.name = "LoftCountLabel"
+		box.add_child(_loft_count)
+		_loft_op = OptionButton.new()
+		_loft_op.name = "LoftOpPick"
+		_loft_op.focus_mode = Control.FOCUS_NONE
+		_loft_op.add_item("New Body", 0)
+		_loft_op.add_item("Join", 1)
+		_loft_op.add_item("Cut", 2)
+		box.add_child(_loft_op)
+		var okb := Button.new()
+		okb.name = "LoftOkBtn"
+		okb.text = "OK"
+		okb.focus_mode = Control.FOCUS_NONE
+		okb.pressed.connect(_commit_loft)
+		box.add_child(okb)
+		add_child(_loft_dialog)
+	_loft_count.text = "Sections: %d (click profiles)" % _loft_sections.size()
+	_loft_dialog.popup_centered()
+
+
+func _commit_loft() -> void:
+	if _loft_sections.size() < 2:
+		set_status_hint("Loft: pick at least two profiles")
+		return
+	_loft_dialog.hide()
+	picking_loft = false
+	var ops := [SolidFeature.OP_NEW_BODY, SolidFeature.OP_JOIN,
+		SolidFeature.OP_CUT]
+	loft(_loft_sections, ops[_loft_op.get_selected_id()])
+	_loft_sections = []
+	_refresh_ui()
+
+
+func loft(p_sections: Array, op := SolidFeature.OP_NEW_BODY) -> String:
+	var f := LoftFeature.make(p_sections, op)
+	f.id = doc.next_feature_id()
+	f.name = doc.auto_name("Loft")
+	f.doc_ref = weakref(doc)
+	if f.build_mesh(doc) == null:
+		set_status_hint("Loft failed: needs 2+ hole-free closed profiles")
+		return ""
+	stack.push_no_merge(CmdAddFeature.new(f))
+	return f.id
+
+
 ## --- solid mirror + patterns (M33) -------------------------------------------
 
 var picking_mirror_plane := false
@@ -3323,6 +3513,35 @@ func _on_viewport_input(event: InputEvent) -> void:
 				_pending_extrude = hit
 				_open_extrude_dialog()
 				_refresh_ui()
+		elif mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT \
+				and picking_sweep_profile:
+			var rays := rig.pixel_ray(mb.position)
+			var shit := _profile_under_ray(rays[0], rays[1])
+			if not shit.is_empty():
+				picking_sweep_profile = false
+				picking_sweep_path = true
+				_pending_sweep = shit
+				world.clear_profile_hover()
+				_refresh_ui()
+		elif mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT \
+				and picking_sweep_path:
+			var rayp2 := rig.pixel_ray(mb.position)
+			var cand := _sweep_path_under_ray(rayp2[0], rayp2[1])
+			if not cand.is_empty():
+				picking_sweep_path = false
+				_pending_sweep["path_sketch"] = cand["sketch_id"]
+				_pending_sweep["path_entity"] = cand["entity_id"]
+				_open_sweep_dialog()
+				_refresh_ui()
+		elif mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT and picking_loft:
+			var rayl := rig.pixel_ray(mb.position)
+			var lhit := _profile_under_ray(rayl[0], rayl[1])
+			if not lhit.is_empty():
+				_loft_sections.append({"sketch": lhit["sketch_id"],
+					"at": lhit["at"]})
+				if _loft_count != null:
+					_loft_count.text = "Sections: %d (click profiles)" \
+						% _loft_sections.size()
 		elif mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT and picking_revolve:
 			var rayr := rig.pixel_ray(mb.position)
 			var rhit := _profile_under_ray(rayr[0], rayr[1])
@@ -3381,8 +3600,9 @@ func _on_viewport_input(event: InputEvent) -> void:
 		elif picking_offset_base:
 			var rayb := rig.pixel_ray(mm.position)
 			world.set_plane_hover(world.pick_plane(rayb[0], rayb[1]))
-		elif picking_profile or picking_revolve:
-			# Pre-highlight the region the click would extrude/revolve.
+		elif picking_profile or picking_revolve or picking_sweep_profile \
+				or picking_loft:
+			# Pre-highlight the region the click would take.
 			var rayp := rig.pixel_ray(mm.position)
 			var hitp := _profile_under_ray(rayp[0], rayp[1])
 			if hitp.is_empty():
@@ -3464,7 +3684,8 @@ func handle_app_key(k: InputEventKey) -> bool:
 				return true
 		if picking_plane or picking_profile or picking_offset_base \
 				or picking_revolve or picking_revolve_axis or picking_look_at \
-				or picking_mirror_plane:
+				or picking_mirror_plane or picking_sweep_profile \
+				or picking_sweep_path or picking_loft:
 			picking_plane = false
 			picking_profile = false
 			picking_offset_base = false
@@ -3472,7 +3693,15 @@ func handle_app_key(k: InputEventKey) -> bool:
 			picking_revolve_axis = false
 			picking_look_at = false
 			picking_mirror_plane = false
+			picking_sweep_profile = false
+			picking_sweep_path = false
+			if picking_loft or not _loft_sections.is_empty():
+				picking_loft = false
+				_loft_sections = []
+				if _loft_dialog != null:
+					_loft_dialog.hide()
 			_pending_revolve = {}
+			_pending_sweep = {}
 			world.set_plane_hover("")
 			world.clear_profile_hover()
 			world.clear_face_hover()
@@ -3932,6 +4161,14 @@ func _refresh_ui() -> void:
 			+ "(Esc to cancel)")
 	elif picking_mirror_plane:
 		_status_hint.text = "Mirror: select the mirror plane (Esc to cancel)"
+	elif picking_sweep_profile:
+		_status_hint.text = "Sweep: select the profile to sweep (Esc to cancel)"
+	elif picking_sweep_path:
+		_status_hint.text = ("Sweep: click the PATH — a line/arc/spline "
+			+ "chain in another sketch (Esc to cancel)")
+	elif picking_loft:
+		_status_hint.text = ("Loft: click 2+ profiles in order, then OK in "
+			+ "the dialog (Esc to cancel)")
 	elif picking_plane:
 		_status_hint.text = "Select a plane or a flat body face (Esc to cancel)"
 	elif picking_offset_base:

@@ -492,3 +492,27 @@ Status: PENDING sign-off
 - [ ] 8. Known limitation: pattern/mirror instances are bodies derived
    AFTER booleans — a later Cut placed over an instance does not carve it
    (booleans target pre-instance bodies). Documented.
+
+## §M34 — Sweep + loft
+
+Status: PENDING sign-off
+
+- [ ] 1. Draw a small profile on XZ; a path (lines/arcs chained) on XY
+   starting at/near the profile. **Sweep** → click the profile (region
+   highlights) → click the path → op dialog OK. **Expect:** a solid runs
+   the whole path, square corners at line joints (no pinched corners),
+   caps at both ends.
+- [ ] 2. Sweep along a spline path. **Expect:** a smooth tube-like solid
+   following the curve; no twisting.
+- [ ] 3. Try a path with a hairpin tighter than the profile. **Expect:**
+   refused with the status message about self-intersection.
+- [ ] 4. Profile with a HOLE (circle inside a rect): sweep. **Expect:** the
+   hole runs the length (check by orbiting/looking down the bore).
+- [ ] 5. **Loft**: circle on XY, bigger/smaller circle on an offset plane;
+   click both, OK. **Expect:** a smooth frustum; caps closed. Try a
+   square→circle loft: walls stay sane (no bowtie twist).
+- [ ] 6. Loft/sweep with Cut against an existing body. **Expect:** carves
+   like extrude/revolve cuts do.
+- [ ] 7. Chips: suppress/rollback/delete both features; edit the profile
+   sketch afterward. **Expect:** replay updates the solids.
+- [ ] 8. Export a swept part to STL and slice it. **Expect:** watertight.
