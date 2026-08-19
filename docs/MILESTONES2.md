@@ -318,3 +318,28 @@ because cap fillets are built from loft rings.
 - Autosave + crash recovery, recent-files list, document tabs.
 - Keyboard shortcut editor; edge-line overlay for CSG-baked bodies
   (carried); rigid whole-chain offset constraint (carried).
+
+## As-built deviations (implementation 2026-08-18/19)
+
+- **M27**: perspective stays the model-mode default (the doc proposed ortho
+  default) — flipping it would have invalidated standing camera tests and
+  user muscle memory; the toggle persists per user instead.
+- **M28**: per-point corner toggle + spline tangent constraints deferred
+  (auto Catmull-Rom + drag overrides cover drawing); DXF export writes the
+  tessellation.
+- **M29**: patterns are static copies + cloned internal geometric
+  constraints in one undo step — no live pattern group object (grouped
+  dimension semantics didn't fit N distinct spacings).
+- **M31**: imported beziers land as splines through points sampled ON the
+  source curve (the model's G1 splines can't carry asymmetric handles).
+- **M32**: numeric Move/Copy dialogs; the drag gizmo and point-to-point
+  snap move are backlog. Booleans still target pre-move AABBs (carried
+  limitation).
+- **M33**: mirror/pattern instances derive AFTER boolean resolution (same
+  stage as moves/copies) — a pattern of a Cut feature does not re-cut per
+  instance; instances are parametric bodies (`fid:k`).
+- **M34**: loft sections must be hole-free; no guide rails (as planned).
+- **M35**: edge sets are Side corners / Top rim / Bottom rim checkboxes
+  rather than per-edge hover picking; one treatment per body; plain
+  single-extrude bodies only (booleans refused by the same AABB-touch rule
+  the builder targets with).

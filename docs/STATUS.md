@@ -1,6 +1,10 @@
 # EchoCAD — Status
 
-Updated: 2026-08-18. Milestones M0–M25 implemented and merged to `main`.
+Updated: 2026-08-19. Milestones M0–M25 implemented and merged to `main`.
+Volume 2 (M26–M35, `docs/MILESTONES2.md`) is IMPLEMENTED on a chain of
+branches (m26-ui-shell → … → m35-fillet-chamfer, each atop the previous)
+with 54 headless tests + 28 RPC suites green at the tip; merges to `main`
+wait on the §M26–§M35 manual QA sign-offs in `docs/MANUAL_QA2.md`.
 Automated coverage: 43 headless tests (`tools/run_tests.sh` /
 `tools\run_tests.ps1`) + 18 RPC suites (`tools/run_rpc_tests.sh` /
 `tools\run_rpc_tests.ps1`), all green on Windows (run RPC suites HEADLESS=1
