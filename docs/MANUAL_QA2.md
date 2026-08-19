@@ -364,3 +364,30 @@ Status: PENDING sign-off
    back as a welded polyline in the right place (tessellation, documented).
 - [ ] 10. Save/reopen the document. **Expect:** the spline, its overrides,
    and closure survive exactly.
+
+## §M29 — Sketch patterns, chamfer, polygon
+
+Status: PENDING sign-off
+
+- [ ] 1. Draw a rect, select it (marquee), pick **Rect Pattern**. Move the
+   cursor: a ghost grid follows. Type N/M (Tab cycles) and DX/DY with unit
+   suffixes; click. **Expect:** the grid of copies lands; ONE Ctrl+Z
+   removes all of it.
+- [ ] 2. Drag a point on a pattern copy. **Expect:** the copy keeps its
+   shape (its H/V/equal constraints came along) but may move/scale as a
+   whole — Fusion-lite freedom, dimensions are not replicated.
+- [ ] 3. Select a circle + slot, pick **Circ Pattern**, type N=6, click a
+   center. **Expect:** 5 ghost copies preview around the center before the
+   click; committed copies are evenly spaced; arcs/slots keep their shape.
+- [ ] 4. Circ Pattern with A=180, N=3. **Expect:** copies at 90° and 180°
+   exactly.
+- [ ] 5. **Chamfer**: hover a rect corner (highlights), type a distance,
+   click. **Expect:** a straight cut with equal legs; the two edges rewire
+   to the cut points; ONE undo restores the corner. Constraints referencing
+   the old corner disappear cleanly (no orphan badges).
+- [ ] 6. **Polygon**: click center, move (ghost n-gon), type N=8 and R,
+   click. **Expect:** regular octagon + construction circle through its
+   vertices + construction center point; dragging a vertex rotates/scales
+   the polygon but keeps it regular; dimensioning the circle pins the size.
+- [ ] 7. Pattern a spline; mirror-check bends. **Expect:** copies keep the
+   exact bezier shape (handle overrides travel).

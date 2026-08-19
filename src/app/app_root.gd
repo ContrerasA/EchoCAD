@@ -163,12 +163,16 @@ func _ready() -> void:
 	tools.register(SlotTool.new("overall"))
 	tools.register(SlotTool.new("point"))
 	tools.register(SplineTool.new())
+	tools.register(PolygonTool.new())
 	tools.register(PointTool.new())
 	tools.register(TrimTool.new())
 	tools.register(ExtendTool.new())
 	tools.register(OffsetTool.new())
 	tools.register(MirrorTool.new())
 	tools.register(FilletTool.new())
+	tools.register(ChamferTool.new())
+	tools.register(RectPatternTool.new())
+	tools.register(CircPatternTool.new())
 	tools.register(ProjectTool.new())
 	tools.register(SmartDimensionTool.new())
 	tools.overlay_needs_redraw.connect(func() -> void: overlay.queue_redraw())
@@ -1043,7 +1047,8 @@ func _tool_group_for(tid: String, g_select: Control, g_create: Control,
 		return g_select
 	if tid == "dimension":
 		return g_dim
-	if tid in ["trim", "extend", "offset", "mirror", "fillet", "project"]:
+	if tid in ["trim", "extend", "offset", "mirror", "fillet", "chamfer",
+			"rect_pattern", "circ_pattern", "project"]:
 		return g_modify
 	return g_create
 
