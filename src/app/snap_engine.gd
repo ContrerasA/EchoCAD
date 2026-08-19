@@ -49,7 +49,7 @@ func build_index(sk: Sketch, exclude = []) -> void:
 				if m.get("ok", false):
 					_mids.append({"pos": m["pos"], "owner": e.id})
 				_curves.append(e.id)
-			"arc", "circle":
+			"arc", "circle", "spline":
 				_curves.append(e.id)
 
 

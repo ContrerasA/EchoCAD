@@ -1308,6 +1308,8 @@ func _entity_polyline(sk: Sketch, e: SketchEntity) -> PackedVector2Array:
 				for i in n + 1:
 					var ang := a0 + sweep * i / float(n)
 					out.append(c.pos + Vector2(cos(ang), sin(ang)) * r)
+		"spline":
+			out = (e as SketchSpline).polyline(sk)
 	return out
 
 

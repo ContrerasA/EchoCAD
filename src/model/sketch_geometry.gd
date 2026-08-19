@@ -73,6 +73,20 @@ static func closest_on_entity(sk: Sketch, e: SketchEntity, p: Vector2) -> Dictio
 					rel = sweep if absf(rel - sweep) < absf(rel + TAU) else 0.0
 			var at := a0 + rel
 			return {"pos": c.pos + Vector2(cos(at), sin(at)) * r, "ok": true}
+		"spline":
+			# Closest point on the tessellation — plenty for picking.
+			var poly := (e as SketchSpline).polyline(sk)
+			if poly.size() < 2:
+				return {"ok": false}
+			var best := poly[0]
+			var best_d := INF
+			for i in poly.size() - 1:
+				var q := closest_on_segment(p, poly[i], poly[i + 1])
+				var d2 := q.distance_to(p)
+				if d2 < best_d:
+					best_d = d2
+					best = q
+			return {"pos": best, "ok": true}
 	return {"ok": false}
 
 
@@ -141,6 +155,8 @@ static func entity_polyline(sk: Sketch, e: SketchEntity, segs := 32) -> PackedVe
 				for k in n + 1:
 					var ang2 := a0 + sweep * k / float(n)
 					out.append(c2.pos + Vector2(cos(ang2), sin(ang2)) * r)
+		"spline":
+			out = (e as SketchSpline).polyline(sk)
 	return out
 
 

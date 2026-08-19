@@ -96,6 +96,11 @@ func pointer_down(world: Vector2, _screen: Vector2, e: InputEventMouseButton) ->
 	var sk := sketch()
 	if _targets.is_empty():
 		var hit := SketchGeometry.entity_at(sk, world, 6.0 / view().zoom())
+		if hit != "" and sk.entity(hit).kind() == "spline":
+			# M28 limitation: offsetting a bezier is real curve math the
+			# offset tool does not do yet — refuse loudly, not wrongly.
+			app.set_status_hint("Offset does not support splines yet")
+			return true
 		if hit != "" and sk.entity(hit).kind() != "point":
 			# One click offsets the whole connected chain (Fusion behaviour):
 			# picking one edge of a rectangle offsets the rectangle.

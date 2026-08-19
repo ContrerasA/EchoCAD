@@ -89,6 +89,29 @@ func _add_entity(sketch: Sketch, e: SketchEntity, reference := false) -> void:
 			if cc == null:
 				return
 			path = TVGShapes.circle_path(_doc(cc.pos), ci.radius)
+		"spline":
+			# Exact cubics — the raster draws the true curve; only profile
+			# building and hit testing use the tessellation.
+			var sp := e as SketchSpline
+			var spans := sp.span_count()
+			if spans == 0:
+				return
+			var cmds := PackedInt32Array()
+			var pts := PackedVector2Array()
+			var p_first := sketch.point(sp.points[0])
+			if p_first == null:
+				return
+			cmds.append(TVGCanvas.CMD_MOVE_TO)
+			pts.append(_doc(p_first.pos))
+			for i in spans:
+				var cp := sp.span(sketch, i)
+				if cp.is_empty():
+					return
+				cmds.append(TVGCanvas.CMD_CUBIC_TO)
+				pts.append(_doc(cp[1]))
+				pts.append(_doc(cp[2]))
+				pts.append(_doc(cp[3]))
+			path = [cmds, pts]
 		_:
 			return   # points are editor chrome, drawn by the overlay
 	var handle := _canvas.add_path(path[0], path[1])

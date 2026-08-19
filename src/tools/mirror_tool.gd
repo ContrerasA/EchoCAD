@@ -164,6 +164,22 @@ func _apply(sk: Sketch, axis: SketchLine, in_batch := false) -> void:
 				na.id = sk.next_id()
 				na.construction = arc.construction
 				adds.append(na)
+			"spline":
+				# M28: fit points already mirrored above; explicit handle
+				# overrides reflect across the axis, auto tangents follow
+				# their (mirrored) neighbours on their own.
+				var sp := e as SketchSpline
+				var nids: Array = []
+				for spid in sp.points:
+					nids.append(mirror_of[spid])
+				var nsp := SketchSpline.make(nids, sp.closed)
+				for hi in sp.handles.size():
+					if sp.handles[hi] is Vector2:
+						var t: Vector2 = sp.handles[hi]
+						nsp.handles[hi] = d * t.dot(d) * 2.0 - t
+				nsp.id = sk.next_id()
+				nsp.construction = sp.construction
+				adds.append(nsp)
 	if adds.is_empty():
 		return
 	var cmd := CmdAddEntities.new(app.active_sketch_id, adds, cons)

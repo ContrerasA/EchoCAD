@@ -168,5 +168,7 @@ static func entity_from_dict(d: Dictionary) -> SketchEntity:
 			return SketchArc.from_dict(d)
 		"circle":
 			return SketchCircle.from_dict(d)
+		"spline":
+			return SketchSpline.from_dict(d)
 	push_error("[Sketch] unknown entity kind in file: %s" % String(d.get("kind", "?")))
 	return null

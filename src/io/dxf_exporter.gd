@@ -113,6 +113,24 @@ static func to_dxf(sk: Sketch, include_construction := true) -> String:
 				w.call(40, r)
 				w.call(50, fposmod(a0, 360.0))
 				w.call(51, fposmod(a1, 360.0))
+			"spline":
+				# M28: exported as its tessellation (R12 POLYLINE) — DXF
+				# SPLINE needs R13+, and the round trip re-imports as a
+				# welded polyline that still closes profiles. Documented.
+				var sp := e as SketchSpline
+				var poly := sp.polyline(sk)
+				if poly.size() < 2:
+					continue
+				w.call(0, "POLYLINE")
+				w.call(8, layer)
+				w.call(66, 1)
+				w.call(70, 1 if sp.closed else 0)
+				for pv in poly:
+					w.call(0, "VERTEX")
+					w.call(8, layer)
+					w.call(10, pv.x)
+					w.call(20, pv.y)
+				w.call(0, "SEQEND")
 			"point":
 				# Only LONE points: endpoints/centers already travel with
 				# their entity, and the origin is scaffolding.

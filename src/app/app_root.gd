@@ -162,6 +162,7 @@ func _ready() -> void:
 	tools.register(SlotTool.new("center"))
 	tools.register(SlotTool.new("overall"))
 	tools.register(SlotTool.new("point"))
+	tools.register(SplineTool.new())
 	tools.register(PointTool.new())
 	tools.register(TrimTool.new())
 	tools.register(ExtendTool.new())
@@ -2912,6 +2913,15 @@ func _draw_entity_outline(sk: Sketch, e: SketchEntity, c: Color, w: float) -> vo
 				# Screen space is Y-down: angles negate.
 				_draw_arc_outline(v.world_to_screen(cp.pos), rs,
 					-a0, -(a0 + sweep), c, w, dashed)
+		"spline":
+			var poly := (e as SketchSpline).polyline(sk)
+			for i in poly.size() - 1:
+				if dashed:
+					overlay.draw_dashed_line(v.world_to_screen(poly[i]),
+						v.world_to_screen(poly[i + 1]), c, w, 8.0)
+				else:
+					overlay.draw_line(v.world_to_screen(poly[i]),
+						v.world_to_screen(poly[i + 1]), c, w)
 
 
 ## draw_arc with an optional dashed rendering (there is no draw_dashed_arc):

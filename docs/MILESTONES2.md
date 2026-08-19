@@ -106,11 +106,13 @@ Bezier curves as first-class typed sketch geometry (rule intact: typed
 entities in the model, bezier flattening only at boundaries):
 
 - **SketchSpline** — cubic bezier chain through N fit points; each fit point
-  is a real SketchPoint (draggable, constrainable, dimensionable); tangent
-  handles stored per fit point, editable by drag, with smooth (G1) default
-  and a per-point corner toggle.
+  is a real SketchPoint (draggable, constrainable, dimensionable); smooth
+  (G1) Catmull-Rom tangents by default, per-point handle OVERRIDE editable
+  by drag. (As built: the per-point corner toggle and spline-end tangent
+  constraints were deferred to backlog — auto tangents + overrides cover
+  the drawing workflow without new solver equation types.)
 - Solver: fit points participate like any point; handle drags merge via
-  CmdMergeBatch. Tangent constraint between a spline end and a line/arc.
+  CmdMergeBatch.
 - Boundaries: RenderBridge draws the exact bezier; ProfileFinder and mesh
   paths consume an adaptive tessellation (chord tolerance in mm); DXF export
   writes the tessellation as LWPOLYLINE (documented); STL/extrude/revolve

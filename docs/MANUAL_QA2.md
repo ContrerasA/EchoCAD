@@ -334,3 +334,33 @@ Status: PENDING sign-off
    respectively, in the display unit.
 - [ ] 8. Browser → right-click a body → **Properties…**. **Expect:** a
    popup with volume and bounding size in the display unit (³ for volume).
+
+## §M28 — Sketch splines
+
+Status: PENDING sign-off
+
+- [ ] 1. Spline tool (B): click 4–5 points, Enter. **Expect:** a smooth
+   curve through every clicked point; ghost preview follows the cursor
+   while drawing; ONE Ctrl+Z removes the whole curve.
+- [ ] 2. Draw a spline ending double-click. **Expect:** double-click
+   finishes it (no extra point from the second click).
+- [ ] 3. Draw 4+ points, then click the FIRST point. **Expect:** the curve
+   closes smoothly (no corner at the joint); the closed region shows the
+   blue profile fill; Extrude accepts it.
+- [ ] 4. Select the spline. **Expect:** amber tangent handles at each fit
+   point. Drag one: the curve reshapes live, both sides of the handle stay
+   mirrored (no kink); the drag is ONE undo step.
+- [ ] 5. Drag a fit point with Select. **Expect:** the curve follows
+   smoothly. Add a dimension/constraint to a fit point: it behaves like
+   any sketch point (solver, DOF, badges).
+- [ ] 6. Construction toggle on, draw a spline. **Expect:** violet dashed
+   construction curve; no profile from it.
+- [ ] 7. Trim/Extend/Offset on a spline. **Expect:** no crash — trim and
+   extend find no cuts; Offset refuses with a status hint (documented
+   limitation).
+- [ ] 8. Mirror a spline (with an override dragged in). **Expect:** the
+   mirrored copy is the true reflection, including the reshaped bend.
+- [ ] 9. Export DXF with a spline; re-import. **Expect:** the curve comes
+   back as a welded polyline in the right place (tessellation, documented).
+- [ ] 10. Save/reopen the document. **Expect:** the spline, its overrides,
+   and closure survive exactly.

@@ -28,6 +28,11 @@ var _batch: CmdMergeBatch = null       # one undo step: drag + re-solve
 var _label_drag := -1                  # dimension index whose label is dragged
 var _label_start := Vector2.ZERO       # label_offset at drag start
 var _label_down := Vector2.ZERO        # world pos at drag start
+## Spline tangent-handle drag (M28): entity id, fit-point index, and which
+## control was grabbed (+1 = out, -1 = the mirrored in control).
+var _handle_entity := ""
+var _handle_index := -1
+var _handle_sign := 1.0
 var _dim_fields := DimFields.new(["Value"])   # edit box for selected dimension
 ## Coalesced drag state: pointer_move records where the drag wants to be and
 ## `tick` applies it once per frame. See pointer_move for why.
@@ -74,6 +79,11 @@ func cancel() -> bool:
 		_marq = Marq.NONE
 		app.overlay.queue_redraw()
 		return true
+	if _handle_entity != "":
+		_handle_entity = ""
+		_handle_index = -1
+		_end_batch()
+		return true
 	if _drag != Drag.NONE:
 		_drag = Drag.NONE
 		app.set_live_gesture(false)
@@ -109,6 +119,15 @@ func pointer_down(world: Vector2, screen: Vector2, e: InputEventMouseButton) -> 
 			app.selected_constraint = int(h["index"])
 			app.overlay.queue_redraw()
 			return true
+	# Spline tangent handles of the selected spline sit above geometry (M28).
+	var hh := _handle_hit(screen)
+	if not hh.is_empty():
+		_handle_entity = String(hh["entity"])
+		_handle_index = int(hh["index"])
+		_handle_sign = float(hh["sign"])
+		_batch = CmdMergeBatch.new("Edit Handle", [])
+		app.stack.push_no_merge(_batch)
+		return true
 	var sk := sketch()
 	var hit := SketchGeometry.entity_at(sk, world, HIT_PX / view().zoom())
 	if hit == "":
@@ -195,6 +214,17 @@ func pointer_move(world: Vector2, screen: Vector2, _e: InputEventMouseMotion) ->
 			app.overlay.queue_redraw()
 	elif clear_hover():
 		app.overlay.queue_redraw()
+	if _handle_entity != "":
+		var skh := sketch()
+		var sp := skh.entity(_handle_entity) as SketchSpline
+		if sp != null and _handle_index < sp.points.size():
+			var fp := skh.point(sp.points[_handle_index])
+			if fp != null:
+				var t := (world - fp.pos) * 3.0 * _handle_sign
+				app.stack.push(CmdSetSplineHandle.new(app.active_sketch_id,
+					_handle_entity, _handle_index, t))
+				app.overlay.queue_redraw()
+		return true
 	if _label_drag >= 0:
 		var sk := sketch()
 		if _label_drag < sk.constraints.size():
@@ -306,6 +336,11 @@ func pointer_up(_world: Vector2, _screen: Vector2, e: InputEventMouseButton) -> 
 			app.set_selection([])
 		_marq = Marq.NONE
 		return true
+	if _handle_entity != "":
+		_handle_entity = ""
+		_handle_index = -1
+		_end_batch()
+		return true
 	if _label_drag >= 0:
 		_label_drag = -1
 		return true
@@ -400,7 +435,28 @@ func draw_overlay(overlay: Control) -> void:
 		else:
 			overlay.draw_rect(r, edge, false, 1.0)
 	var sk := sketch()
-	if sk == null or app.selected_constraint < 0 or not _dim_fields.has_text(0):
+	if sk == null:
+		return
+	# Tangent handles of the selected spline (M28): a thin bar through each
+	# fit point with a square at each control. Dragging one overrides the
+	# auto tangent; both sides mirror (G1).
+	var sel_sp := _selected_spline()
+	if sel_sp != null:
+		var v2 := view()
+		var hcol := Color(0.9, 0.75, 0.35, 0.95)
+		for i in sel_sp.points.size():
+			var fp := sk.point(sel_sp.points[i])
+			if fp == null:
+				continue
+			var t := sel_sp.tangent_at(sk, i)
+			if t.length() < 1e-9:
+				continue
+			var a := v2.world_to_screen(fp.pos + t / 3.0)
+			var b := v2.world_to_screen(fp.pos - t / 3.0)
+			overlay.draw_line(b, a, Color(hcol.r, hcol.g, hcol.b, 0.5), 1.0)
+			overlay.draw_rect(Rect2(a - Vector2(3, 3), Vector2(6, 6)), hcol)
+			overlay.draw_rect(Rect2(b - Vector2(3, 3), Vector2(6, 6)), hcol)
+	if app.selected_constraint < 0 or not _dim_fields.has_text(0):
 		return
 	if app.selected_constraint >= sk.constraints.size():
 		return
@@ -410,6 +466,38 @@ func draw_overlay(overlay: Control) -> void:
 	var at := view().world_to_screen(
 		ConstraintOverlay.anchor_of(sk, c) + c.label_offset) + Vector2(0, 20)
 	_dim_fields.draw(overlay, at, app.doc.display_unit, [c.value])
+
+
+## The single selected spline, or null (handles only show/edit then).
+func _selected_spline() -> SketchSpline:
+	if app.selection.size() != 1:
+		return null
+	var sk := sketch()
+	if sk == null:
+		return null
+	return sk.entity(app.selection[0]) as SketchSpline
+
+
+## Which handle square (of the selected spline) is under `screen`, if any:
+## {entity, index, sign} — sign +1 for the out control, -1 for the mirror.
+func _handle_hit(screen: Vector2) -> Dictionary:
+	var sp := _selected_spline()
+	if sp == null:
+		return {}
+	var sk := sketch()
+	var v := view()
+	for i in sp.points.size():
+		var fp := sk.point(sp.points[i])
+		if fp == null:
+			continue
+		var t := sp.tangent_at(sk, i)
+		if t.length() < 1e-9:
+			continue
+		if v.world_to_screen(fp.pos + t / 3.0).distance_to(screen) <= 7.0:
+			return {"entity": sp.id, "index": i, "sign": 1.0}
+		if v.world_to_screen(fp.pos - t / 3.0).distance_to(screen) <= 7.0:
+			return {"entity": sp.id, "index": i, "sign": -1.0}
+	return {}
 
 
 ## The four rect edges chopped into short dashes (screen px).

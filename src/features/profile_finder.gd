@@ -88,6 +88,28 @@ static func profiles(sk: Sketch) -> Array:
 					poly.append(cc.pos + Vector2(cos(ang), sin(ang)) * ci.radius)
 				out.append({"polygon": poly, "area": _area(poly),
 					"entities": [e.id]})
+			"spline":
+				# A spline is a curved edge from its first to its last fit
+				# point (M28); a CLOSED spline is its own loop like a circle.
+				var sp := e as SketchSpline
+				if sp.points.size() < 2:
+					continue
+				var spoly := sp.polyline(sk)
+				if spoly.size() < 2:
+					continue
+				if sp.closed:
+					var closed_poly := spoly.duplicate()
+					if closed_poly[0].distance_to(
+							closed_poly[closed_poly.size() - 1]) < MERGE_EPS:
+						closed_poly.remove_at(closed_poly.size() - 1)
+					out.append({"polygon": closed_poly,
+						"area": _area(closed_poly), "entities": [e.id]})
+					continue
+				var nsa: String = find.call(sp.points[0])
+				var nsb: String = find.call(sp.points[sp.points.size() - 1])
+				if nsa == nsb:
+					continue
+				edges.append({"id": e.id, "a": nsa, "b": nsb, "poly": spoly})
 
 	# --- half-edge face tracing.
 	var node_pos := {}
