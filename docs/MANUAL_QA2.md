@@ -420,3 +420,29 @@ Status: PENDING sign-off
    row (🔒).
 - [ ] 8. Import a renamed .txt as .png. **Expect:** refused with a status
    message; nothing added.
+
+## §M31 — SVG import
+
+Status: PENDING sign-off
+
+- [ ] 1. **Import SVG** → pick a plane (and optional Width) → choose a
+   simple file (rect + circle). **Expect:** geometry lands on that plane
+   at physical size (an SVG with width="40mm" measures 40mm), right side
+   up (not mirrored/flipped); ONE Ctrl+Z removes the import.
+- [ ] 2. Import an Inkscape drawing (save as Plain SVG): outline with
+   curves. **Expect:** straight runs come in as lines, circular arcs as
+   arcs, curved runs as splines; the outline welds — hover in Extrude
+   picking highlights the closed region and extruding works.
+- [ ] 3. Import a file with grouped/transformed art (`<g transform=...>`,
+   rotated/scaled elements). **Expect:** everything lands where the
+   browser shows it.
+- [ ] 4. Import a logo with text elements. **Expect:** text is skipped and
+   counted in the status message; paths still import. (Convert text to
+   paths in the editor to bring it in.)
+- [ ] 5. Width override: type 100mm in the dialog. **Expect:** the drawing
+   is uniformly scaled to 100mm wide.
+- [ ] 6. Import a not-an-SVG (renamed .txt). **Expect:** refused with a
+   status message; the document is untouched.
+- [ ] 7. Open the imported sketch and edit: drag points, dimension the
+   spline's fit points, add constraints. **Expect:** behaves like drawn
+   geometry.

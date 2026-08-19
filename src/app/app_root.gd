@@ -769,6 +769,9 @@ func _build_ui() -> void:
 	var canvb := _button(g_io, "Canvas", import_canvas_interactive, "canvas")
 	canvb.name = "ImportCanvasBtn"
 	canvb.tooltip_text = "Insert a reference image (PNG/JPEG) on a plane"
+	var svgi := _button(g_io, "Import SVG", import_svg_interactive,
+		"import_svg")
+	svgi.name = "ImportSvgBtn"
 	var dxfb := _button(g_io, "Export DXF", export_dxf_interactive,
 		"export_dxf")
 	dxfb.name = "ExportDxfBtn"
@@ -2332,6 +2335,131 @@ func import_dxf_interactive() -> void:
 			_dxf_import_plane.selected = i
 			break
 	_dxf_import_dialog.popup_centered()
+
+
+## --- SVG import (M31) --------------------------------------------------------
+
+var _svg_import_dialog: FileDialog = null
+var _svg_import_plane: OptionButton = null
+var _svg_import_width: LineEdit = null
+
+
+## Import an SVG as a NEW sketch on `plane`. `width_mm` > 0 rescales the
+## whole drawing uniformly to that overall width. Returns the feature id.
+func import_svg(path: String, plane := "XY", width_mm := 0.0) -> String:
+	if not SketchFeature.PLANES.has(plane) and doc.plane_feature(plane) == null:
+		set_status_hint("Import SVG: unknown plane %s" % plane)
+		return ""
+	if not FileAccess.file_exists(path):
+		set_status_hint("Import SVG: no such file: " + path)
+		return ""
+	var parsed := SvgImporter.parse(FileAccess.get_file_as_string(path))
+	if not bool(parsed["ok"]):
+		set_status_hint("Import SVG failed: " + String(parsed["error"]))
+		return ""
+	var ents: Array = parsed["ents"]
+	if width_mm > 0.0:
+		var natural := (parsed["size"] as Vector2).x
+		if natural <= 0.0:
+			natural = _svg_bounds_width(ents)
+		if natural > 0.0:
+			_svg_scale_ents(ents, width_mm / natural)
+	var sf := SketchFeature.make(doc.auto_name("Sketch"), plane)
+	sf.id = doc.next_feature_id()
+	var census := SvgImporter.populate(sf.sketch, ents)
+	stack.push_no_merge(CmdAddFeature.new(sf))
+	var msg := "Imported %d lines, %d arcs, %d circles, %d splines into %s" \
+		% [census["lines"], census["arcs"], census["circles"],
+		census["splines"], sf.name]
+	if int(parsed["skipped"]) > 0:
+		msg += " (%d unsupported elements skipped)" % int(parsed["skipped"])
+	set_status_hint(msg)
+	return sf.id
+
+
+static func _svg_scale_ents(ents: Array, s: float) -> void:
+	for ent: Dictionary in ents:
+		for k in ["a", "b", "c", "from", "to"]:
+			if ent.has(k):
+				ent[k] = (ent[k] as Vector2) * s
+		if ent.has("r"):
+			ent["r"] = float(ent["r"]) * s
+		if ent.has("pts"):
+			var pts: Array = ent["pts"]
+			for i in pts.size():
+				pts[i] = (pts[i] as Vector2) * s
+
+
+static func _svg_bounds_width(ents: Array) -> float:
+	var lo := INF
+	var hi := -INF
+	for ent: Dictionary in ents:
+		for k in ["a", "b", "from", "to"]:
+			if ent.has(k):
+				lo = minf(lo, (ent[k] as Vector2).x)
+				hi = maxf(hi, (ent[k] as Vector2).x)
+		if ent.has("c"):
+			lo = minf(lo, (ent["c"] as Vector2).x - float(ent.get("r", 0.0)))
+			hi = maxf(hi, (ent["c"] as Vector2).x + float(ent.get("r", 0.0)))
+		for p in ent.get("pts", []):
+			lo = minf(lo, (p as Vector2).x)
+			hi = maxf(hi, (p as Vector2).x)
+	return hi - lo if hi > lo else 0.0
+
+
+func import_svg_interactive() -> void:
+	if _svg_import_dialog == null:
+		_svg_import_dialog = FileDialog.new()
+		_svg_import_dialog.name = "SvgImportDialog"
+		_svg_import_dialog.access = FileDialog.ACCESS_FILESYSTEM
+		_svg_import_dialog.filters = ["*.svg ; SVG drawings"]
+		_svg_import_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
+		_svg_import_dialog.size = Vector2i(640, 460)
+		_svg_import_dialog.file_selected.connect(
+			func(path: String) -> void:
+				var w := UnitConverter.parse(_svg_import_width.text,
+					doc.display_unit)
+				import_svg(path, String(_svg_import_plane.get_item_metadata(
+					_svg_import_plane.selected)),
+					float(w["mm"]) if w["ok"] else 0.0))
+		var prow := HBoxContainer.new()
+		var plab := Label.new()
+		plab.text = "Sketch plane:"
+		prow.add_child(plab)
+		_svg_import_plane = OptionButton.new()
+		_svg_import_plane.name = "SvgImportPlanePick"
+		_svg_import_plane.focus_mode = Control.FOCUS_NONE
+		prow.add_child(_svg_import_plane)
+		var wlab := Label.new()
+		wlab.text = "  Width:"
+		prow.add_child(wlab)
+		_svg_import_width = LineEdit.new()
+		_svg_import_width.name = "SvgImportWidthEdit"
+		_svg_import_width.placeholder_text = "native"
+		_svg_import_width.custom_minimum_size = Vector2(90, 0)
+		prow.add_child(_svg_import_width)
+		_svg_import_dialog.get_vbox().add_child(prow)
+		add_child(_svg_import_dialog)
+	var prev := ""
+	if _svg_import_plane.selected >= 0:
+		prev = String(_svg_import_plane.get_item_metadata(
+			_svg_import_plane.selected))
+	_svg_import_plane.clear()
+	for plane_name: String in SketchFeature.PLANES:
+		_svg_import_plane.add_item(plane_name)
+		_svg_import_plane.set_item_metadata(
+			_svg_import_plane.item_count - 1, plane_name)
+	for f in doc.live_features():
+		if f is PlaneFeature:
+			_svg_import_plane.add_item((f as PlaneFeature).name)
+			_svg_import_plane.set_item_metadata(
+				_svg_import_plane.item_count - 1, f.id)
+	_svg_import_plane.selected = 0
+	for i in _svg_import_plane.item_count:
+		if String(_svg_import_plane.get_item_metadata(i)) == prev:
+			_svg_import_plane.selected = i
+			break
+	_svg_import_dialog.popup_centered()
 
 
 ## --- STL export (M24) ----------------------------------------------------------

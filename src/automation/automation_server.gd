@@ -432,6 +432,26 @@ func _cmd_action_apply_view(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Var
 	return null
 
 
+## --- M31 SVG import ----------------------------------------------------------
+
+func _cmd_action_import_svg(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
+	var fid := app.import_svg(String(a.get("path", "")),
+		String(a.get("plane", "XY")), float(a.get("width", 0.0)))
+	if fid == "":
+		_reply_err(p, id, "bad_args", "svg import failed (see status hint)")
+		return null
+	var sf := app.doc.sketch_feature(fid)
+	var census := {"lines": 0, "arcs": 0, "circles": 0, "splines": 0,
+		"points": 0}
+	for e in sf.sketch.entities():
+		var k := e.kind() + "s"
+		if census.has(k):
+			census[k] += 1
+	census["feature"] = fid
+	census["name"] = sf.name
+	return census
+
+
 ## --- M30 canvases ------------------------------------------------------------
 
 func _cmd_action_import_canvas(a: Dictionary, p: StreamPeerTCP,
