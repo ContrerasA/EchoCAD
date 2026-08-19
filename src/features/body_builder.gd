@@ -138,27 +138,78 @@ static func build(doc: CadDocument, host: Node) -> Array:
 						Transform3D(Basis.IDENTITY, cf.translation)),
 					"feature_ids": [cf.id], "color": b3.get("color",
 						Color(0, 0, 0, 0))})
+		elif f is MirrorBodyFeature:
+			var mf := f as MirrorBodyFeature
+			for b4: Dictionary in out.duplicate():
+				if String(b4["id"]) != mf.source:
+					continue
+				out.append({"id": mf.id, "name": mf.name,
+					"mesh": transformed_mesh(b4["mesh"],
+						mf.mirror_transform()),
+					"feature_ids": [mf.id], "color": b4.get("color",
+						Color(0, 0, 0, 0))})
+		elif f is PatternBodyFeature:
+			var pf := f as PatternBodyFeature
+			for b5: Dictionary in out.duplicate():
+				if String(b5["id"]) != pf.source:
+					continue
+				var xfs := pf.instance_transforms()
+				for k in xfs.size():
+					out.append({"id": "%s:%d" % [pf.id, k + 1],
+						"name": "%s %d" % [pf.name, k + 1],
+						"mesh": transformed_mesh(b5["mesh"], xfs[k]),
+						"feature_ids": [pf.id], "color": b5.get("color",
+							Color(0, 0, 0, 0))})
 	return out
 
 
 ## A copy of `mesh` with `xf` baked into vertices and normals; surface
-## count and materials survive (surface 1 is the edge-line overlay).
+## count and materials survive (surface 1 is the edge-line overlay). A
+## reflecting transform (negative determinant, M33 mirror) reverses each
+## triangle's winding so the solid stays outward-facing.
 static func transformed_mesh(mesh: ArrayMesh, xf: Transform3D) -> ArrayMesh:
 	var out := ArrayMesh.new()
 	var nb := xf.basis.inverse().transposed()
+	var flips := xf.basis.determinant() < 0.0
 	for s in mesh.get_surface_count():
+		var prim := mesh.surface_get_primitive_type(s)
 		var arrays := mesh.surface_get_arrays(s)
 		var verts := (arrays[Mesh.ARRAY_VERTEX] as PackedVector3Array).duplicate()
 		for i in verts.size():
 			verts[i] = xf * verts[i]
-		arrays[Mesh.ARRAY_VERTEX] = verts
 		if arrays[Mesh.ARRAY_NORMAL] != null:
 			var norms := (arrays[Mesh.ARRAY_NORMAL] as PackedVector3Array).duplicate()
 			for i in norms.size():
 				norms[i] = (nb * norms[i]).normalized()
 			arrays[Mesh.ARRAY_NORMAL] = norms
-		out.add_surface_from_arrays(
-			mesh.surface_get_primitive_type(s), arrays)
+		if flips and prim == Mesh.PRIMITIVE_TRIANGLES:
+			if arrays[Mesh.ARRAY_INDEX] != null \
+					and (arrays[Mesh.ARRAY_INDEX] as PackedInt32Array).size() > 0:
+				var idx := (arrays[Mesh.ARRAY_INDEX] as PackedInt32Array).duplicate()
+				var t := 0
+				while t + 2 < idx.size():
+					var tmp := idx[t + 1]
+					idx[t + 1] = idx[t + 2]
+					idx[t + 2] = tmp
+					t += 3
+				arrays[Mesh.ARRAY_INDEX] = idx
+			else:
+				# Non-indexed: swap the vertex tuples themselves (and any
+				# per-vertex arrays would need the same — the meshes here
+				# carry only positions + normals).
+				var t2 := 0
+				while t2 + 2 < verts.size():
+					var tmpv := verts[t2 + 1]
+					verts[t2 + 1] = verts[t2 + 2]
+					verts[t2 + 2] = tmpv
+					if arrays[Mesh.ARRAY_NORMAL] != null:
+						var norms2 := arrays[Mesh.ARRAY_NORMAL] as PackedVector3Array
+						var tmpn := norms2[t2 + 1]
+						norms2[t2 + 1] = norms2[t2 + 2]
+						norms2[t2 + 2] = tmpn
+					t2 += 3
+		arrays[Mesh.ARRAY_VERTEX] = verts
+		out.add_surface_from_arrays(prim, arrays)
 		var mat := mesh.surface_get_material(s)
 		if mat != null:
 			out.surface_set_material(s, mat)

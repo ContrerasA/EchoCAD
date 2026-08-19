@@ -743,6 +743,14 @@ func _build_ui() -> void:
 		func() -> void: open_copy_dialog(""), "copy_body")
 	copyb.name = "CopyBodyBtn"
 	copyb.tooltip_text = "Parametric copy of the selected body at an offset"
+	var mirrb := _button(g_solids, "Mirror Body", _on_mirror_body_pressed,
+		"mirror_body")
+	mirrb.name = "MirrorBodyBtn"
+	mirrb.tooltip_text = "Mirror the selected body across a plane"
+	var pattb := _button(g_solids, "Pattern",
+		func() -> void: open_pattern_dialog(""), "pattern_body")
+	pattb.name = "PatternBodyBtn"
+	pattb.tooltip_text = "Linear/circular pattern of the selected body"
 	var g_construct := _shelf_group(top, "Construct")
 	_btn_offset_plane = _button(g_construct, "Offset Plane",
 		_on_offset_plane_pressed, "offset_plane")
@@ -2345,6 +2353,222 @@ func import_dxf_interactive() -> void:
 	_dxf_import_dialog.popup_centered()
 
 
+## --- solid mirror + patterns (M33) -------------------------------------------
+
+var picking_mirror_plane := false
+var _mirror_source := ""
+var _pattern_dialog: Window = null
+var _pattern_fields := {}
+var _pattern_edit_fid := ""
+var _pattern_source := ""
+
+
+func _on_mirror_body_pressed() -> void:
+	if mode != Mode.MODEL:
+		return
+	_mirror_source = world.selected_body()
+	if _mirror_source == "":
+		set_status_hint("Mirror Body: select a body first (click it)")
+		return
+	picking_mirror_plane = true
+	world.set_planes_visible(true)
+	_refresh_ui()
+
+
+func mirror_body(body_id: String, plane: String) -> String:
+	if not SketchFeature.PLANES.has(plane) and doc.plane_feature(plane) == null:
+		set_status_hint("Mirror Body: unknown plane %s" % plane)
+		return ""
+	var mf := MirrorBodyFeature.new()
+	mf.id = doc.next_feature_id()
+	mf.name = doc.auto_name("Mirror")
+	mf.source = body_id
+	mf.plane = plane
+	stack.push_no_merge(CmdAddFeature.new(mf))
+	return mf.id
+
+
+func open_pattern_dialog(edit_fid: String) -> void:
+	var pf := doc.feature_by_id(edit_fid) as PatternBodyFeature
+	_pattern_edit_fid = edit_fid if pf != null else ""
+	_pattern_source = pf.source if pf != null else world.selected_body()
+	if _pattern_source == "":
+		set_status_hint("Pattern: select a body first (click it)")
+		return
+	if _pattern_dialog == null:
+		_pattern_dialog = Window.new()
+		_pattern_dialog.name = "PatternDialog"
+		_pattern_dialog.size = Vector2i(300, 300)
+		_pattern_dialog.exclusive = false
+		_pattern_dialog.close_requested.connect(
+			func() -> void: _pattern_dialog.hide())
+		var box := VBoxContainer.new()
+		box.set_anchors_preset(Control.PRESET_FULL_RECT)
+		_pattern_dialog.add_child(box)
+		_pattern_fields = {}
+		var mrow := HBoxContainer.new()
+		box.add_child(mrow)
+		var mlab := Label.new()
+		mlab.text = "Mode"
+		mlab.custom_minimum_size = Vector2(70, 0)
+		mrow.add_child(mlab)
+		var mode_pick := OptionButton.new()
+		mode_pick.name = "PatternModePick"
+		mode_pick.focus_mode = Control.FOCUS_NONE
+		mode_pick.add_item("Linear", 0)
+		mode_pick.add_item("Circular", 1)
+		mode_pick.item_selected.connect(func(_i: int) -> void:
+			_sync_pattern_rows())
+		mrow.add_child(mode_pick)
+		_pattern_fields["mode"] = mode_pick
+		for def: Array in [["Count", "n1"], ["Δ1 X,Y,Z", "o1"],
+				["Count 2", "n2"], ["Δ2 X,Y,Z", "o2"], ["Total °", "total"]]:
+			var row := HBoxContainer.new()
+			row.name = "Row_" + String(def[1])
+			box.add_child(row)
+			var lab := Label.new()
+			lab.text = def[0]
+			lab.custom_minimum_size = Vector2(70, 0)
+			row.add_child(lab)
+			var edit := LineEdit.new()
+			edit.name = "Pattern" + String(def[1]).capitalize() + "Edit"
+			edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			edit.text_submitted.connect(
+				func(_t: String) -> void: _commit_pattern_dialog())
+			row.add_child(edit)
+			_pattern_fields[def[1]] = edit
+			_pattern_fields["row_" + String(def[1])] = row
+		var arow := HBoxContainer.new()
+		arow.name = "Row_axis"
+		box.add_child(arow)
+		var alab := Label.new()
+		alab.text = "Axis"
+		alab.custom_minimum_size = Vector2(70, 0)
+		arow.add_child(alab)
+		var axis := OptionButton.new()
+		axis.name = "PatternAxisPick"
+		axis.focus_mode = Control.FOCUS_NONE
+		axis.add_item("Z", 2)
+		axis.add_item("X", 0)
+		axis.add_item("Y", 1)
+		arow.add_child(axis)
+		_pattern_fields["axis"] = axis
+		_pattern_fields["row_axis"] = arow
+		var okb := Button.new()
+		okb.name = "PatternOkBtn"
+		okb.text = "OK"
+		okb.focus_mode = Control.FOCUS_NONE
+		okb.pressed.connect(_commit_pattern_dialog)
+		box.add_child(okb)
+		add_child(_pattern_dialog)
+	var u := doc.display_unit
+	var mp: OptionButton = _pattern_fields["mode"]
+	if pf != null:
+		_pattern_dialog.title = "Edit %s" % pf.name
+		mp.select(1 if pf.mode == PatternBodyFeature.MODE_CIRCULAR else 0)
+		(_pattern_fields["n1"] as LineEdit).text = str(pf.count1)
+		(_pattern_fields["o1"] as LineEdit).text = "%s, %s, %s" % [
+			UnitConverter.format(pf.offset1.x, u),
+			UnitConverter.format(pf.offset1.y, u),
+			UnitConverter.format(pf.offset1.z, u)]
+		(_pattern_fields["n2"] as LineEdit).text = str(pf.count2)
+		(_pattern_fields["o2"] as LineEdit).text = "%s, %s, %s" % [
+			UnitConverter.format(pf.offset2.x, u),
+			UnitConverter.format(pf.offset2.y, u),
+			UnitConverter.format(pf.offset2.z, u)]
+		(_pattern_fields["total"] as LineEdit).text = "%.1f" % pf.total_deg
+		var ax: OptionButton = _pattern_fields["axis"]
+		var want := 2
+		if absf(pf.axis_dir.x) > 0.5:
+			want = 0
+		elif absf(pf.axis_dir.y) > 0.5:
+			want = 1
+		ax.select(ax.get_item_index(want))
+	else:
+		_pattern_dialog.title = "Pattern Body"
+		mp.select(0)
+		(_pattern_fields["n1"] as LineEdit).text = "3"
+		var w := 30.0
+		for b: Dictionary in world.bodies():
+			if String(b["id"]) == _pattern_source:
+				w = (b["mesh"] as ArrayMesh).get_aabb().size.x + 10.0
+		(_pattern_fields["o1"] as LineEdit).text = "%s, %s, %s" % [
+			UnitConverter.format(w, u), UnitConverter.format(0, u),
+			UnitConverter.format(0, u)]
+		(_pattern_fields["n2"] as LineEdit).text = "1"
+		(_pattern_fields["o2"] as LineEdit).text = "%s, %s, %s" % [
+			UnitConverter.format(0, u), UnitConverter.format(0, u),
+			UnitConverter.format(0, u)]
+		(_pattern_fields["total"] as LineEdit).text = "360"
+	_sync_pattern_rows()
+	_pattern_dialog.popup_centered()
+
+
+func _sync_pattern_rows() -> void:
+	var circular: bool = (_pattern_fields["mode"] as OptionButton) \
+		.get_selected_id() == 1
+	(_pattern_fields["row_o1"] as Control).visible = not circular
+	(_pattern_fields["row_n2"] as Control).visible = not circular
+	(_pattern_fields["row_o2"] as Control).visible = not circular
+	(_pattern_fields["row_total"] as Control).visible = circular
+	(_pattern_fields["row_axis"] as Control).visible = circular
+
+
+func _parse_vec3(text: String, u: UnitConverter.Unit) -> Vector3:
+	var parts := text.split(",")
+	var out := Vector3.ZERO
+	for i in mini(parts.size(), 3):
+		var r := UnitConverter.parse(parts[i].strip_edges(), u)
+		out[i] = float(r["mm"]) if r["ok"] else 0.0
+	return out
+
+
+func _commit_pattern_dialog() -> void:
+	var u := doc.display_unit
+	var circular: bool = (_pattern_fields["mode"] as OptionButton) \
+		.get_selected_id() == 1
+	var n1_text := (_pattern_fields["n1"] as LineEdit).text
+	var n2_text := (_pattern_fields["n2"] as LineEdit).text
+	var total_text := (_pattern_fields["total"] as LineEdit).text
+	var axis_id: int = (_pattern_fields["axis"] as OptionButton) \
+		.get_selected_id()
+	var props := {
+		"mode": PatternBodyFeature.MODE_CIRCULAR if circular
+			else PatternBodyFeature.MODE_LINEAR,
+		"count1": maxi(n1_text.to_int(), 2) if n1_text.is_valid_int() else 3,
+		"offset1": _parse_vec3((_pattern_fields["o1"] as LineEdit).text, u),
+		"count2": maxi(n2_text.to_int(), 1) if n2_text.is_valid_int() else 1,
+		"offset2": _parse_vec3((_pattern_fields["o2"] as LineEdit).text, u),
+		"axis_dir": [Vector3(1, 0, 0), Vector3(0, 1, 0),
+			Vector3(0, 0, 1)][axis_id] as Vector3,
+		"total_deg": total_text.to_float() if total_text.is_valid_float()
+			else 360.0,
+	}
+	_pattern_dialog.hide()
+	if _pattern_edit_fid != "":
+		var batch := CmdMergeBatch.new("Edit Pattern", [])
+		stack.push_no_merge(batch)
+		for k in props:
+			stack.push(CmdSetFeatureFlag.new(_pattern_edit_fid, k, props[k]))
+		batch.seal()
+		return
+	pattern_body(_pattern_source, props)
+
+
+func pattern_body(body_id: String, props: Dictionary) -> String:
+	var pf := PatternBodyFeature.new()
+	pf.id = doc.next_feature_id()
+	pf.name = doc.auto_name("Pattern")
+	pf.source = body_id
+	for k in props:
+		pf.set(k, props[k])
+	if pf.instance_transforms().is_empty():
+		set_status_hint("Pattern: nothing to add (check counts/offsets)")
+		return ""
+	stack.push_no_merge(CmdAddFeature.new(pf))
+	return pf.id
+
+
 ## --- move / copy bodies + appearance (M32) -----------------------------------
 
 var _move_dialog: Window = null
@@ -3058,6 +3282,16 @@ func _on_viewport_input(event: InputEvent) -> void:
 					world.set_planes_visible(false)
 					look_at_normal(lface["normal"])
 					_refresh_ui()
+		elif mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT \
+				and picking_mirror_plane:
+			var raym2 := rig.pixel_ray(mb.position)
+			var mplane := world.pick_plane(raym2[0], raym2[1])
+			if mplane != "":
+				picking_mirror_plane = false
+				world.set_plane_hover("")
+				world.set_planes_visible(false)
+				mirror_body(_mirror_source, mplane)
+				_refresh_ui()
 		elif mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT and picking_plane:
 			var ray := rig.pixel_ray(mb.position)
 			var plane := world.pick_plane(ray[0], ray[1])
@@ -3129,7 +3363,7 @@ func _on_viewport_input(event: InputEvent) -> void:
 			# Off-axis sketching: hover/preview motion reaches the tool too.
 			_on_tool_input(sketch_view.screen_to_world(mm.position),
 				mm.position, mm)
-		elif picking_plane or picking_look_at:
+		elif picking_plane or picking_look_at or picking_mirror_plane:
 			var ray := rig.pixel_ray(mm.position)
 			var hov := world.pick_plane(ray[0], ray[1])
 			world.set_plane_hover(hov)
@@ -3229,13 +3463,15 @@ func handle_app_key(k: InputEventKey) -> bool:
 				return_to_sketch_plane()
 				return true
 		if picking_plane or picking_profile or picking_offset_base \
-				or picking_revolve or picking_revolve_axis or picking_look_at:
+				or picking_revolve or picking_revolve_axis or picking_look_at \
+				or picking_mirror_plane:
 			picking_plane = false
 			picking_profile = false
 			picking_offset_base = false
 			picking_revolve = false
 			picking_revolve_axis = false
 			picking_look_at = false
+			picking_mirror_plane = false
 			_pending_revolve = {}
 			world.set_plane_hover("")
 			world.clear_profile_hover()
@@ -3694,6 +3930,8 @@ func _refresh_ui() -> void:
 	if picking_look_at:
 		_status_hint.text = ("Look At: select a plane or a flat body face "
 			+ "(Esc to cancel)")
+	elif picking_mirror_plane:
+		_status_hint.text = "Mirror: select the mirror plane (Esc to cancel)"
 	elif picking_plane:
 		_status_hint.text = "Select a plane or a flat body face (Esc to cancel)"
 	elif picking_offset_base:

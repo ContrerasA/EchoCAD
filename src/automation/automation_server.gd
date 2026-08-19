@@ -432,6 +432,37 @@ func _cmd_action_apply_view(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Var
 	return null
 
 
+## --- M33 solid mirror + patterns ---------------------------------------------
+
+func _cmd_action_mirror_body(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
+	var fid := app.mirror_body(String(a.get("body", "")),
+		String(a.get("plane", "XY")))
+	if fid == "":
+		_reply_err(p, id, "bad_args", "mirror failed (see status hint)")
+		return null
+	return {"feature": fid}
+
+
+func _cmd_action_pattern_body(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
+	var props := {}
+	if a.has("mode"):
+		props["mode"] = String(a["mode"])
+	for k in ["count1", "count2"]:
+		if a.has(k):
+			props[k] = int(a[k])
+	for k in ["offset1", "offset2", "axis_origin", "axis_dir"]:
+		if a.has(k):
+			var v: Array = a[k]
+			props[k] = Vector3(float(v[0]), float(v[1]), float(v[2]))
+	if a.has("total_deg"):
+		props["total_deg"] = float(a["total_deg"])
+	var fid := app.pattern_body(String(a.get("body", "")), props)
+	if fid == "":
+		_reply_err(p, id, "bad_args", "pattern refused (see status hint)")
+		return null
+	return {"feature": fid}
+
+
 ## --- M32 move / copy bodies + appearance -------------------------------------
 
 func _cmd_action_move_body(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:

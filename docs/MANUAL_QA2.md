@@ -469,3 +469,26 @@ Status: PENDING sign-off
    overlapping its OLD position. **Expect (known limitation):** booleans
    still target by pre-move overlap — the cut hits where the body
    originally stood. Documented, not a bug for this milestone.
+
+## §M33 — Solid mirror + patterns
+
+Status: PENDING sign-off
+
+- [ ] 1. Select a body, **Mirror Body**, click the YZ plane. **Expect:**
+   a reflected body appears on the other side, correctly lit and outward-
+   facing (not inside-out dark); its own browser row + eye; ONE Ctrl+Z.
+- [ ] 2. Edit the source sketch. **Expect:** mirror and any patterns
+   replay to match.
+- [ ] 3. **Pattern** (Linear): counts 3 × 2, offsets. **Expect:** ghost…
+   dialog commits the grid; every instance a body row; double-click the
+   chip and change counts — instances re-place.
+- [ ] 4. **Pattern** (Circular): N=6 about Z, Total 360. **Expect:** a ring
+   of instances evenly spaced. Total 180, N=3: instances at 90° and 180°.
+- [ ] 5. Suppress the pattern chip. **Expect:** instances vanish; the
+   source stays.
+- [ ] 6. Export STL (all visible). **Expect:** every instance exports;
+   volumes match the source in a slicer.
+- [ ] 7. Save/reopen. **Expect:** mirror + patterns rebuild identically.
+- [ ] 8. Known limitation: pattern/mirror instances are bodies derived
+   AFTER booleans — a later Cut placed over an instance does not carve it
+   (booleans target pre-instance bodies). Documented.
