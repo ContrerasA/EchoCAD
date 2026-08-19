@@ -735,6 +735,14 @@ func _build_ui() -> void:
 	_btn_extrude.name = "ExtrudeBtn"
 	_btn_revolve = _button(g_solids, "Revolve", _on_revolve_pressed, "revolve")
 	_btn_revolve.name = "RevolveBtn"
+	var moveb := _button(g_solids, "Move Body",
+		func() -> void: open_move_dialog(""), "move_body")
+	moveb.name = "MoveBodyBtn"
+	moveb.tooltip_text = "Move/rotate the selected body (a timeline feature)"
+	var copyb := _button(g_solids, "Copy Body",
+		func() -> void: open_copy_dialog(""), "copy_body")
+	copyb.name = "CopyBodyBtn"
+	copyb.tooltip_text = "Parametric copy of the selected body at an offset"
 	var g_construct := _shelf_group(top, "Construct")
 	_btn_offset_plane = _button(g_construct, "Offset Plane",
 		_on_offset_plane_pressed, "offset_plane")
@@ -2335,6 +2343,268 @@ func import_dxf_interactive() -> void:
 			_dxf_import_plane.selected = i
 			break
 	_dxf_import_dialog.popup_centered()
+
+
+## --- move / copy bodies + appearance (M32) -----------------------------------
+
+var _move_dialog: Window = null
+var _move_fields := {}
+var _move_edit_fid := ""     # transform feature being edited ("" = create)
+var _move_target_body := ""
+var _copy_dialog: Window = null
+var _copy_fields := {}
+var _copy_edit_fid := ""
+var _copy_source_body := ""
+var _color_dialog: Window = null
+var _color_picker: ColorPicker = null
+var _color_target := ""
+
+
+## Open the Move Body dialog: creating (edit_fid == "", uses the selected
+## body) or editing an existing transform feature.
+func open_move_dialog(edit_fid: String) -> void:
+	var tf := doc.feature_by_id(edit_fid) as TransformFeature
+	_move_edit_fid = edit_fid if tf != null else ""
+	_move_target_body = tf.body if tf != null else world.selected_body()
+	if _move_target_body == "":
+		set_status_hint("Move Body: select a body first (click it)")
+		return
+	if _move_dialog == null:
+		_move_dialog = Window.new()
+		_move_dialog.name = "MoveBodyDialog"
+		_move_dialog.size = Vector2i(280, 210)
+		_move_dialog.exclusive = false
+		_move_dialog.close_requested.connect(
+			func() -> void: _move_dialog.hide())
+		var box := VBoxContainer.new()
+		box.set_anchors_preset(Control.PRESET_FULL_RECT)
+		_move_dialog.add_child(box)
+		_move_fields = {}
+		for def: Array in [["ΔX", "dx"], ["ΔY", "dy"], ["ΔZ", "dz"],
+				["Angle °", "ang"]]:
+			var row := HBoxContainer.new()
+			box.add_child(row)
+			var lab := Label.new()
+			lab.text = def[0]
+			lab.custom_minimum_size = Vector2(64, 0)
+			row.add_child(lab)
+			var edit := LineEdit.new()
+			edit.name = "Move" + String(def[1]).capitalize() + "Edit"
+			edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			edit.text_submitted.connect(
+				func(_t: String) -> void: _commit_move_dialog())
+			row.add_child(edit)
+			_move_fields[def[1]] = edit
+		var arow := HBoxContainer.new()
+		box.add_child(arow)
+		var alab := Label.new()
+		alab.text = "Axis"
+		alab.custom_minimum_size = Vector2(64, 0)
+		arow.add_child(alab)
+		var axis := OptionButton.new()
+		axis.name = "MoveAxisPick"
+		axis.focus_mode = Control.FOCUS_NONE
+		axis.add_item("Z", 2)
+		axis.add_item("X", 0)
+		axis.add_item("Y", 1)
+		arow.add_child(axis)
+		_move_fields["axis"] = axis
+		var okb := Button.new()
+		okb.name = "MoveOkBtn"
+		okb.text = "OK"
+		okb.focus_mode = Control.FOCUS_NONE
+		okb.pressed.connect(_commit_move_dialog)
+		box.add_child(okb)
+		add_child(_move_dialog)
+	var u := doc.display_unit
+	if tf != null:
+		_move_dialog.title = "Edit %s" % tf.name
+		(_move_fields["dx"] as LineEdit).text = UnitConverter.format(tf.translation.x, u)
+		(_move_fields["dy"] as LineEdit).text = UnitConverter.format(tf.translation.y, u)
+		(_move_fields["dz"] as LineEdit).text = UnitConverter.format(tf.translation.z, u)
+		(_move_fields["ang"] as LineEdit).text = "%.1f" % tf.rot_deg
+		var ax: OptionButton = _move_fields["axis"]
+		var want := 2
+		if absf(tf.rot_axis.x) > 0.5:
+			want = 0
+		elif absf(tf.rot_axis.y) > 0.5:
+			want = 1
+		ax.select(ax.get_item_index(want))
+	else:
+		_move_dialog.title = "Move Body"
+		for k in ["dx", "dy", "dz"]:
+			(_move_fields[k] as LineEdit).text = ""
+		(_move_fields["ang"] as LineEdit).text = ""
+	_move_dialog.popup_centered()
+
+
+func _commit_move_dialog() -> void:
+	var u := doc.display_unit
+	var vals := {}
+	for k in ["dx", "dy", "dz"]:
+		var r := UnitConverter.parse((_move_fields[k] as LineEdit).text, u)
+		vals[k] = float(r["mm"]) if r["ok"] else 0.0
+	var ang_text := (_move_fields["ang"] as LineEdit).text
+	var ang := ang_text.to_float() if ang_text.is_valid_float() else 0.0
+	var axis_id: int = (_move_fields["axis"] as OptionButton).get_selected_id()
+	var axis: Vector3 = [Vector3(1, 0, 0), Vector3(0, 1, 0),
+		Vector3(0, 0, 1)][axis_id]
+	_move_dialog.hide()
+	var t := Vector3(vals["dx"], vals["dy"], vals["dz"])
+	if _move_edit_fid != "":
+		var batch := CmdMergeBatch.new("Edit Move", [])
+		stack.push_no_merge(batch)
+		stack.push(CmdSetFeatureFlag.new(_move_edit_fid, "translation", t))
+		stack.push(CmdSetFeatureFlag.new(_move_edit_fid, "rot_axis", axis))
+		stack.push(CmdSetFeatureFlag.new(_move_edit_fid, "rot_deg", ang))
+		batch.seal()
+		return
+	move_body(_move_target_body, t, axis, ang)
+
+
+## Create the transform feature (shared with RPC). Returns its id or "".
+func move_body(body_id: String, t: Vector3, axis := Vector3(0, 0, 1),
+		ang_deg := 0.0) -> String:
+	if t.length() < 1e-9 and absf(ang_deg) < 1e-9:
+		set_status_hint("Move Body: zero move")
+		return ""
+	var tf := TransformFeature.new()
+	tf.id = doc.next_feature_id()
+	tf.name = doc.auto_name("Move")
+	tf.body = body_id
+	tf.translation = t
+	tf.rot_axis = axis
+	tf.rot_deg = ang_deg
+	stack.push_no_merge(CmdAddFeature.new(tf))
+	return tf.id
+
+
+func open_copy_dialog(edit_fid: String) -> void:
+	var cf := doc.feature_by_id(edit_fid) as CopyBodyFeature
+	_copy_edit_fid = edit_fid if cf != null else ""
+	_copy_source_body = cf.source if cf != null else world.selected_body()
+	if _copy_source_body == "":
+		set_status_hint("Copy Body: select a body first (click it)")
+		return
+	if _copy_dialog == null:
+		_copy_dialog = Window.new()
+		_copy_dialog.name = "CopyBodyDialog"
+		_copy_dialog.size = Vector2i(260, 150)
+		_copy_dialog.exclusive = false
+		_copy_dialog.close_requested.connect(
+			func() -> void: _copy_dialog.hide())
+		var box := VBoxContainer.new()
+		box.set_anchors_preset(Control.PRESET_FULL_RECT)
+		_copy_dialog.add_child(box)
+		_copy_fields = {}
+		for def: Array in [["ΔX", "dx"], ["ΔY", "dy"], ["ΔZ", "dz"]]:
+			var row := HBoxContainer.new()
+			box.add_child(row)
+			var lab := Label.new()
+			lab.text = def[0]
+			lab.custom_minimum_size = Vector2(64, 0)
+			row.add_child(lab)
+			var edit := LineEdit.new()
+			edit.name = "Copy" + String(def[1]).capitalize() + "Edit"
+			edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			edit.text_submitted.connect(
+				func(_t: String) -> void: _commit_copy_dialog())
+			row.add_child(edit)
+			_copy_fields[def[1]] = edit
+		var okb := Button.new()
+		okb.name = "CopyOkBtn"
+		okb.text = "OK"
+		okb.focus_mode = Control.FOCUS_NONE
+		okb.pressed.connect(_commit_copy_dialog)
+		box.add_child(okb)
+		add_child(_copy_dialog)
+	var u := doc.display_unit
+	if cf != null:
+		_copy_dialog.title = "Edit %s" % cf.name
+		(_copy_fields["dx"] as LineEdit).text = UnitConverter.format(cf.translation.x, u)
+		(_copy_fields["dy"] as LineEdit).text = UnitConverter.format(cf.translation.y, u)
+		(_copy_fields["dz"] as LineEdit).text = UnitConverter.format(cf.translation.z, u)
+	else:
+		_copy_dialog.title = "Copy Body"
+		# Default: one body-width to the +X so the copy is visibly its own.
+		var w := 20.0
+		for b: Dictionary in world.bodies():
+			if String(b["id"]) == _copy_source_body:
+				w = (b["mesh"] as ArrayMesh).get_aabb().size.x + 10.0
+		(_copy_fields["dx"] as LineEdit).text = UnitConverter.format(w, u)
+		(_copy_fields["dy"] as LineEdit).text = UnitConverter.format(0, u)
+		(_copy_fields["dz"] as LineEdit).text = UnitConverter.format(0, u)
+	_copy_dialog.popup_centered()
+
+
+func _commit_copy_dialog() -> void:
+	var u := doc.display_unit
+	var vals := {}
+	for k in ["dx", "dy", "dz"]:
+		var r := UnitConverter.parse((_copy_fields[k] as LineEdit).text, u)
+		vals[k] = float(r["mm"]) if r["ok"] else 0.0
+	_copy_dialog.hide()
+	var t := Vector3(vals["dx"], vals["dy"], vals["dz"])
+	if _copy_edit_fid != "":
+		stack.push_no_merge(CmdSetFeatureFlag.new(_copy_edit_fid,
+			"translation", t))
+		return
+	copy_body(_copy_source_body, t)
+
+
+func copy_body(body_id: String, t: Vector3) -> String:
+	var cf := CopyBodyFeature.new()
+	cf.id = doc.next_feature_id()
+	cf.name = doc.auto_name("Copy")
+	cf.source = body_id
+	cf.translation = t
+	stack.push_no_merge(CmdAddFeature.new(cf))
+	return cf.id
+
+
+## Body appearance (M32): color lives on the body's ROOT solid feature.
+func pick_body_color(body_id: String) -> void:
+	var sf := doc.feature_by_id(body_id) as SolidFeature
+	if sf == null:
+		set_status_hint("Color: copies inherit their source body's color")
+		return
+	_color_target = body_id
+	if _color_dialog == null:
+		_color_dialog = Window.new()
+		_color_dialog.name = "BodyColorDialog"
+		_color_dialog.title = "Body Color"
+		_color_dialog.size = Vector2i(300, 420)
+		_color_dialog.exclusive = false
+		_color_dialog.close_requested.connect(
+			func() -> void: _color_dialog.hide())
+		var box := VBoxContainer.new()
+		box.set_anchors_preset(Control.PRESET_FULL_RECT)
+		_color_dialog.add_child(box)
+		_color_picker = ColorPicker.new()
+		_color_picker.name = "BodyColorPicker"
+		_color_picker.edit_alpha = false
+		box.add_child(_color_picker)
+		var okb := Button.new()
+		okb.name = "BodyColorOkBtn"
+		okb.text = "Apply"
+		okb.focus_mode = Control.FOCUS_NONE
+		okb.pressed.connect(func() -> void:
+			_color_dialog.hide()
+			set_body_color(_color_target, _color_picker.color))
+		box.add_child(okb)
+		add_child(_color_dialog)
+	_color_picker.color = Color(sf.color.r, sf.color.g, sf.color.b) \
+		if sf.color.a > 0.0 else Color(0.62, 0.66, 0.72)
+	_color_dialog.popup_centered()
+
+
+func set_body_color(body_id: String, c: Color) -> String:
+	var sf := doc.feature_by_id(body_id) as SolidFeature
+	if sf == null:
+		return "no solid feature roots body %s" % body_id
+	stack.push_no_merge(CmdSetFeatureFlag.new(body_id, "color",
+		Color(c.r, c.g, c.b, 1.0)))
+	return ""
 
 
 ## --- SVG import (M31) --------------------------------------------------------

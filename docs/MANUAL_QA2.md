@@ -446,3 +446,26 @@ Status: PENDING sign-off
 - [ ] 7. Open the imported sketch and edit: drag points, dimension the
    spline's fit points, add constraints. **Expect:** behaves like drawn
    geometry.
+
+## §M32 — Move / copy bodies, appearance
+
+Status: PENDING sign-off
+
+- [ ] 1. Click a body, **Move Body**, type ΔX/ΔY/ΔZ (unit suffixes work)
+   and/or an axis + angle, OK. **Expect:** the body moves/rotates (about
+   its own center); a Move chip lands on the timeline; ONE Ctrl+Z undoes.
+- [ ] 2. Double-click the Move chip, change values, OK. **Expect:** the
+   body re-places parametrically; suppress on the chip puts it back.
+- [ ] 3. Edit the source sketch of a MOVED body. **Expect:** the change
+   replays and the body stays moved.
+- [ ] 4. **Copy Body** on a selected body. **Expect:** a second body at the
+   default offset, its own browser row/eye, exports its own STL. Edit the
+   SOURCE (extrude height): the copy follows.
+- [ ] 5. Browser → body → **Color…**, pick something loud. **Expect:** the
+   body recolors (selection highlight still wins while selected); save +
+   reopen keeps the color. Coloring a Copy is refused with a hint (it
+   inherits the source).
+- [ ] 6. Move a body that participates in booleans, then add a new Cut
+   overlapping its OLD position. **Expect (known limitation):** booleans
+   still target by pre-move overlap — the cut hits where the body
+   originally stood. Documented, not a bug for this milestone.

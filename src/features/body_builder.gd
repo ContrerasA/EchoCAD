@@ -108,8 +108,60 @@ static func build(doc: CadDocument, host: Node) -> Array:
 		if b.get("mesh") == null \
 				or (b["mesh"] as ArrayMesh).get_surface_count() == 0:
 			continue
+		var root_sf := doc.feature_by_id(String(b["id"])) as SolidFeature
 		out.append({"id": b["id"], "name": b["name"], "mesh": b["mesh"],
-			"feature_ids": b["feature_ids"]})
+			"feature_ids": b["feature_ids"],
+			"color": root_sf.color if root_sf != null else Color(0, 0, 0, 0)})
+
+	# M32: moves + parametric copies, applied AFTER boolean resolution in
+	# timeline order among themselves (booleans still target by pre-move
+	# AABB — the known limitation carried since M18). Transforms bake into
+	# the mesh so everything downstream (STL, AABB, volume, picking) reads
+	# the moved geometry for free.
+	for f in doc.live_features():
+		if f is TransformFeature:
+			var tf := f as TransformFeature
+			for b2: Dictionary in out:
+				if String(b2["id"]) != tf.body:
+					continue
+				var center := (b2["mesh"] as ArrayMesh).get_aabb().get_center()
+				b2["mesh"] = transformed_mesh(b2["mesh"],
+					tf.transform3d(center))
+				(b2["feature_ids"] as Array).append(tf.id)
+		elif f is CopyBodyFeature:
+			var cf := f as CopyBodyFeature
+			for b3: Dictionary in out.duplicate():
+				if String(b3["id"]) != cf.source:
+					continue
+				out.append({"id": cf.id, "name": cf.name,
+					"mesh": transformed_mesh(b3["mesh"],
+						Transform3D(Basis.IDENTITY, cf.translation)),
+					"feature_ids": [cf.id], "color": b3.get("color",
+						Color(0, 0, 0, 0))})
+	return out
+
+
+## A copy of `mesh` with `xf` baked into vertices and normals; surface
+## count and materials survive (surface 1 is the edge-line overlay).
+static func transformed_mesh(mesh: ArrayMesh, xf: Transform3D) -> ArrayMesh:
+	var out := ArrayMesh.new()
+	var nb := xf.basis.inverse().transposed()
+	for s in mesh.get_surface_count():
+		var arrays := mesh.surface_get_arrays(s)
+		var verts := (arrays[Mesh.ARRAY_VERTEX] as PackedVector3Array).duplicate()
+		for i in verts.size():
+			verts[i] = xf * verts[i]
+		arrays[Mesh.ARRAY_VERTEX] = verts
+		if arrays[Mesh.ARRAY_NORMAL] != null:
+			var norms := (arrays[Mesh.ARRAY_NORMAL] as PackedVector3Array).duplicate()
+			for i in norms.size():
+				norms[i] = (nb * norms[i]).normalized()
+			arrays[Mesh.ARRAY_NORMAL] = norms
+		out.add_surface_from_arrays(
+			mesh.surface_get_primitive_type(s), arrays)
+		var mat := mesh.surface_get_material(s)
+		if mat != null:
+			out.surface_set_material(s, mat)
 	return out
 
 

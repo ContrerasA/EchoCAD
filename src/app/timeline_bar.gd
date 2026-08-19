@@ -76,6 +76,10 @@ func _on_chip_input(fid: String, ev: InputEvent) -> void:
 			app.edit_plane_offset(fid)
 		elif f is CanvasFeature:
 			app.open_canvas_dialog(fid)
+		elif f is TransformFeature:
+			app.open_move_dialog(fid)
+		elif f is CopyBodyFeature:
+			app.open_copy_dialog(fid)
 	elif mb.pressed and mb.button_index == MOUSE_BUTTON_RIGHT:
 		_menu_feature = fid
 		_menu.clear()

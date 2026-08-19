@@ -240,6 +240,7 @@ var _body_menu_target := ""
 
 const BODY_MENU_EXPORT_STL := 0
 const BODY_MENU_PROPERTIES := 1
+const BODY_MENU_COLOR := 2
 
 var _cplane_menu: PopupMenu = null
 var _cplane_menu_target := ""
@@ -270,6 +271,7 @@ func _on_item_mouse_selected(pos: Vector2, mouse_button_index: int) -> void:
 			_body_menu.name = "BodyContextMenu"
 			_body_menu.add_item("Export STL...", BODY_MENU_EXPORT_STL)
 			_body_menu.add_item("Properties...", BODY_MENU_PROPERTIES)
+			_body_menu.add_item("Color...", BODY_MENU_COLOR)
 			_body_menu.id_pressed.connect(_on_body_menu_pressed)
 			add_child(_body_menu)
 		_body_menu.position = Vector2i(get_screen_position() + pos)
@@ -331,6 +333,8 @@ func _on_body_menu_pressed(id: int) -> void:
 			app.export_stl_interactive(_body_menu_target)
 		BODY_MENU_PROPERTIES:
 			app.show_body_properties(_body_menu_target)
+		BODY_MENU_COLOR:
+			app.pick_body_color(_body_menu_target)
 
 
 func _on_canvas_menu_pressed(id: int) -> void:

@@ -1172,8 +1172,10 @@ func _apply_bodies(bodies: Array) -> void:
 		smi.set_meta("feature_id", b["id"])
 		smi.set_meta("is_body", true)
 		var mat := StandardMaterial3D.new()
+		# Per-body appearance (M32): the root feature's color, when set.
+		var own: Color = b.get("color", Color(0, 0, 0, 0))
 		mat.albedo_color = COLOR_BODY_SELECTED if b["id"] == _selected_body \
-			else COLOR_BODY
+			else (Color(own.r, own.g, own.b) if own.a > 0.0 else COLOR_BODY)
 		mat.metallic = 0.1
 		mat.roughness = 0.7
 		# Double-sided: with a closed outward-wound shell the back faces are

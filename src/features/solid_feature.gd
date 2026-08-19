@@ -13,6 +13,24 @@ const OP_CUT := "cut"
 
 var operation := OP_NEW_BODY
 
+## Per-body appearance (M32): albedo of the body ROOTED at this feature.
+## Alpha 0 = unset (the default gray). Ignored on join/cut features.
+var color := Color(0, 0, 0, 0)
+
+
+func to_dict() -> Dictionary:
+	var d := super.to_dict()
+	if color.a > 0.0:
+		d["color"] = [color.r, color.g, color.b]
+	return d
+
+
+func _read_base(d: Dictionary) -> void:
+	super._read_base(d)
+	var c: Variant = d.get("color")
+	if c is Array and (c as Array).size() >= 3:
+		color = Color(float(c[0]), float(c[1]), float(c[2]), 1.0)
+
 
 ## Exact watertight mesh of this feature's own solid (surface 0 = shaded
 ## triangles, surface 1 = edge-line overlay). null when the profile/axis no

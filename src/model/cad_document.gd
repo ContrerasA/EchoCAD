@@ -144,6 +144,10 @@ static func feature_from_dict(d: Dictionary) -> Feature:
 			return RevolveFeature.from_dict(d)
 		"canvas":
 			return CanvasFeature.from_dict(d)
+		"transform":
+			return TransformFeature.from_dict(d)
+		"copy_body":
+			return CopyBodyFeature.from_dict(d)
 	push_error("[CadDocument] unknown feature kind in file: %s"
 		% String(d.get("kind", "?")))
 	return null

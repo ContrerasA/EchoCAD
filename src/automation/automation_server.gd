@@ -432,6 +432,39 @@ func _cmd_action_apply_view(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Var
 	return null
 
 
+## --- M32 move / copy bodies + appearance -------------------------------------
+
+func _cmd_action_move_body(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
+	var body := String(a.get("body", ""))
+	var t: Array = a.get("translation", [0, 0, 0])
+	var axis: Array = a.get("axis", [0, 0, 1])
+	var fid := app.move_body(body,
+		Vector3(float(t[0]), float(t[1]), float(t[2])),
+		Vector3(float(axis[0]), float(axis[1]), float(axis[2])),
+		float(a.get("angle", 0.0)))
+	if fid == "":
+		_reply_err(p, id, "bad_args", "zero move refused")
+		return null
+	return {"feature": fid}
+
+
+func _cmd_action_copy_body(a: Dictionary, _p: StreamPeerTCP, _id: Variant) -> Dictionary:
+	var t: Array = a.get("translation", [0, 0, 0])
+	var fid := app.copy_body(String(a.get("body", "")),
+		Vector3(float(t[0]), float(t[1]), float(t[2])))
+	return {"feature": fid}
+
+
+func _cmd_action_set_body_color(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
+	var c: Array = a.get("color", [0.5, 0.5, 0.5])
+	var err := app.set_body_color(String(a.get("body", "")),
+		Color(float(c[0]), float(c[1]), float(c[2])))
+	if err != "":
+		_reply_err(p, id, "bad_args", err)
+		return null
+	return {"ok": true}
+
+
 ## --- M31 SVG import ----------------------------------------------------------
 
 func _cmd_action_import_svg(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
