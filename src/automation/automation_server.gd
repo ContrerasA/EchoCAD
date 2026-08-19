@@ -432,6 +432,27 @@ func _cmd_action_apply_view(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Var
 	return null
 
 
+## --- M35 3D fillet / chamfer -------------------------------------------------
+
+func _cmd_action_fillet_edges(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
+	return _edge_treat(a, p, id, EdgeTreatFeature.KIND_FILLET)
+
+
+func _cmd_action_chamfer_edges(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
+	return _edge_treat(a, p, id, EdgeTreatFeature.KIND_CHAMFER)
+
+
+func _edge_treat(a: Dictionary, p: StreamPeerTCP, id: Variant,
+		treat_kind: String) -> Variant:
+	var fid := app.edge_treat(String(a.get("body", "")), treat_kind,
+		float(a.get("size", 3.0)), bool(a.get("lateral", true)),
+		bool(a.get("top", true)), bool(a.get("bottom", false)))
+	if fid == "":
+		_reply_err(p, id, "bad_args", "edge treatment refused (see status)")
+		return null
+	return {"feature": fid}
+
+
 ## --- M34 sweep + loft --------------------------------------------------------
 
 func _cmd_action_sweep(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:

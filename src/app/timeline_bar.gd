@@ -82,6 +82,8 @@ func _on_chip_input(fid: String, ev: InputEvent) -> void:
 			app.open_copy_dialog(fid)
 		elif f is PatternBodyFeature:
 			app.open_pattern_dialog(fid)
+		elif f is EdgeTreatFeature:
+			app.open_edge_treat_dialog(fid)
 	elif mb.pressed and mb.button_index == MOUSE_BUTTON_RIGHT:
 		_menu_feature = fid
 		_menu.clear()

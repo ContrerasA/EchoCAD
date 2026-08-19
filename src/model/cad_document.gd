@@ -156,6 +156,8 @@ static func feature_from_dict(d: Dictionary) -> Feature:
 			return SweepFeature.from_dict(d)
 		"loft":
 			return LoftFeature.from_dict(d)
+		"edge_treat":
+			return EdgeTreatFeature.from_dict(d)
 	push_error("[CadDocument] unknown feature kind in file: %s"
 		% String(d.get("kind", "?")))
 	return null

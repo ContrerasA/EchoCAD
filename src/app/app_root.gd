@@ -741,6 +741,14 @@ func _build_ui() -> void:
 	var loftb := _button(g_solids, "Loft", _on_loft_pressed, "loft")
 	loftb.name = "LoftBtn"
 	loftb.tooltip_text = "Loft between two or more profiles"
+	var filb := _button(g_solids, "Fillet Edges", func() -> void:
+		open_edge_treat_dialog("", EdgeTreatFeature.KIND_FILLET), "fillet_3d")
+	filb.name = "FilletEdgesBtn"
+	filb.tooltip_text = "Round a plain extrude's edges (corners and/or rims)"
+	var chab := _button(g_solids, "Chamfer Edges", func() -> void:
+		open_edge_treat_dialog("", EdgeTreatFeature.KIND_CHAMFER), "chamfer_3d")
+	chab.name = "ChamferEdgesBtn"
+	chab.tooltip_text = "Chamfer a plain extrude's edges (corners and/or rims)"
 	var moveb := _button(g_solids, "Move Body",
 		func() -> void: open_move_dialog(""), "move_body")
 	moveb.name = "MoveBodyBtn"
@@ -2357,6 +2365,154 @@ func import_dxf_interactive() -> void:
 			_dxf_import_plane.selected = i
 			break
 	_dxf_import_dialog.popup_centered()
+
+
+## --- 3D fillet / chamfer (M35) -----------------------------------------------
+
+var _treat_dialog: Window = null
+var _treat_fields := {}
+var _treat_edit_fid := ""
+var _treat_body := ""
+var _treat_kind := EdgeTreatFeature.KIND_FILLET
+
+
+func open_edge_treat_dialog(edit_fid: String, p_kind := "") -> void:
+	var et := doc.feature_by_id(edit_fid) as EdgeTreatFeature
+	_treat_edit_fid = edit_fid if et != null else ""
+	_treat_body = et.body if et != null else world.selected_body()
+	_treat_kind = et.treat if et != null else p_kind
+	if _treat_body == "":
+		set_status_hint("Fillet/Chamfer: select a body first (click it)")
+		return
+	if et == null:
+		var root := doc.feature_by_id(_treat_body) as ExtrudeFeature
+		if root == null:
+			set_status_hint("Fillet/Chamfer: prismatic scope — works on "
+				+ "plain extrude bodies only (no booleans/revolves/sweeps)")
+			return
+	if _treat_dialog == null:
+		_treat_dialog = Window.new()
+		_treat_dialog.name = "EdgeTreatDialog"
+		_treat_dialog.size = Vector2i(270, 190)
+		_treat_dialog.exclusive = false
+		_treat_dialog.close_requested.connect(
+			func() -> void: _treat_dialog.hide())
+		var box := VBoxContainer.new()
+		box.set_anchors_preset(Control.PRESET_FULL_RECT)
+		_treat_dialog.add_child(box)
+		_treat_fields = {}
+		var row := HBoxContainer.new()
+		box.add_child(row)
+		var lab := Label.new()
+		lab.text = "Size"
+		lab.custom_minimum_size = Vector2(60, 0)
+		row.add_child(lab)
+		var edit := LineEdit.new()
+		edit.name = "TreatSizeEdit"
+		edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		edit.text_submitted.connect(
+			func(_t: String) -> void: _commit_edge_treat())
+		row.add_child(edit)
+		_treat_fields["size"] = edit
+		for def: Array in [["Side corners", "lateral", true],
+				["Top rim", "top", true], ["Bottom rim", "bottom", false]]:
+			var chk := CheckBox.new()
+			chk.name = "Treat" + String(def[1]).capitalize() + "Chk"
+			chk.text = def[0]
+			chk.focus_mode = Control.FOCUS_NONE
+			chk.set_pressed_no_signal(def[2])
+			box.add_child(chk)
+			_treat_fields[def[1]] = chk
+		var okb := Button.new()
+		okb.name = "TreatOkBtn"
+		okb.text = "OK"
+		okb.focus_mode = Control.FOCUS_NONE
+		okb.pressed.connect(_commit_edge_treat)
+		box.add_child(okb)
+		add_child(_treat_dialog)
+	_treat_dialog.title = "Fillet Edges" \
+		if _treat_kind == EdgeTreatFeature.KIND_FILLET else "Chamfer Edges"
+	var u := doc.display_unit
+	if et != null:
+		(_treat_fields["size"] as LineEdit).text = \
+			UnitConverter.format(et.size_mm, u)
+		(_treat_fields["lateral"] as CheckBox).set_pressed_no_signal(et.lateral)
+		(_treat_fields["top"] as CheckBox).set_pressed_no_signal(et.top)
+		(_treat_fields["bottom"] as CheckBox).set_pressed_no_signal(et.bottom)
+	else:
+		(_treat_fields["size"] as LineEdit).text = \
+			UnitConverter.format(3.0, u)
+	_treat_dialog.popup_centered()
+
+
+func _commit_edge_treat() -> void:
+	var r := UnitConverter.parse((_treat_fields["size"] as LineEdit).text,
+		doc.display_unit)
+	if not r["ok"] or float(r["mm"]) <= 0.0:
+		set_status_hint("Fillet/Chamfer: enter a size")
+		return
+	_treat_dialog.hide()
+	var size := float(r["mm"])
+	var lat := (_treat_fields["lateral"] as CheckBox).button_pressed
+	var top := (_treat_fields["top"] as CheckBox).button_pressed
+	var bot := (_treat_fields["bottom"] as CheckBox).button_pressed
+	if _treat_edit_fid != "":
+		var batch := CmdMergeBatch.new("Edit Treatment", [])
+		stack.push_no_merge(batch)
+		stack.push(CmdSetFeatureFlag.new(_treat_edit_fid, "size_mm", size))
+		stack.push(CmdSetFeatureFlag.new(_treat_edit_fid, "lateral", lat))
+		stack.push(CmdSetFeatureFlag.new(_treat_edit_fid, "top", top))
+		stack.push(CmdSetFeatureFlag.new(_treat_edit_fid, "bottom", bot))
+		batch.seal()
+		return
+	edge_treat(_treat_body, _treat_kind, size, lat, top, bot)
+
+
+## Create the treatment (shared with RPC). Returns feature id or "".
+func edge_treat(body_id: String, p_kind: String, size: float,
+		lat := true, top := true, bot := false) -> String:
+	var root := doc.feature_by_id(body_id) as ExtrudeFeature
+	if root == null:
+		set_status_hint("Fillet/Chamfer: prismatic scope — plain extrude "
+			+ "bodies only")
+		return ""
+	# A body any join/cut touches is a boolean body — same AABB rule
+	# BodyBuilder targets by — and out of the prismatic scope.
+	var root_part := root.solid_part(doc)
+	for f in doc.live_features():
+		if f is EdgeTreatFeature and (f as EdgeTreatFeature).body == body_id:
+			set_status_hint("Fillet/Chamfer: this body is already treated "
+				+ "(edit that feature instead)")
+			return ""
+		var sf2 := f as SolidFeature
+		if sf2 != null and sf2 != root \
+				and sf2.operation != SolidFeature.OP_NEW_BODY \
+				and not root_part.is_empty():
+			var p2 := sf2.solid_part(doc)
+			if not p2.is_empty() and (p2["aabb"] as AABB).intersects(
+					root_part["aabb"] as AABB):
+				set_status_hint("Fillet/Chamfer: this body carries booleans "
+					+ "— prismatic scope covers plain extrudes only")
+				return ""
+	if not (lat or top or bot):
+		set_status_hint("Fillet/Chamfer: pick at least one edge set")
+		return ""
+	var et := EdgeTreatFeature.new()
+	et.id = doc.next_feature_id()
+	et.name = doc.auto_name("Fillet"
+		if p_kind == EdgeTreatFeature.KIND_FILLET else "Chamfer")
+	et.body = body_id
+	et.treat = p_kind
+	et.size_mm = size
+	et.lateral = lat
+	et.top = top
+	et.bottom = bot
+	if et.build_treated_mesh(doc, root) == null:
+		set_status_hint("Fillet/Chamfer failed: size too large for the "
+			+ "body, or the profile has holes")
+		return ""
+	stack.push_no_merge(CmdAddFeature.new(et))
+	return et.id
 
 
 ## --- sweep + loft (M34) ------------------------------------------------------

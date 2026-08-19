@@ -118,8 +118,29 @@ static func build(doc: CadDocument, host: Node) -> Array:
 	# AABB — the known limitation carried since M18). Transforms bake into
 	# the mesh so everything downstream (STL, AABB, volume, picking) reads
 	# the moved geometry for free.
+	var treated := {}
 	for f in doc.live_features():
-		if f is TransformFeature:
+		if f is EdgeTreatFeature:
+			# M35: rebuild a SINGLE-plain-extrude body's mesh with its edge
+			# treatment baked in. Boolean/multi-part bodies and second
+			# treatments are skipped (the feature's creation path refuses
+			# them with a hint; this guard keeps replay safe).
+			var et := f as EdgeTreatFeature
+			if treated.has(et.body):
+				continue
+			for bt: Dictionary in out:
+				if String(bt["id"]) != et.body \
+						or (bt["feature_ids"] as Array).size() != 1:
+					continue
+				var root_ef := doc.feature_by_id(et.body) as ExtrudeFeature
+				if root_ef == null:
+					continue
+				var tm := et.build_treated_mesh(doc, root_ef)
+				if tm != null:
+					bt["mesh"] = tm
+					(bt["feature_ids"] as Array).append(et.id)
+					treated[et.body] = true
+		elif f is TransformFeature:
 			var tf := f as TransformFeature
 			for b2: Dictionary in out:
 				if String(b2["id"]) != tf.body:

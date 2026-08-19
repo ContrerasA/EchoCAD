@@ -516,3 +516,25 @@ Status: PENDING sign-off
 - [ ] 7. Chips: suppress/rollback/delete both features; edit the profile
    sketch afterward. **Expect:** replay updates the solids.
 - [ ] 8. Export a swept part to STL and slice it. **Expect:** watertight.
+
+## §M35 — 3D fillet + chamfer (prismatic)
+
+Status: PENDING sign-off
+
+- [ ] 1. Extrude a rectangle; select the body; **Fillet Edges**, size,
+   Side corners only. **Expect:** all four vertical edges round; the
+   silhouette reads clean; a Fillet chip lands on the timeline.
+- [ ] 2. Double-click the chip, change the size. **Expect:** re-rounds
+   parametrically; suppress restores the sharp body.
+- [ ] 3. **Chamfer Edges** with Top rim on a fresh box. **Expect:** a flat
+   45° band around the top; Bottom rim ticks the base too.
+- [ ] 4. Fillet Top rim on a CYLINDER. **Expect:** a smooth donut-edge cap.
+- [ ] 5. Edit the source sketch (resize the rect). **Expect:** treatment
+   replays on the new shape.
+- [ ] 6. Oversize (radius > half an edge / taller than the body).
+   **Expect:** refused with a status hint, nothing added.
+- [ ] 7. Try it on a body with a Cut, on a revolve, on a swept body.
+   **Expect:** refused with the prismatic-scope hint (documented — general
+   mesh fillets are the B-rep-kernel tier tracked in the backlog).
+- [ ] 8. Fillet a real bracket (corners + top rim), export STL, slice.
+   **Expect:** watertight, printable.
