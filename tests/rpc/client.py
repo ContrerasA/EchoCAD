@@ -95,6 +95,17 @@ class EchoCad:
 
     def click_control(self, name):
         r = self.call("query.control", {"name": name})
+        if not r["visible"] and r.get("flyout_owner"):
+            # A tool inside a ribbon stack: right-click the stack's face to
+            # open its flyout, exactly as a user would, then hit the entry.
+            o = self.call("query.control", {"name": r["flyout_owner"]})
+            if not o["visible"]:
+                raise RpcError("bad_state",
+                               f"stack {r['flyout_owner']} for {name} not visible")
+            x, y, w, h = o["rect"]
+            self.call("input.click", {"at": [x + w / 2, y + h / 2],
+                                      "button": "right"})
+            r = self.call("query.control", {"name": name})
         if not r["visible"]:
             raise RpcError("bad_state", f"control {name} not visible")
         x, y, w, h = r["rect"]

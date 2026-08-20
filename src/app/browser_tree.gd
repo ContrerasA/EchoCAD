@@ -52,7 +52,22 @@ func refresh() -> void:
 	var expanded := _expanded_folders()
 	clear()
 	_rows.clear()
-	var root := create_item()
+	var tree_root := create_item()
+	# The document is the root COMPONENT (Fusion's top browser row): every
+	# folder below belongs to it and it is always the active component. It
+	# carries the file name and a filled activation dot; the eye column is
+	# unused on it. Multi-component documents are backlog (MILESTONES2 M36+).
+	var root := create_item(tree_root)
+	var doc_name := app.document_title() if app.has_method("document_title") \
+			else "Untitled"
+	root.set_text(COL_NAME, doc_name)
+	root.set_icon(COL_NAME, ThemeService.active_dot_icon())
+	root.set_tooltip_text(COL_NAME, "Root component (active)")
+	root.set_selectable(COL_EYE, false)
+	root.set_selectable(COL_NAME, false)
+	root.set_custom_color(COL_NAME, ThemeService.col("text_strong"))
+	root.collapsed = not expanded.get(doc_name, true)
+	_rows[root] = {"kind": "component", "id": ""}
 
 	var origin := create_item(root)
 	origin.set_text(COL_NAME, "Origin")
@@ -161,10 +176,14 @@ func _expanded_folders() -> Dictionary:
 	var root := get_root()
 	if root == null:
 		return out
-	var it := root.get_first_child()
-	while it != null:
-		out[it.get_text(COL_NAME)] = not it.collapsed
-		it = it.get_next()
+	var comp := root.get_first_child()
+	while comp != null:
+		out[comp.get_text(COL_NAME)] = not comp.collapsed
+		var it := comp.get_first_child()
+		while it != null:
+			out[it.get_text(COL_NAME)] = not it.collapsed
+			it = it.get_next()
+		comp = comp.get_next()
 	return out
 
 

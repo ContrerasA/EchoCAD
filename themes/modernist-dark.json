@@ -122,18 +122,19 @@
     "border_width": 1,
     "menubar_height": 26,
     "ribbon_height": 92,
-    "big_button_w": 68,
+    "big_button_w": 58,
     "big_button_h": 54,
-    "small_button_w": 28,
-    "small_button_h": 26,
+    "small_button_w": 36,
+    "small_button_h": 32,
     "browser_width": 238,
     "row_height": 22,
     "hud_height": 30,
     "timeline_height": 52,
     "timeline_chip_w": 52,
     "status_height": 24,
-    "icon_big": 23,
-    "icon_small": 20,
-    "icon_row": 14
+    "icon_big": 26,
+    "icon_small": 24,
+    "icon_row": 14,
+    "title_height": 28
   }
 }

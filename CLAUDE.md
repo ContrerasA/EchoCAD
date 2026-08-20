@@ -40,7 +40,7 @@ macOS/web still require binaries built in the sibling repos first.
   comes from the active theme file via `ThemeService.col/metric/font_size`
   (see `docs/THEMING.md`). New roles get a `FALLBACK_*` entry + a doc line;
   colors baked into materials are rebuilt in the owner's `apply_theme()`.
-  Controls opt into the named type variations (`BigToolButton`, `HudPanel`,
+  Controls opt into the named type variations (`ToolButton`, `HudPanel`,
   …) instead of carrying `add_theme_*_override` literals.
 - **Hover feedback is mandatory on every pick stage.** Any tool step that
   waits for the user to click something (profile, path, axis, plane, face,

@@ -699,9 +699,24 @@ func _cmd_query_control(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant
 		_reply_err(p, id, "not_found", "no control named %s" % a.get("name"))
 		return null
 	var r := node.get_global_rect()
-	return {"rect": [r.position.x, r.position.y, r.size.x, r.size.y],
+	# Controls inside an embedded sub-window (popups, dialogs) report rects in
+	# that window's own space — shift them into main-window pixels so a click
+	# aimed at the rect lands.
+	var w := node.get_window()
+	if w != null and w != get_window() and w.is_embedded():
+		r.position += Vector2(w.position)
+	var out := {"rect": [r.position.x, r.position.y, r.size.x, r.size.y],
 		"visible": node.is_visible_in_tree(),
 		"disabled": node.disabled if node is BaseButton else false}
+	# Buttons inside a ribbon flyout (M36 stacks) are only visible while the
+	# flyout is open — name the stack button that opens it so a client can
+	# right-click it first and then click the real control.
+	var p2: Node = node.get_parent()
+	while p2 != null and not (p2 is PopupPanel):
+		p2 = p2.get_parent()
+	if p2 != null and p2.name == "Flyout" and p2.get_parent() is Button:
+		out["flyout_owner"] = String(p2.get_parent().name)
+	return out
 
 
 func _cmd_query_dof(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
@@ -867,6 +882,8 @@ func _cmd_action_set_pref(a: Dictionary, _p: StreamPeerTCP, _id: Variant) -> Dic
 		app.set_dark_theme(bool(a["dark_theme"]))
 	if a.has("ortho"):
 		app.set_model_projection(bool(a["ortho"]))
+	if a.has("tool_names"):
+		app.set_show_tool_names(bool(a["tool_names"]))
 	# The toolbar checkboxes show this same state — refresh them, or the hand
 	# path and the RPC path would disagree about what is on.
 	app.sync_pref_checks()
@@ -874,6 +891,7 @@ func _cmd_action_set_pref(a: Dictionary, _p: StreamPeerTCP, _id: Variant) -> Dic
 		"grid_snap": app.snap.grid_enabled,
 		"entity_snap": app.snap.entity_snap_enabled,
 		"dark_theme": ThemeService.dark,
+		"tool_names": ThemeService.show_tool_names,
 		"ortho": app.rig.is_orthographic()}
 
 func _cmd_action_enter_sketch(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:

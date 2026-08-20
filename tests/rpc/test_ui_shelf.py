@@ -25,11 +25,16 @@ def main():
 
     # Model-mode shelf: the grouped buttons are visible and named.
     for name in ["CreateSketchBtn", "ExtrudeBtn", "RevolveBtn",
-                 "OffsetPlaneBtn", "ParametersBtn", "SaveBtn", "OpenBtn",
+                 "OffsetPlaneBtn", "ParametersBtn",
                  "ImportDxfBtn", "ExportDxfBtn", "ExportStlBtn",
                  "PreferencesBtn"]:
         r = app.call("query.control", {"name": name})
         check(r["visible"], f"{name} visible in model mode")
+    # Save / Open moved to the File menu (QA §M36): named controls survive,
+    # but no File group sits in the ribbon.
+    for name in ["SaveBtn", "OpenBtn"]:
+        r = app.call("query.control", {"name": name})
+        check(not r["visible"], f"{name} not in the ribbon")
     r = app.call("query.control", {"name": "FinishSketchBtn"})
     check(not r["visible"], "FinishSketchBtn hidden in model mode")
 

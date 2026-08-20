@@ -1002,40 +1002,111 @@ commit changes
 
 Run windowed at ≥1280×800. Default theme is Modernist Dark.
 
-- [ ] **Shell matches the design**: menu bar (red brand mark, EchoCAD —
+- [X] **Shell matches the design**: menu bar (red brand mark, EchoCAD —
       file name, File/Edit/View/Help, unit badge right), 92px ribbon with
-      CREATE › / MODIFY › / CONSTRUCT › / MAKE › / FILE › captions, big
-      icon-over-label buttons + small icon grids, Parameters + undo/redo at
+      CREATE › / MODIFY › / CONSTRUCT › / INSERT › / MAKE › captions, uniform
+      icon buttons in one- or two-row grids, Parameters + undo/redo at
       the right edge (both modes); BROWSER header over the tree; HUD pills (Orbit pivot, Look At,
       Fit | ORTHO | Views | ⚙) top-left of the canvas; view cube top-right;
       timeline chips with icons + a red rollback marker; status bar.
-- [ ] **Sketch ribbon**: New Sketch → ribbon swaps to SELECT / CREATE /
+- [X] **Sketch ribbon**: New Sketch → ribbon swaps to SELECT / CREATE /
       MODIFY / CONSTRAIN / OPTIONS / SKETCH (red Finish Sketch). No caption
-      is clipped; the active tool's big/small button is accent-tinted; the
+      is clipped; the active tool's button is accent-tinted; the
       active sketch's timeline chip is solid accent; status shows SKETCH ·
       "SketchN on XY" · DOF badge (green when fully constrained) · zoom.
-- [ ] **Hover**: every ribbon/HUD button lights on hover (subtle fill +
+- [X] **Hover**: every ribbon/HUD button lights on hover (subtle fill +
       hairline), pressed state is the accent tint.
-- [ ] **Menus**: File ▸ Save/Open/Import/Export/Preferences, Edit ▸
+- [X] **Menus**: File ▸ Save/Open/Import/Export/Preferences, Edit ▸
       Undo/Redo/Parameters, View ▸ Fit/Look At/Orthographic (check mark
       tracks the HUD toggle) + Theme radio list, Help ▸ About all work.
 - [ ] **Theme switch**: Preferences ▸ Theme → Modernist Light: chrome,
       browser, viewport background, grids, sketch ink, axes, planes, bodies,
-      badges, view cube, popups and dialogs all flip — no dark remnants.
-      Classic Dark (blue) retints the accent everywhere (pressed buttons,
-      marker, selection, brand mark). View ▸ Theme shows the same list with
-      the active one checked. Setting survives restart.
-- [ ] **User theme**: Preferences ▸ Open themes folder → copy
-      `themes/modernist-dark.json` there as `mine.json`, change `"id"` to
-      `mine`, `"name"`, and `"red-500"` in the palette to `#1e90ff` → Reload
-      → "mine (user)" appears and selecting it turns the accent blue. Break
-      the JSON (delete a comma) → Reload → warning in the console, UI keeps
-      the last good theme. Delete the file → Reload → entry gone.
-- [ ] **Theme persistence across modes**: switch theme while in sketch mode,
+      badges, view cube, popups and dialogs all flip — no dark remnants
+      (dialog TITLE BARS included). Classic Dark (blue) retints the accent
+      everywhere (pressed buttons, marker, selection, brand mark). View ▸
+      Theme shows the same list with the active one checked. Setting
+      survives restart.
+      	Was [!]: dialog title bars stayed dark in light mode — fixed (see
+      	"Fixes" below). Re-check.
+- [ ] **User theme**: Preferences ▸ Open themes folder → the folder opens
+      with a `README.txt` and an `examples/` copy of every built-in theme.
+      Copy `examples/modernist-dark.json` UP into the themes folder as
+      `mine.json`, change `"id"` to `mine`, `"name"`, and `"red-500"` in the
+      palette to `#1e90ff` → Reload → "mine (user)" appears and selecting it
+      turns the accent blue. Break the JSON (delete a comma) → Reload →
+      warning in the console, UI keeps the last good theme. Delete the file
+      → Reload → entry gone.
+      	Was [!] "No themes exist in that folder": the user folder is for
+      	YOUR files and started empty; it is now seeded with examples/ +
+      	README so there is something to copy. Re-check.
+- [X] **Theme persistence across modes**: switch theme while in sketch mode,
       finish sketch, re-enter — ribbon, timeline and canvas all consistent.
-- [ ] **Narrow window** (1024 wide): ribbon groups wrap to a second row
+- [X] **Narrow window** (1024 wide): ribbon groups wrap to a second row
       rather than pushing buttons off-screen; nothing overlaps the HUD.
 - [ ] **Dialogs** (Extrude, Parameters, Preferences, file dialogs, About):
-      themed panel, accent primary button, readable in both appearances.
-- [ ] **RPC**: `query.theme` lists built-ins + user themes;
+      themed panel, accent primary button, readable in both appearances —
+      title bar, close glyph and border follow the theme too.
+      	Was [!]: see Theme switch. Re-check.
+- [~] **RPC**: `query.theme` lists built-ins + user themes;
       `action.set_theme {theme: "modernist-light"}` switches live.
+
+### Additional (round 1 notes → fixes)
+- [ ] **Menu bar alignment**: File / Edit / View / Help sit on the same
+      centre line as the brand mark, "EchoCAD — file" and the unit badge.
+- [ ] **Ribbon icons + stacks**: icons are 24–26px. Rectangle, Circle, Arc,
+      Slot and Pattern are STACKS: a small triangle in the corner; right-click
+      or press-and-hold (~0.45s) opens a flyout listing the variants
+      (Circle ▸ 3-Pt Circle; Slot ▸ Overall / Center Pt; Arc ▸ 3-Pt / Center /
+      Tangent; Rect Pattern ▸ Circ Pattern). Picking one activates it AND
+      makes it the button's face; the face also follows keyboard shortcuts
+      (press C… then the circle stack shows whichever circle tool is live).
+- [ ] **Group captions** (CREATE › …) are centred under their buttons.
+- [ ] **View cube**: ~150px, faces labelled FRONT / BACK / TOP / BOTTOM /
+      LEFT / RIGHT, X/Y/Z triad beside it in the axis colours; clicking a
+      face still snaps the view; labels follow the theme (light mode too).
+- [ ] **Browser root component**: the tree's first row is the document
+      ("Untitled" until saved, then the file stem) with a filled accent
+      dot = active component; Origin / Construction / Sketches / Canvases /
+      Bodies nest under it. Save As → the row renames.
+- [ ] **No File group** in the ribbon; Save / Open live in File ▸ (Ctrl+S /
+      Ctrl+O still work).
+- [ ] **Uniform buttons**: every ribbon button is the same icon square.
+      Preferences ▸ "Show tool names in the ribbon" (off by default) puts
+      every title under its icon (ribbon grows); the setting survives
+      restart; the stack face's title follows its current variant.
+- [ ] **Light-mode dialogs**: open File ▸ Open… in Modernist Light — title
+      bar, border and close glyph are light; the title is readable.
+- [ ] **Menu shortcuts**: File / Edit / View entries show their shortcut
+      right-aligned in a dimmer colour than the action text; the shortcut
+      fires ONCE (Ctrl+Z from the canvas undoes one step, not two).
+
+### Fixes applied (2026-08-20)
+- Menu bar: MenuBar shrinks to centre; brand/doc/unit labels vertically
+  centred. Shortcuts are PopupMenu *accelerators* (right-aligned, drawn in
+  `font_accelerator_color` = `text_dim`); the MenuBar's shortcut input is
+  disabled so the canvas stays the single key router.
+- Ribbon: one `ToolButton` variation for every button (`icon_big` 26px
+  icons in 36×32 squares; 58×54 with titles). `AppRoot.TOOL_STACKS` defines
+  the flyout stacks (`_tool_stack`): right-click via `gui_input`, long press
+  via a 0.45s Timer (the following release is swallowed), flyout is a
+  `PopupPanel` of `FlyoutButton` rows; the face follows `tools.active_id()`
+  in `_refresh_ui`. Captions centred. File group removed (Save/Open remain
+  as hidden named controls). New Insert group (Import DXF/SVG, Canvas).
+  `ThemeService.show_tool_names` (settings.cfg `[ui] show_tool_names`),
+  Preferences checkbox `ToolNamesChk`, RPC `action.set_pref {tool_names}`.
+- View cube: 150px, FRONT/BACK/… `Label3D`s on the faces, hairline edges,
+  ambient-lit, X/Y/Z triad; `apply_theme` recolours all of it.
+- Browser: root component row (`document_title()`), active-dot icon
+  (`ThemeService.active_dot_icon`). Real multi-component documents (several
+  components, each activatable, features owned per component) are a model
+  change — logged in MILESTONES2 backlog, not done here.
+- Themes: `Window` gets `embedded_border` / `embedded_unfocused_border`
+  styleboxes from `titlebar` / `menubar`, `title_height` metric (28), a
+  themed close glyph — embedded dialogs no longer show the engine's
+  charcoal bar. `user_theme_dir()` seeds `README.txt` + `examples/*.json`
+  (examples/ is not scanned).
+- RPC: `query.control` reports `flyout_owner` for buttons inside a stack's
+  flyout and converts embedded-window rects to main-window pixels;
+  `client.click_control` opens the flyout (right-click) on its own.
+- Tests: `tests/m36_shell_qa.gd` (A–H); `m26_ui_shell` + RPC
+  `test_ui_shelf` updated for the hidden Save/Open buttons.

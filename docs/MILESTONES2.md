@@ -318,6 +318,11 @@ because cap fillets are built from loft rings.
 - Autosave + crash recovery, recent-files list, document tabs.
 - Keyboard shortcut editor; edge-line overlay for CSG-baked bodies
   (carried); rigid whole-chain offset constraint (carried).
+- Components (Fusion-style): several components per document, each owning
+  sketches/bodies/features, one *active* at a time (browser dot), new
+  features land in the active component. The M36 browser already shows the
+  document as a single root component; the model/serializer change is this
+  item.
 
 ## M36 — Design overhaul + theme files  (branch: `m36-design-overhaul`)
 
@@ -381,4 +386,10 @@ grids, sketch ink and badges. Ships:
   the OS title bar stays; the document name + unsaved mark live in the menu
   bar instead. The Sketch Palette overlay became the ribbon's Options group
   (same toggles, same control names). The print-estimate footer is not built
-  (no volume/overhang analysis exists yet).
+  (no volume/overhang analysis exists yet). QA round 1 (2026-08-20) then
+  reshaped the ribbon: one uniform icon-square button style with an opt-in
+  *Show tool names* preference (instead of big/small tiers), Fusion-style
+  flyout stacks for related sketch tools, no File group (File menu owns
+  Save/Open), an Insert group; plus a labelled 150px view cube with axis
+  triad, themed embedded title bars, menu accelerators and a root-component
+  row in the browser.

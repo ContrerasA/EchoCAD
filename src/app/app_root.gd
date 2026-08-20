@@ -133,8 +133,20 @@ var _menu_panel: PanelContainer = null
 var _browser_panel: PanelContainer = null
 var _timeline_panel: PanelContainer = null
 var _status_panel: PanelContainer = null
-var _big_buttons: Array = []
-var _small_buttons: Array = []
+## Every ribbon tool button with its title — one uniform look, titles shown
+## under the icon only when ThemeService.show_tool_names is on.
+var _ribbon_buttons: Array = []      # [{btn, title}]
+var _ribbon_grids: Array = []        # [{grid, columns}]
+## Flyout stacks (Fusion-style): one ribbon button fronting several related
+## tools; right-click or long-press opens the list, the pick becomes the
+## button's face. [{btn, popup, mark, variants: [{id, title, icon, handler,
+## btn}], current}]
+var _stacks: Array = []
+var _flyout_timer: Timer = null
+var _flyout_armed: Dictionary = {}
+var _flyout_suppress := false
+var _stack_marks: Array = []
+var _tool_names_check: CheckBox = null
 var _model_ribbon: Control = null
 var _ribbon_rows: Control = null
 var _ribbon_tail: HBoxContainer = null
@@ -856,8 +868,8 @@ func _build_ui() -> void:
 	view_cube = ViewCube.new()
 	view_cube.name = "ViewCube"
 	view_cube.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	view_cube.position = Vector2(-ViewCube.SIZE_PX - 12,
-		ThemeService.metric("hud_height") + 14)
+	view_cube.position = Vector2(-ViewCube.SIZE_PX - 8,
+		ThemeService.metric("hud_height") + 8)
 	view_cube.face_picked.connect(_on_cube_face)
 	# The rig already emitted `moved` from its own _ready, before this widget
 	# existed — hand it the current orientation so it starts in agreement with
@@ -903,20 +915,30 @@ func _build_menu_bar(parent: Control) -> void:
 	mark.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	row.add_child(mark)
 	_brand_mark = mark
+	# Everything in the bar sits on one centre line: labels centre their
+	# text, the MenuBar shrinks to its own height (QA §M36 — the menus used
+	# to hang from the top edge beside vertically centred labels).
 	var brand := Label.new()
 	brand.name = "BrandLabel"
 	brand.text = "EchoCAD"
 	brand.theme_type_variation = "BrandLabel"
+	brand.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	row.add_child(brand)
 	_doc_label = Label.new()
 	_doc_label.name = "DocLabel"
 	_doc_label.theme_type_variation = "DimLabel"
+	_doc_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	row.add_child(_doc_label)
 
 	_menu_bar = MenuBar.new()
 	_menu_bar.name = "MenuBar"
 	_menu_bar.flat = true
 	_menu_bar.focus_mode = Control.FOCUS_NONE
+	_menu_bar.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	# Shortcuts in the menus are accelerators for DISPLAY (right-aligned, in
+	# the dim accelerator colour); key routing stays with the canvas
+	# (handle_app_key), so the bar must not fire them a second time.
+	_menu_bar.set_process_shortcut_input(false)
 	row.add_child(_menu_bar)
 
 	var file := PopupMenu.new()
@@ -971,6 +993,7 @@ func _build_menu_bar(parent: Control) -> void:
 	_unit_badge = Label.new()
 	_unit_badge.name = "UnitBadge"
 	_unit_badge.theme_type_variation = "DimLabel"
+	_unit_badge.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	row.add_child(_unit_badge)
 	var pad2 := Control.new()
 	pad2.custom_minimum_size.x = 6
@@ -982,10 +1005,28 @@ func _build_menu_bar(parent: Control) -> void:
 func _menu_add(menu: PopupMenu, label: String, handler: Callable,
 		shortcut := "") -> void:
 	var idx := menu.item_count
-	menu.add_item(label if shortcut == "" else "%s\t%s" % [label, shortcut], idx)
+	menu.add_item(label, idx, _accel_from_text(shortcut))
 	menu.set_item_metadata(idx, handler)
 	if not menu.id_pressed.is_connected(_on_menu_id):
 		menu.id_pressed.connect(_on_menu_id.bind(menu))
+
+
+## "Ctrl+Shift+S" -> the Key bitmask PopupMenu renders as a right-aligned
+## accelerator. Unknown text yields KEY_NONE (no accelerator column).
+func _accel_from_text(text: String) -> Key:
+	if text == "":
+		return KEY_NONE
+	var mask := 0
+	var key := KEY_NONE
+	for part in text.split("+"):
+		match part.to_lower():
+			"ctrl": mask |= KEY_MASK_CTRL
+			"shift": mask |= KEY_MASK_SHIFT
+			"alt": mask |= KEY_MASK_ALT
+			_: key = OS.find_keycode_from_string(part)
+	if key == KEY_NONE:
+		return KEY_NONE
+	return (key | mask) as Key
 
 
 func _on_menu_id(id: int, menu: PopupMenu) -> void:
@@ -1028,16 +1069,21 @@ func _show_about() -> void:
 	d.popup_centered()
 
 
-## Sketch tools that earn a big labelled button; the rest sit in the small
-## grids.
-const BIG_TOOLS := ["select", "line", "rect", "circle", "trim", "offset",
-	"dimension"]
+## Related sketch tools that share one ribbon button (QA §M36): the head
+## tool fronts the stack, the rest open on right-click / long-press.
+const TOOL_STACKS := {
+	"rect": ["rect", "center_rect"],
+	"circle": ["circle", "circle3"],
+	"arc3": ["arc3", "center_arc", "tangent_arc"],
+	"slot": ["slot", "slot_overall", "slot_center"],
+	"rect_pattern": ["rect_pattern", "circ_pattern"],
+}
 
 
 ## The ribbon (M36): a 92px strip of captioned groups. Model and sketch mode
-## each own a row of groups; _refresh_ui swaps them. Groups hold BIG buttons
-## (icon over label) for the primary verbs and a grid of SMALL icon buttons
-## for the rest, like the design's Create / Modify / Construct strips.
+## each own a row of groups; _refresh_ui swaps them. Every button is the same
+## icon square (title under it when "Show tool names" is on); groups with
+## many tools fold them into two-row grids.
 func _build_ribbon(parent: Control) -> void:
 	_ribbon = PanelContainer.new()
 	_ribbon.name = "Ribbon"
@@ -1058,6 +1104,12 @@ func _build_ribbon(parent: Control) -> void:
 	# their wrapped height — track it so a narrow window grows the ribbon
 	# instead of clipping the second row of groups.
 	rows.resized.connect(_fit_ribbon_height)
+	_flyout_timer = Timer.new()
+	_flyout_timer.name = "FlyoutTimer"
+	_flyout_timer.one_shot = true
+	_flyout_timer.wait_time = 0.45
+	_flyout_timer.timeout.connect(_on_flyout_timeout)
+	add_child(_flyout_timer)
 
 	# --- model mode ----------------------------------------------------------
 	var model := HFlowContainer.new()
@@ -1069,88 +1121,90 @@ func _build_ribbon(parent: Control) -> void:
 	_model_ribbon = model
 	model.minimum_size_changed.connect(_fit_ribbon_height)
 
-	var g_create := _shelf_group(model, "Create")
-	_btn_create = _big_button(g_create, "New Sketch", _on_create_sketch,
+	var g_create := _tool_grid(_shelf_group(model, "Create"), 4)
+	_btn_create = _tool_button(g_create, "New Sketch", _on_create_sketch,
 		"create_sketch")
 	_btn_create.name = "CreateSketchBtn"
 	_btn_create.tooltip_text = "Create Sketch: pick a plane or flat face"
-	_btn_extrude = _big_button(g_create, "Extrude", _on_extrude_pressed, "extrude")
+	_btn_extrude = _tool_button(g_create, "Extrude", _on_extrude_pressed, "extrude")
 	_btn_extrude.name = "ExtrudeBtn"
-	_btn_revolve = _big_button(g_create, "Revolve", _on_revolve_pressed, "revolve")
+	_btn_revolve = _tool_button(g_create, "Revolve", _on_revolve_pressed, "revolve")
 	_btn_revolve.name = "RevolveBtn"
-	var create_grid := _small_grid(g_create, 2)
-	var sweepb := _small_button(create_grid, "Sweep", _on_sweep_pressed, "sweep")
+	var sweepb := _tool_button(g_create, "Sweep", _on_sweep_pressed, "sweep")
 	sweepb.name = "SweepBtn"
 	sweepb.tooltip_text = "Sweep a profile along a sketch path"
-	var loftb := _small_button(create_grid, "Loft", _on_loft_pressed, "loft")
+	var loftb := _tool_button(g_create, "Loft", _on_loft_pressed, "loft")
 	loftb.name = "LoftBtn"
 	loftb.tooltip_text = "Loft between two or more profiles"
-	var mirrb := _small_button(create_grid, "Mirror Body", _on_mirror_body_pressed,
+	var mirrb := _tool_button(g_create, "Mirror Body", _on_mirror_body_pressed,
 		"mirror_body")
 	mirrb.name = "MirrorBodyBtn"
 	mirrb.tooltip_text = "Mirror the selected body across a plane"
-	var pattb := _small_button(create_grid, "Pattern",
+	var pattb := _tool_button(g_create, "Pattern",
 		func() -> void: open_pattern_dialog(""), "pattern_body")
 	pattb.name = "PatternBodyBtn"
 	pattb.tooltip_text = "Linear/circular pattern of the selected body"
 
 	_divider(model)
-	var g_modify := _shelf_group(model, "Modify")
-	var filb := _big_button(g_modify, "Fillet", func() -> void:
+	var g_modify := _tool_grid(_shelf_group(model, "Modify"), 2)
+	var filb := _tool_button(g_modify, "Fillet", func() -> void:
 		open_edge_treat_dialog("", EdgeTreatFeature.KIND_FILLET), "fillet_3d")
 	filb.name = "FilletEdgesBtn"
 	filb.tooltip_text = ("Round edges of a plain extrude: select the body, "
 		+ "then click the edges to round")
-	var chab := _big_button(g_modify, "Chamfer", func() -> void:
+	var chab := _tool_button(g_modify, "Chamfer", func() -> void:
 		open_edge_treat_dialog("", EdgeTreatFeature.KIND_CHAMFER), "chamfer_3d")
 	chab.name = "ChamferEdgesBtn"
 	chab.tooltip_text = ("Chamfer edges of a plain extrude: select the body, "
 		+ "then click the edges to cut")
-	var modify_grid := _small_grid(g_modify, 1)
-	var moveb := _small_button(modify_grid, "Move Body",
+	var moveb := _tool_button(g_modify, "Move Body",
 		func() -> void: open_move_dialog(""), "move_body")
 	moveb.name = "MoveBodyBtn"
 	moveb.tooltip_text = "Move/rotate the selected body (a timeline feature)"
-	var copyb := _small_button(modify_grid, "Copy Body",
+	var copyb := _tool_button(g_modify, "Copy Body",
 		func() -> void: open_copy_dialog(""), "copy_body")
 	copyb.name = "CopyBodyBtn"
 	copyb.tooltip_text = "Parametric copy of the selected body at an offset"
 
 	_divider(model)
 	var g_construct := _shelf_group(model, "Construct")
-	_btn_offset_plane = _big_button(g_construct, "Offset Plane",
+	_btn_offset_plane = _tool_button(g_construct, "Offset Plane",
 		_on_offset_plane_pressed, "offset_plane")
 	_btn_offset_plane.name = "OffsetPlaneBtn"
 
 	_divider(model)
-	var g_make := _shelf_group(model, "Make")
-	var stlb := _big_button(g_make, "Export STL",
-		func() -> void: export_stl_interactive(), "export_stl")
-	stlb.name = "ExportStlBtn"
-	var dxfb := _big_button(g_make, "Export DXF", export_dxf_interactive,
-		"export_dxf")
-	dxfb.name = "ExportDxfBtn"
-	var make_grid := _small_grid(g_make, 1)
-	var dxfi := _small_button(make_grid, "Import DXF", import_dxf_interactive,
+	var g_insert := _tool_grid(_shelf_group(model, "Insert"), 2)
+	var dxfi := _tool_button(g_insert, "Import DXF", import_dxf_interactive,
 		"import_dxf")
 	dxfi.name = "ImportDxfBtn"
-	var svgi := _small_button(make_grid, "Import SVG", import_svg_interactive,
+	var svgi := _tool_button(g_insert, "Import SVG", import_svg_interactive,
 		"import_svg")
 	svgi.name = "ImportSvgBtn"
-	var canvb := _small_button(_small_grid(g_make, 1), "Canvas",
-		import_canvas_interactive, "canvas")
+	var canvb := _tool_button(g_insert, "Canvas", import_canvas_interactive,
+		"canvas")
 	canvb.name = "ImportCanvasBtn"
 	canvb.tooltip_text = "Insert a reference image (PNG/JPEG) on a plane"
 
 	_divider(model)
-	var g_file := _shelf_group(model, "File")
-	_btn_save = _big_button(g_file, "Save",
+	var g_make := _tool_grid(_shelf_group(model, "Make"), 2)
+	var stlb := _tool_button(g_make, "Export STL",
+		func() -> void: export_stl_interactive(), "export_stl")
+	stlb.name = "ExportStlBtn"
+	var dxfb := _tool_button(g_make, "Export DXF", export_dxf_interactive,
+		"export_dxf")
+	dxfb.name = "ExportDxfBtn"
+	# Save / Open live in the File menu (QA §M36: no File group in the
+	# ribbon). The buttons stay as hidden, named controls so Ctrl+S/Ctrl+O
+	# tooltips and RPC lookups keep working.
+	_btn_save = _tool_button(g_make, "Save",
 		func() -> void: save_interactive(false), "save")
 	_btn_save.name = "SaveBtn"
 	_btn_save.tooltip_text = "Save (Ctrl+S)"
-	_btn_open = _big_button(g_file, "Open", open_interactive, "open")
+	_btn_save.visible = false
+	_btn_open = _tool_button(g_make, "Open", open_interactive, "open")
 	_btn_open.name = "OpenBtn"
 	_btn_open.tooltip_text = "Open (Ctrl+O)"
+	_btn_open.visible = false
 
 	# --- sketch mode --------------------------------------------------------
 	var sketch := HFlowContainer.new()
@@ -1171,35 +1225,47 @@ func _build_ribbon(parent: Control) -> void:
 	var g_constrain := _shelf_group(sketch, "Constrain")
 	_constraint_bar = _shelf_groups["Constrain"]
 	var group := ButtonGroup.new()
-	var create_small := _small_grid(g_sk_create, 6)
-	var modify_small := _small_grid(g_sk_modify, 4)
+	var create_grid := _tool_grid(g_sk_create, 4)
+	var modify_grid := _tool_grid(g_sk_modify, 4)
+	var cons_grid := _tool_grid(g_constrain, 7)
+	var stacked := {}
+	for head: String in TOOL_STACKS:
+		for tid: String in TOOL_STACKS[head]:
+			stacked[tid] = head
 	for tid: String in tools.tool_ids():
-		var t := tools.get_tool(tid)
-		var parts := tid.split("_")
-		var pascal := ""
-		for part in parts:
-			pascal += part.substr(0, 1).to_upper() + part.substr(1)
+		if stacked.has(tid) and stacked[tid] != tid:
+			continue   # lives in its head's flyout
 		var home := _tool_group_for(tid, g_select, g_sk_create, g_sk_modify,
 			g_constrain)
-		var b: Button
-		if tid in BIG_TOOLS:
-			b = _big_button(home, t.title, Callable(), tid)
-		else:
-			b = _small_button(modify_small if home == g_sk_modify else create_small,
-				t.title, Callable(), tid)
-		b.name = pascal + "ToolBtn"
-		# A text fallback keeps the button usable if its icon asset ever goes
-		# missing; the title always lives in the tooltip (with the shortcut).
-		if b.icon == null and b.text == "":
-			b.text = t.title
-		b.tooltip_text = t.title if t.shortcut == KEY_NONE \
-			else "%s (%s)" % [t.title, OS.get_keycode_string(t.shortcut)]
+		var parent_ctl: Control = home
+		if home == g_sk_create:
+			parent_ctl = create_grid
+		elif home == g_sk_modify:
+			parent_ctl = modify_grid
+		elif home == g_constrain:
+			parent_ctl = cons_grid
+		if stacked.has(tid):
+			var variants: Array = []
+			for vid: String in TOOL_STACKS[tid]:
+				var vt := tools.get_tool(vid)
+				variants.append({"id": vid, "title": vt.title, "icon": vid,
+					"tooltip": _tool_tooltip(vt),
+					"handler": func() -> void: tools.set_active(vid)})
+			var st := _tool_stack(parent_ctl, variants, group)
+			_tool_buttons[tid] = st["btn"]
+			for v: Dictionary in st["variants"]:
+				if v["id"] != tid:
+					_tool_buttons[v["id"]] = v["btn"]
+			continue
+		var t := tools.get_tool(tid)
+		var b := _tool_button(parent_ctl, t.title, Callable(), tid)
+		b.name = _pascal(tid) + "ToolBtn"
+		b.tooltip_text = _tool_tooltip(t)
 		b.toggle_mode = true
 		b.button_group = group
 		b.pressed.connect(func() -> void: tools.set_active(tid))
 		_tool_buttons[tid] = b
 
-	var cons_grid := _small_grid(g_constrain, 7)
 	var cons_defs := [
 		["Coincident", SketchConstraint.Type.COINCIDENT, "const_coincident"],
 		["Horizontal", SketchConstraint.Type.HORIZONTAL, "const_horizontal"],
@@ -1217,7 +1283,7 @@ func _build_ribbon(parent: Control) -> void:
 		["Symmetry", SketchConstraint.Type.SYMMETRY, "const_symmetry"],
 	]
 	for def in cons_defs:
-		var cb := _small_button(cons_grid, def[0],
+		var cb := _tool_button(cons_grid, def[0],
 			func() -> void: apply_constraint(def[1]), String(def[2]))
 		cb.name = String(def[0]) + "ConBtn"
 
@@ -1262,12 +1328,15 @@ func _build_ribbon(parent: Control) -> void:
 
 	_divider(sketch)
 	var g_finish := _shelf_group(sketch, "Sketch")
-	_btn_finish = _big_button(g_finish, "Finish Sketch", _on_finish_sketch,
+	_btn_finish = _button(g_finish, "Finish Sketch", _on_finish_sketch,
 		"finish_sketch")
 	_btn_finish.name = "FinishSketchBtn"
 	_btn_finish.theme_type_variation = "PrimaryButton"
-	_btn_finish.clip_text = false   # the label sets the width
-	_btn_finish.custom_minimum_size.x = ThemeService.metric("big_button_w") + 10
+	_btn_finish.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_btn_finish.vertical_icon_alignment = VERTICAL_ALIGNMENT_TOP
+	_btn_finish.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	_btn_finish.custom_minimum_size = Vector2(
+		ThemeService.metric("big_button_w") + 14, ThemeService.metric("big_button_h"))
 
 	# --- shared tail: undo / redo at the right edge of either row --------------
 	var tail_wrap := MarginContainer.new()
@@ -1281,23 +1350,21 @@ func _build_ribbon(parent: Control) -> void:
 	_ribbon_tail.add_theme_constant_override("separation", 2)
 	_ribbon_tail.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	tail_wrap.add_child(_ribbon_tail)
-	_btn_undo = _small_button(_ribbon_tail, "Undo",
-		func() -> void: stack.undo(), "undo")
+	_btn_undo = _tool_button(_ribbon_tail, "Undo",
+		func() -> void: stack.undo(), "undo", false)
 	_btn_undo.name = "UndoBtn"
 	_btn_undo.tooltip_text = "Undo (Ctrl+Z)"
-	_btn_undo.custom_minimum_size = Vector2(30, 30)
-	_btn_redo = _small_button(_ribbon_tail, "Redo",
-		func() -> void: stack.redo(), "redo")
+	_btn_redo = _tool_button(_ribbon_tail, "Redo",
+		func() -> void: stack.redo(), "redo", false)
 	_btn_redo.name = "RedoBtn"
 	_btn_redo.tooltip_text = "Redo (Ctrl+Shift+Z)"
-	_btn_redo.custom_minimum_size = Vector2(30, 30)
 	# Parameters matter in both modes (dimensions drive them), so the single
 	# button lives in the shared tail rather than in a per-mode group.
-	var pbtn := _small_button(_ribbon_tail, "Parameters", _open_params_dialog,
-		"parameters")
+	var pbtn := _tool_button(_ribbon_tail, "Parameters", _open_params_dialog,
+		"parameters", false)
 	pbtn.name = "ParametersBtn"
 	pbtn.tooltip_text = "Parameters: named values for dimensions"
-	pbtn.custom_minimum_size = Vector2(30, 30)
+	_apply_tool_labels()
 
 
 ## Ribbon height = theme metric, or the visible flow's wrapped height when
@@ -1484,8 +1551,8 @@ func _build_status_bar(parent: Control) -> void:
 		(l as Label).vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 
 
-## A plain themed button (dialogs, misc). Ribbon buttons use _big_button /
-## _small_button so their footprint follows theme metrics.
+## A plain themed button (dialogs, misc). Ribbon buttons use _tool_button so
+## their footprint follows theme metrics and the tool-names preference.
 func _button(parent: Control, text: String, handler: Callable,
 		icon_name := "") -> Button:
 	var b := Button.new()
@@ -1499,47 +1566,206 @@ func _button(parent: Control, text: String, handler: Callable,
 	return b
 
 
-## Big ribbon button: icon centred above a short label, fixed footprint from
-## the theme's big_button_w/h metrics.
-func _big_button(parent: Control, text: String, handler: Callable,
-		icon_name := "") -> Button:
+func _pascal(tid: String) -> String:
+	var out := ""
+	for part in tid.split("_"):
+		out += part.substr(0, 1).to_upper() + part.substr(1)
+	return out
+
+
+func _tool_tooltip(t: SketchTool) -> String:
+	return t.title if t.shortcut == KEY_NONE \
+		else "%s (%s)" % [t.title, OS.get_keycode_string(t.shortcut)]
+
+
+## Ribbon tool button: the one button style of the ribbon (QA §M36 — every
+## button is the same icon square; the title appears under the icon only when
+## "Show tool names" is on). `labelled` false keeps a button icon-only for
+## good (the undo/redo tail).
+func _tool_button(parent: Control, text: String, handler: Callable,
+		icon_name := "", labelled := true) -> Button:
 	var b := _button(parent, text, handler, icon_name)
-	b.theme_type_variation = "BigToolButton"
+	b.theme_type_variation = "ToolButton"
 	b.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	b.vertical_icon_alignment = VERTICAL_ALIGNMENT_TOP
+	b.vertical_icon_alignment = VERTICAL_ALIGNMENT_CENTER
 	b.alignment = HORIZONTAL_ALIGNMENT_CENTER
-	b.clip_text = true
-	b.custom_minimum_size = Vector2(ThemeService.metric("big_button_w"),
-		ThemeService.metric("big_button_h"))
-	b.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
-	_big_buttons.append(b)
-	return b
-
-
-## Small ribbon button: icon only, title in the tooltip.
-func _small_button(parent: Control, text: String, handler: Callable,
-		icon_name := "") -> Button:
-	var b := _button(parent, text, handler, icon_name)
-	b.theme_type_variation = "SmallToolButton"
-	b.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	b.expand_icon = false
+	b.clip_text = true
 	if b.icon != null:
 		b.text = ""
+	b.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	b.custom_minimum_size = Vector2(ThemeService.metric("small_button_w"),
 		ThemeService.metric("small_button_h"))
-	_small_buttons.append(b)
+	if labelled:
+		_ribbon_buttons.append({"btn": b, "title": text})
 	return b
 
 
-## A grid of small buttons inside a group's button row.
-func _small_grid(row: Control, columns: int) -> GridContainer:
+## A grid of tool buttons inside a group's button row (two rows when the
+## group has more than `columns` tools).
+func _tool_grid(row: Control, columns: int) -> GridContainer:
 	var g := GridContainer.new()
 	g.columns = columns
 	g.add_theme_constant_override("h_separation", 1)
 	g.add_theme_constant_override("v_separation", 1)
 	g.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	row.add_child(g)
+	_ribbon_grids.append({"grid": g, "columns": columns})
 	return g
+
+
+## Push the "Show tool names" preference into every ribbon button: titles
+## under icons (wider, taller buttons; the ribbon grows to fit) or the
+## default icon-only squares.
+func _apply_tool_labels() -> void:
+	var show := ThemeService.show_tool_names
+	var sz := Vector2(ThemeService.metric("big_button_w"),
+		ThemeService.metric("big_button_h")) if show \
+		else Vector2(ThemeService.metric("small_button_w"),
+			ThemeService.metric("small_button_h"))
+	for e: Dictionary in _ribbon_buttons:
+		var b := e["btn"] as Button
+		if not is_instance_valid(b):
+			continue
+		b.text = String(e["title"]) if (show or b.icon == null) else ""
+		b.vertical_icon_alignment = VERTICAL_ALIGNMENT_TOP if show \
+			else VERTICAL_ALIGNMENT_CENTER
+		b.custom_minimum_size = sz
+	for st: Dictionary in _stacks:
+		_stack_show(st, String(st["current"]))
+	if _tool_names_check != null:
+		_tool_names_check.set_pressed_no_signal(show)
+	_fit_ribbon_height.call_deferred()
+
+
+func set_show_tool_names(on: bool) -> void:
+	ThemeService.show_tool_names = on
+	ThemeService.save_settings()
+	_apply_tool_labels()
+
+
+## --- flyout stacks ------------------------------------------------------------
+
+## One ribbon button fronting several related commands. `variants` entries:
+## {id, title, icon, tooltip, handler}. The first is the face at start; a
+## right-click or a long press lists them all, and the pick becomes the face
+## (Fusion's Circle ▸ 3-Point Circle behaviour). Tool stacks pass the sketch
+## ButtonGroup so the face toggles like any tool button.
+func _tool_stack(parent: Control, variants: Array, group: ButtonGroup = null) -> Dictionary:
+	var head: Dictionary = variants[0]
+	var st := {"btn": null, "popup": null, "mark": null, "variants": variants,
+		"current": head["id"]}
+	var b := _tool_button(parent, String(head["title"]), Callable(),
+		String(head["icon"]))
+	b.name = _pascal(String(head["id"])) + "ToolBtn"
+	b.tooltip_text = String(head.get("tooltip", head["title"])) \
+		+ "\nRight-click or hold for more"
+	if group != null:
+		b.toggle_mode = true
+		b.button_group = group
+	b.pressed.connect(func() -> void:
+		if _flyout_suppress:
+			_flyout_suppress = false
+			_refresh_ui()
+			return
+		for v: Dictionary in st["variants"]:
+			if v["id"] == st["current"]:
+				(v["handler"] as Callable).call())
+	b.button_down.connect(func() -> void:
+		_flyout_armed = st
+		_flyout_timer.start())
+	b.button_up.connect(func() -> void:
+		if _flyout_armed == st:
+			_flyout_timer.stop()
+			_flyout_armed = {})
+	b.gui_input.connect(func(ev: InputEvent) -> void:
+		var mb := ev as InputEventMouseButton
+		if mb != null and mb.pressed and mb.button_index == MOUSE_BUTTON_RIGHT:
+			b.accept_event()
+			_open_flyout(st))
+	st["btn"] = b
+	# Corner mark: the little triangle that says "there is more in here".
+	var mark := Control.new()
+	mark.name = "StackMark"
+	mark.set_anchors_preset(Control.PRESET_FULL_RECT)
+	mark.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	mark.draw.connect(func() -> void:
+		var s := mark.size
+		var c := ThemeService.col("text_dim")
+		mark.draw_colored_polygon(PackedVector2Array([
+			Vector2(s.x - 3, s.y - 8), Vector2(s.x - 3, s.y - 3),
+			Vector2(s.x - 8, s.y - 3)]), c))
+	b.add_child(mark)
+	st["mark"] = mark
+	_stack_marks.append(mark)
+	# The flyout: a popup listing every variant with icon + title.
+	var popup := PopupPanel.new()
+	popup.name = "Flyout"
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 1)
+	popup.add_child(col)
+	for v: Dictionary in variants:
+		var vb := Button.new()
+		vb.name = _pascal(String(v["id"])) + ("VariantBtn" if v["id"] == head["id"]
+			else "ToolBtn")
+		vb.text = String(v["title"])
+		vb.icon = ThemeService.icon(String(v["icon"]))
+		vb.tooltip_text = String(v.get("tooltip", v["title"]))
+		vb.theme_type_variation = "FlyoutButton"
+		vb.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		vb.focus_mode = Control.FOCUS_NONE
+		vb.pressed.connect(func() -> void:
+			popup.hide()
+			_stack_show(st, String(v["id"]))
+			(v["handler"] as Callable).call()
+			_refresh_ui())
+		col.add_child(vb)
+		v["btn"] = vb
+	b.add_child(popup)
+	st["popup"] = popup
+	_stacks.append(st)
+	return st
+
+
+## Make variant `id` the face of the stack.
+func _stack_show(st: Dictionary, id: String) -> void:
+	var b := st["btn"] as Button
+	for v: Dictionary in st["variants"]:
+		if v["id"] != id:
+			continue
+		st["current"] = id
+		b.icon = ThemeService.icon(String(v["icon"]))
+		b.tooltip_text = String(v.get("tooltip", v["title"])) \
+			+ "\nRight-click or hold for more"
+		if ThemeService.show_tool_names:
+			b.text = String(v["title"])
+		return
+
+
+func _open_flyout(st: Dictionary) -> void:
+	var b := st["btn"] as Button
+	var popup := st["popup"] as PopupPanel
+	popup.position = Vector2i(b.get_screen_position() + Vector2(0, b.size.y + 2))
+	popup.popup()
+
+
+func _on_flyout_timeout() -> void:
+	if _flyout_armed.is_empty():
+		return
+	var st: Dictionary = _flyout_armed
+	_flyout_armed = {}
+	# The release that follows must not fire the face's command.
+	_flyout_suppress = true
+	_open_flyout(st)
+
+
+## The stack (if any) whose variants include tool `tid`.
+func _stack_for_tool(tid: String) -> Dictionary:
+	for st: Dictionary in _stacks:
+		for v: Dictionary in st["variants"]:
+			if v["id"] == tid:
+				return st
+	return {}
 
 
 func _divider(parent: Control) -> void:
@@ -1580,7 +1806,8 @@ func _shelf_group(parent: Control, key: String, caption := "") -> HBoxContainer:
 	cap.name = "Caption"
 	cap.text = (caption if caption != "" else key).to_upper() + "  ›"
 	cap.theme_type_variation = "CaptionLabel"
-	cap.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	cap.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	cap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	v.add_child(cap)
 	parent.add_child(panel)
 	_shelf_groups[key] = panel
@@ -1683,14 +1910,10 @@ func apply_theme() -> void:
 ## Controls whose footprint comes from theme metrics (ribbon button sizes,
 ## panel widths) re-read them here so a theme with a denser scale reflows.
 func _apply_theme_metrics() -> void:
-	for b in _big_buttons:
-		if is_instance_valid(b):
-			(b as Control).custom_minimum_size = Vector2(
-				ThemeService.metric("big_button_w"), ThemeService.metric("big_button_h"))
-	for b in _small_buttons:
-		if is_instance_valid(b):
-			(b as Control).custom_minimum_size = Vector2(
-				ThemeService.metric("small_button_w"), ThemeService.metric("small_button_h"))
+	_apply_tool_labels()
+	for m in _stack_marks:
+		if is_instance_valid(m):
+			(m as Control).queue_redraw()
 	if _ribbon != null:
 		_ribbon.custom_minimum_size.y = ThemeService.metric("ribbon_height")
 		_fit_ribbon_height.call_deferred()
@@ -1727,7 +1950,7 @@ func _open_prefs_dialog() -> void:
 		_prefs_dialog = Window.new()
 		_prefs_dialog.name = "PrefsDialog"
 		_prefs_dialog.title = "Preferences"
-		_prefs_dialog.size = Vector2i(340, 190)
+		_prefs_dialog.size = Vector2i(360, 220)
 		_prefs_dialog.exclusive = false
 		_prefs_dialog.close_requested.connect(
 			func() -> void: _prefs_dialog.hide())
@@ -1773,6 +1996,18 @@ func _open_prefs_dialog() -> void:
 		reloadb.focus_mode = Control.FOCUS_NONE
 		reloadb.pressed.connect(func() -> void: set_theme_id(ThemeService.theme_id))
 		trow.add_child(reloadb)
+		var nrow := HBoxContainer.new()
+		box.add_child(nrow)
+		var nspacer := Control.new()
+		nspacer.custom_minimum_size.x = 64
+		nrow.add_child(nspacer)
+		_tool_names_check = CheckBox.new()
+		_tool_names_check.name = "ToolNamesChk"
+		_tool_names_check.text = "Show tool names in the ribbon"
+		_tool_names_check.focus_mode = Control.FOCUS_NONE
+		_tool_names_check.button_pressed = ThemeService.show_tool_names
+		_tool_names_check.toggled.connect(set_show_tool_names)
+		nrow.add_child(_tool_names_check)
 		var urow := HBoxContainer.new()
 		box.add_child(urow)
 		var ulab := Label.new()
@@ -2881,6 +3116,7 @@ func save_to(path: String) -> bool:
 		return false
 	_save_path = path
 	stack.mark_saved()
+	browser.refresh()   # root component row carries the file name
 	set_status_hint("Saved " + path)
 	return true
 
@@ -2896,6 +3132,7 @@ func open_from(path: String) -> bool:
 	load_document(loaded)
 	_save_path = path
 	stack.mark_saved()
+	browser.refresh()
 	set_status_hint("Opened " + path)
 	return true
 
@@ -5273,6 +5510,12 @@ func _on_stack_changed() -> void:
 
 ## Menu-bar chrome that tracks document state: file name + unsaved mark at
 ## the left, display unit at the right, operation count in the timeline.
+## File stem of the open document ("Untitled" before the first save) — the
+## root component's name in the browser and the menu bar's document label.
+func document_title() -> String:
+	return _save_path.get_file().get_basename() if _save_path != "" else "Untitled"
+
+
 func _refresh_chrome_labels() -> void:
 	if _doc_label != null:
 		var fname := _save_path.get_file() if _save_path != "" else "untitled"
@@ -5305,6 +5548,13 @@ func _refresh_ui() -> void:
 	for tid: String in _tool_buttons:
 		(_tool_buttons[tid] as Button).set_pressed_no_signal(
 			tid == tools.active_id())
+	# A stack's face follows whichever of its tools is active (keyboard
+	# shortcuts and RPC reach variants the face is not showing).
+	var active_stack := _stack_for_tool(tools.active_id())
+	for st: Dictionary in _stacks:
+		if st == active_stack:
+			_stack_show(st, tools.active_id())
+		(st["btn"] as Button).set_pressed_no_signal(st == active_stack)
 	_btn_undo.disabled = not stack.can_undo()
 	_btn_redo.disabled = not stack.can_redo()
 	_status_mode.text = "SKETCH" if in_sketch else "MODEL"

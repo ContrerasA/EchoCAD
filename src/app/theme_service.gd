@@ -34,6 +34,9 @@ static var theme_id := ""
 static var dark := true
 ## M27: model-mode camera projection preference (sketch mode is always ortho).
 static var model_ortho := false
+## Ribbon buttons show their title under the icon (Preferences; off by
+## default so every button is the same icon-only square).
+static var show_tool_names := false
 
 static var _icon_cache := {}
 static var _font_cache := {}
@@ -89,11 +92,12 @@ const FALLBACK_COLORS := {
 const FALLBACK_METRICS := {
 	"radius": 3.0, "radius_small": 2.0, "border_width": 1.0,
 	"menubar_height": 26.0, "ribbon_height": 92.0,
-	"big_button_w": 68.0, "big_button_h": 54.0,
-	"small_button_w": 28.0, "small_button_h": 26.0,
+	"big_button_w": 58.0, "big_button_h": 54.0,
+	"small_button_w": 36.0, "small_button_h": 32.0,
 	"browser_width": 238.0, "row_height": 22.0, "hud_height": 30.0,
 	"timeline_height": 52.0, "timeline_chip_w": 52.0, "status_height": 24.0,
-	"icon_big": 23.0, "icon_small": 20.0, "icon_row": 14.0,
+	"icon_big": 26.0, "icon_small": 24.0, "icon_row": 14.0,
+	"title_height": 28.0,
 }
 
 const FALLBACK_FONT_SIZES := {
@@ -261,10 +265,45 @@ static func _read_json(path: String) -> Dictionary:
 
 
 ## The user theme folder, created on demand so "Open themes folder" in
-## Preferences always has somewhere to go.
+## Preferences always has somewhere to go. It is seeded with a README and an
+## `examples/` copy of every built-in theme to start from (QA §M36 — an empty
+## folder left testers with nothing to copy). `examples/` is not scanned, so
+## the copies only become themes once moved up a level.
 static func user_theme_dir() -> String:
-	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(USER_DIR))
-	return ProjectSettings.globalize_path(USER_DIR)
+	var abs := ProjectSettings.globalize_path(USER_DIR)
+	DirAccess.make_dir_recursive_absolute(abs)
+	seed_user_theme_dir()
+	return abs
+
+
+static func seed_user_theme_dir() -> void:
+	var ex := USER_DIR.path_join("examples")
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(ex))
+	var src := DirAccess.open(BUILTIN_DIR)
+	if src != null:
+		for fname in src.get_files():
+			if not fname.ends_with(".json"):
+				continue
+			var f := FileAccess.open(BUILTIN_DIR.path_join(fname), FileAccess.READ)
+			if f == null:
+				continue
+			var out := FileAccess.open(ex.path_join(fname), FileAccess.WRITE)
+			if out != null:
+				out.store_string(f.get_as_text())
+	var readme := USER_DIR.path_join("README.txt")
+	if not FileAccess.file_exists(readme):
+		var r := FileAccess.open(readme, FileAccess.WRITE)
+		if r != null:
+			r.store_string("EchoCAD user themes\n"
+				+ "===================\n\n"
+				+ "Any *.json theme file in THIS folder appears in Preferences > Theme\n"
+				+ "after pressing Reload (or restarting).\n\n"
+				+ "To start one: copy a file out of examples/ into this folder, rename it,\n"
+				+ "change its \"id\" and \"name\", then edit colours in \"palette\" /\n"
+				+ "\"colors\". A file that keeps a built-in id (e.g. modernist-dark)\n"
+				+ "replaces that built-in theme.\n\n"
+				+ "examples/ is refreshed from the shipped themes every time the folder\n"
+				+ "is opened and is not scanned for themes. Format: docs/THEMING.md.\n")
 
 
 ## Load and resolve a theme by id. Unknown ids fall back to the default theme;
@@ -459,19 +498,29 @@ static func build_theme() -> Theme:
 	t.set_icon("checked_disabled", "CheckBox", _check_icon(true))
 	t.set_icon("unchecked_disabled", "CheckBox", _check_icon(false))
 
-	# Big ribbon button: icon above a small label, fixed footprint.
-	t.add_type("BigToolButton")
-	t.set_type_variation("BigToolButton", "Button")
-	_style_button(t, "BigToolButton", Vector2(4, 4), radius)
-	t.set_constant("icon_max_width", "BigToolButton", int(metric("icon_big")))
-	t.set_constant("h_separation", "BigToolButton", 4)
-	t.set_font_size("font_size", "BigToolButton", font_size("caption"))
-	t.set_font("font", "BigToolButton", font(font_weight("weight_regular")))
-	# Small ribbon button: icon only, tight.
-	t.add_type("SmallToolButton")
-	t.set_type_variation("SmallToolButton", "Button")
-	_style_button(t, "SmallToolButton", Vector2(2, 2), radius)
-	t.set_constant("icon_max_width", "SmallToolButton", int(metric("icon_small")))
+	# Ribbon tool button (M36 QA): ONE look for every ribbon button — a
+	# square icon, optionally with its title underneath when
+	# show_tool_names is on. BigToolButton / SmallToolButton stay as
+	# aliases of it for code and docs that still name them.
+	t.add_type("ToolButton")
+	t.set_type_variation("ToolButton", "Button")
+	_style_button(t, "ToolButton", Vector2(3, 3), radius)
+	t.set_constant("icon_max_width", "ToolButton", int(metric("icon_big")))
+	t.set_constant("h_separation", "ToolButton", 3)
+	t.set_font_size("font_size", "ToolButton", font_size("caption"))
+	t.set_font("font", "ToolButton", font(font_weight("weight_regular")))
+	for alias in ["BigToolButton", "SmallToolButton"]:
+		t.add_type(alias)
+		t.set_type_variation(alias, "ToolButton")
+	# Flyout rows: icon + title, left aligned, inside a stack's popup.
+	t.add_type("FlyoutButton")
+	t.set_type_variation("FlyoutButton", "Button")
+	_style_button(t, "FlyoutButton", Vector2(10, 5), radius_sm)
+	t.set_constant("icon_max_width", "FlyoutButton", int(metric("icon_small")))
+	t.set_constant("h_separation", "FlyoutButton", 8)
+	t.set_font_size("font_size", "FlyoutButton", font_size("small"))
+	t.set_stylebox("panel", "PopupPanel", _flat(col("panel"), col("border_soft"),
+		radius, Vector2(4, 4)))
 	# HUD pill buttons inside the viewport.
 	t.add_type("HudButton")
 	t.set_type_variation("HudButton", "Button")
@@ -654,6 +703,26 @@ static func build_theme() -> Theme:
 	t.set_stylebox("panel", "Window", _fill(col("panel_alt")))
 	t.set_color("title_color", "Window", text)
 	t.set_font_size("title_font_size", "Window", font_size("body"))
+	t.set_font("title_font", "Window", font(font_weight("weight_bold")))
+	# Embedded sub-windows (dialogs, file pickers) draw their title bar from
+	# this stylebox, not from the OS — without it a light theme keeps the
+	# engine's charcoal bar over a light panel (QA §M36).
+	var th := int(metric("title_height"))
+	t.set_constant("title_height", "Window", th)
+	for nm in ["embedded_border", "embedded_unfocused_border"]:
+		var eb := _flat(col("titlebar") if nm == "embedded_border"
+			else col("menubar"), col("border"), radius, Vector2.ZERO)
+		eb.expand_margin_top = th
+		eb.expand_margin_left = 1
+		eb.expand_margin_right = 1
+		eb.expand_margin_bottom = 1
+		eb.shadow_color = Color(0, 0, 0, 0.35 if dark else 0.18)
+		eb.shadow_size = 10
+		t.set_stylebox(nm, "Window", eb)
+	t.set_icon("close", "Window", _close_icon(col("text_dim")))
+	t.set_icon("close_pressed", "Window", _close_icon(col("text_strong")))
+	t.set_constant("close_h_offset", "Window", 22)
+	t.set_constant("close_v_offset", "Window", th - 8)
 	for cls in ["AcceptDialog", "ConfirmationDialog", "FileDialog"]:
 		t.set_stylebox("panel", cls, _fill(col("panel_alt"), 8.0))
 	t.set_stylebox("panel", "PopupMenu", _flat(col("panel"), col("border_soft"),
@@ -720,6 +789,34 @@ static func build_theme() -> Theme:
 	t.set_stylebox("grabber", "HScrollBar", _flat(col("btn_hover"),
 		Color.TRANSPARENT, 2.0, Vector2(0, 0)))
 	return t
+
+
+## Browser "active component" marker: a filled accent dot.
+static func active_dot_icon() -> Texture2D:
+	var s := 12
+	var img := Image.create(s, s, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
+	var c := col("accent")
+	var r := 4.0
+	for y in s:
+		for x in s:
+			var d := Vector2(x + 0.5 - s / 2.0, y + 0.5 - s / 2.0).length()
+			if d <= r:
+				_dot(img, x, y, c)
+			elif d <= r + 1.0:
+				_dot(img, x, y, Color(c.r, c.g, c.b, c.a * (r + 1.0 - d)))
+	return ImageTexture.create_from_image(img)
+
+
+## Title-bar close glyph: a thin × in the given color.
+static func _close_icon(c: Color) -> Texture2D:
+	var s := 14
+	var img := Image.create(s, s, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
+	for i in range(3, s - 3):
+		_dot(img, i, i, c)
+		_dot(img, s - 1 - i, i, c)
+	return ImageTexture.create_from_image(img)
 
 
 ## Checkbox glyphs drawn from theme colors (the design's filled accent box
@@ -792,6 +889,7 @@ static func load_settings() -> void:
 			id = LEGACY_DARK if bool(cfg.get_value("ui", "dark", true)) \
 				else LEGACY_LIGHT
 		model_ortho = bool(cfg.get_value("view", "ortho", false))
+		show_tool_names = bool(cfg.get_value("ui", "show_tool_names", false))
 	load_theme(id if id != "" else DEFAULT_THEME)
 
 
@@ -801,4 +899,5 @@ static func save_settings() -> void:
 	cfg.set_value("ui", "theme", theme_id)
 	cfg.set_value("ui", "dark", dark)
 	cfg.set_value("view", "ortho", model_ortho)
+	cfg.set_value("ui", "show_tool_names", show_tool_names)
 	cfg.save(SETTINGS_PATH)

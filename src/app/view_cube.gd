@@ -1,17 +1,33 @@
 class_name ViewCube
 extends SubViewportContainer
-## Fusion-style view cube: a small corner viewport with a cube whose
-## orientation mirrors the main camera; clicking a face snaps the main
-## camera to that view. Face detection is math (ray vs box), no physics.
+## Fusion-style view cube: a corner viewport with a labelled cube (FRONT /
+## TOP / RIGHT …) whose orientation mirrors the main camera, plus an X/Y/Z
+## axis triad under it; clicking a face snaps the main camera to that view.
+## Face detection is math (ray vs box), no physics.
 
 signal face_picked(normal: Vector3, up: Vector3)
 
-const SIZE_PX := 96
-const CUBE_HALF := 25.0
-const CAM_DIST := 120.0
+const SIZE_PX := 150
+const CUBE_HALF := 22.0
+const CAM_DIST := 118.0
+const AXIS_LEN := 16.0
+
+## Face normal -> [label, on-screen up]. World is Z-up; the home view looks
+## from -Y, so -Y is FRONT and +X is RIGHT (matches Fusion's default cube).
+const FACES := {
+	Vector3(0, -1, 0): ["FRONT", Vector3(0, 0, 1)],
+	Vector3(0, 1, 0): ["BACK", Vector3(0, 0, 1)],
+	Vector3(1, 0, 0): ["RIGHT", Vector3(0, 0, 1)],
+	Vector3(-1, 0, 0): ["LEFT", Vector3(0, 0, 1)],
+	Vector3(0, 0, 1): ["TOP", Vector3(0, 1, 0)],
+	Vector3(0, 0, -1): ["BOTTOM", Vector3(0, -1, 0)],
+}
 
 var _cube: MeshInstance3D = null
 var _cam: Camera3D = null
+var _labels: Array = []        # Label3D per face
+var _axes: Array = []          # [{mesh: MeshInstance3D, label: Label3D, role}]
+var _edges: MeshInstance3D = null
 
 ## Orientation to adopt in `_ready`. The rig emits `moved` from its own
 ## `_ready`, which runs before this widget exists, so the first sync would
@@ -21,10 +37,22 @@ var _cam: Camera3D = null
 var rotation_hint := Vector3.ZERO
 
 
-## Re-read the theme's body color (M36).
+## Re-read the theme's body / edge / axis colors (M36).
 func apply_theme() -> void:
 	if _cube != null and _cube.material_override is StandardMaterial3D:
-		(_cube.material_override as StandardMaterial3D).albedo_color = 			ThemeService.col("body")
+		(_cube.material_override as StandardMaterial3D).albedo_color = \
+			ThemeService.col("body")
+	for l in _labels:
+		(l as Label3D).modulate = ThemeService.col("body_edge")
+		(l as Label3D).font = ThemeService.font(ThemeService.font_weight("weight_bold"))
+	if _edges != null and _edges.material_override is StandardMaterial3D:
+		(_edges.material_override as StandardMaterial3D).albedo_color = \
+			ThemeService.col("body_edge")
+	for a: Dictionary in _axes:
+		var c := ThemeService.col(String(a["role"]))
+		((a["mesh"] as MeshInstance3D).material_override as StandardMaterial3D) \
+			.albedo_color = c
+		(a["label"] as Label3D).modulate = c
 
 
 func _ready() -> void:
@@ -34,10 +62,21 @@ func _ready() -> void:
 	vp.name = "VP"
 	vp.transparent_bg = true
 	vp.size = Vector2i(SIZE_PX, SIZE_PX)
+	vp.msaa_3d = Viewport.MSAA_4X
 	# The cube lives in a world of its OWN. Sharing the main World3D would
 	# cross-contaminate both ways: the cube would render as a stray box at the
 	# model origin, and every body would show up inside the cube's corner.
 	vp.own_world_3d = true
+	# Flat ambient fill so the faces turned from the key light still read
+	# (and their labels with them) instead of going near-black.
+	var env := Environment.new()
+	env.background_mode = Environment.BG_CLEAR_COLOR
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	env.ambient_light_color = Color.WHITE
+	env.ambient_light_energy = 0.55
+	var w3 := World3D.new()
+	w3.environment = env
+	vp.world_3d = w3
 	add_child(vp)
 	var root := Node3D.new()
 	vp.add_child(root)
@@ -50,6 +89,9 @@ func _ready() -> void:
 	mat.albedo_color = ThemeService.col("body")
 	_cube.material_override = mat
 	root.add_child(_cube)
+	_build_edges(root)
+	_build_labels(root)
+	_build_axes(root)
 	var light := DirectionalLight3D.new()
 	light.rotation = Vector3(-0.8, 0.5, 0)
 	root.add_child(light)
@@ -57,11 +99,91 @@ func _ready() -> void:
 	_cam.position = Vector3(0, 0, CAM_DIST)
 	_cam.near = 1.0
 	_cam.far = 500.0
+	_cam.fov = 42.0
 	root.add_child(_cam)
 	# Seed a defined orientation. The owner overwrites this with the rig's real
 	# rotation, but the cube must never sit in an unset pose waiting for the
 	# first orbit — that is exactly the bug this guards against.
 	sync_orientation(rotation_hint)
+
+
+## Hairline cube edges so the faces read as a box even where two lit faces
+## share a tone.
+func _build_edges(root: Node3D) -> void:
+	var im := ImmediateMesh.new()
+	im.surface_begin(Mesh.PRIMITIVE_LINES)
+	var h := CUBE_HALF
+	var xs: Array[float] = [-h, h, h, -h]
+	var ys: Array[float] = [-h, -h, h, h]
+	for z: float in [-h, h]:
+		for i in 4:
+			im.surface_add_vertex(Vector3(xs[i], ys[i], z))
+			im.surface_add_vertex(Vector3(xs[(i + 1) % 4], ys[(i + 1) % 4], z))
+	for i in 4:
+		im.surface_add_vertex(Vector3(xs[i], ys[i], -h))
+		im.surface_add_vertex(Vector3(xs[i], ys[i], h))
+	im.surface_end()
+	_edges = MeshInstance3D.new()
+	_edges.mesh = im
+	var m := StandardMaterial3D.new()
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	m.albedo_color = ThemeService.col("body_edge")
+	_edges.material_override = m
+	root.add_child(_edges)
+
+
+func _build_labels(root: Node3D) -> void:
+	for n: Vector3 in FACES:
+		var up: Vector3 = FACES[n][1]
+		var l := Label3D.new()
+		l.text = String(FACES[n][0])
+		l.font = ThemeService.font(ThemeService.font_weight("weight_bold"))
+		l.font_size = 64
+		l.pixel_size = 0.14
+		l.modulate = ThemeService.col("body_edge")
+		l.alpha_cut = Label3D.ALPHA_CUT_OPAQUE_PREPASS
+		l.double_sided = false
+		l.shaded = false
+		# Text faces +Z of its own basis: z = outward normal, y = on-screen up.
+		var x := up.cross(n)
+		l.transform = Transform3D(Basis(x, up, n), n * (CUBE_HALF + 0.3))
+		root.add_child(l)
+		_labels.append(l)
+
+
+## X/Y/Z triad from the cube's -X,-Y,-Z corner, in the viewport axis colors.
+func _build_axes(root: Node3D) -> void:
+	# Off the cube's near-bottom corner, so the triad reads beside the cube
+	# rather than under its silhouette.
+	var origin := Vector3(-CUBE_HALF * 1.5, -CUBE_HALF * 1.5, -CUBE_HALF * 1.25)
+	var defs := [[Vector3.RIGHT, "X", "axis_x"], [Vector3(0, 1, 0), "Y", "axis_y"],
+		[Vector3(0, 0, 1), "Z", "axis_z"]]
+	for d in defs:
+		var dir: Vector3 = d[0]
+		var im := ImmediateMesh.new()
+		im.surface_begin(Mesh.PRIMITIVE_LINES)
+		im.surface_add_vertex(origin)
+		im.surface_add_vertex(origin + dir * AXIS_LEN)
+		im.surface_end()
+		var mi := MeshInstance3D.new()
+		mi.mesh = im
+		var m := StandardMaterial3D.new()
+		m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		m.albedo_color = ThemeService.col(String(d[2]))
+		mi.material_override = m
+		root.add_child(mi)
+		var l := Label3D.new()
+		l.text = String(d[1])
+		l.font = ThemeService.font(ThemeService.font_weight("weight_bold"))
+		l.font_size = 64
+		l.pixel_size = 0.16
+		l.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+		l.no_depth_test = true
+		l.shaded = false
+		l.modulate = ThemeService.col(String(d[2]))
+		l.position = origin + dir * (AXIS_LEN + 5.0)
+		root.add_child(l)
+		_axes.append({"mesh": mi, "label": l, "role": d[2]})
 
 
 ## Mirror the main rig's orientation: the cube camera orbits the cube exactly

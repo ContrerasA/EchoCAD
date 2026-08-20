@@ -20,14 +20,17 @@ ThemeService.font(600)              # Font at a variable-font weight
 | Location | Purpose |
 | --- | --- |
 | `res://themes/*.json` | Built-in themes shipped with the app. |
-| `user://themes/*.json` | Your themes. On Windows that is `%APPDATA%\Godot\app_userdata\EchoCAD\themes\`; *Preferences → Open themes folder* opens it. |
+| `user://themes/*.json` | Your themes. On Windows that is `%APPDATA%\Godot\app_userdata\EchoCAD\themes\`; *Preferences → Open themes folder* opens it. The folder is seeded with a `README.txt` and an `examples/` copy of every built-in theme (refreshed on each open; `examples/` itself is **not** scanned — copy a file up one level to use it). |
 
 Built-in: `modernist-dark` (default), `modernist-light`, `classic-dark`.
 A user file whose `id` matches a built-in **shadows** it — copy
 `themes/modernist-dark.json` next to your user themes, edit a few swatches,
 keep the id, and the app picks up your version.
 
-The selected theme id is remembered in `user://settings.cfg` (`[ui] theme`).
+The selected theme id is remembered in `user://settings.cfg` (`[ui] theme`);
+the ribbon's *Show tool names* preference lives beside it
+(`[ui] show_tool_names`, default off — every ribbon button is an icon square
+until it is on).
 
 ## File format
 
@@ -96,7 +99,9 @@ Rules:
 `radius`, `radius_small`, `border_width`, `menubar_height`, `ribbon_height`,
 `big_button_w/h`, `small_button_w/h`, `browser_width`, `row_height`,
 `hud_height`, `timeline_height`, `timeline_chip_w`, `status_height`,
-`icon_big`, `icon_small`, `icon_row` — all in pixels.
+`icon_big`, `icon_small`, `icon_row`, `title_height` (embedded dialog title
+bar) — all in pixels. `small_button_w/h` is the icon-only ribbon square,
+`big_button_w/h` the footprint once *Show tool names* is on.
 
 ## Type variations
 
@@ -104,11 +109,15 @@ Rules:
 changes them through the tokens above, code opts in with
 `control.theme_type_variation = "..."`:
 
-`BigToolButton`, `SmallToolButton`, `HudButton`, `PrimaryButton`,
+`ToolButton` (every ribbon button; `BigToolButton` / `SmallToolButton`
+are aliases of it), `FlyoutButton` (rows in a stack's flyout), `HudButton`, `PrimaryButton`,
 `TimelineChip`, `MenuBarButton`, `CaptionLabel`, `HeaderLabel`,
 `StatusLabel`, `StatusKeyLabel`, `DimLabel`, `BrandLabel`, `Ribbon`,
 `MenuBarPanel`, `SidePanel`, `PanelHeader`, `HudPanel`, `TimelinePanel`,
-`StatusPanel`, `Divider`.
+`StatusPanel`, `Divider`. `Window` additionally carries
+`embedded_border` / `embedded_unfocused_border` (title bar in `titlebar` /
+`menubar`), a themed close glyph and `title_height`, so embedded dialogs
+match the appearance.
 
 ## Fonts
 

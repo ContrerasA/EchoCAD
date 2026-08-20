@@ -71,6 +71,10 @@ fixture sketch quickly).
   `action.load_fixture {path}`, `action.set_theme {theme}` (M36)
 - `query.theme` — active theme id, appearance, catalog of available themes,
   user theme dir (M36)
+- `query.control {name}` — rect (main-window pixels, even inside embedded
+  popups), visible, disabled; `flyout_owner` names the ribbon stack button
+  whose flyout holds the control (`client.click_control` right-clicks it
+  first). `action.set_pref` also takes `tool_names` (ribbon titles).
 
 **app.**
 - `app.screenshot {path?}` — writes PNG, or returns base64 when no path
