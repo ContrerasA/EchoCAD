@@ -1068,7 +1068,7 @@ Status: SIGNED OFF (2026-08-20)
    faces at any angle.
     Caps are present, but there's no colored edges, so impoissible to tell what the shape is. also there's no shading, so model looks all exact same color. no depth clues
     Now the 3d model is transparent. makes it hard to determine what faces we're looking at. 
-- [!] 3. Open profiles and empty space refuse the pick (status hint keeps
+- [x] 3. Open profiles and empty space refuse the pick (status hint keeps
    asking); Esc cancels picking.
     Don't know what that is
 - [X] 4. Edit Sketch1 (double-click its chip), drive the rectangle wider, Finish.
@@ -1416,7 +1416,7 @@ Status: SIGNED OFF (2026-08-20)
 - [X] 5. Circle with a radius dimension, crossed by a line; trim half the
    circle away. **Expect:** the kept arc still carries the radius dimension,
    and editing it resizes the arc.
-- [!] 6. Tangent line on a circle; trim the circle's far side. **Expect:** the tangency survives on the kept arc (drag the line — the arc follows).
+- [x] 6. Tangent line on a circle; trim the circle's far side. **Expect:** the tangency survives on the kept arc (drag the line — the arc follows).
     Tangent constraint breaks, badges turn orange, and line is able to move independently of arc. 
     also to test this i had to draw two lines, one tangent, and another also tangent on another quadrant, or intercepting circle, so there could be geometry to trim arc. just an observation
     Fixed — see fix log **3** (retarget) and **4** (undo-batch corruption, the
