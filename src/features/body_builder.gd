@@ -122,9 +122,11 @@ static func build(doc: CadDocument, host: Node) -> Array:
 	for f in doc.live_features():
 		if f is EdgeTreatFeature:
 			# M35: rebuild a SINGLE-plain-extrude body's mesh with its edge
-			# treatment baked in. Boolean/multi-part bodies and second
-			# treatments are skipped (the feature's creation path refuses
-			# them with a hint; this guard keeps replay safe).
+			# treatments baked in — ALL live treatments on the body combine
+			# into one rebuild, so a fillet and a chamfer can stack on
+			# different edges (QA §M35.3). Boolean/multi-part bodies are
+			# skipped (the feature's creation path refuses them with a
+			# hint; this guard keeps replay safe).
 			var et := f as EdgeTreatFeature
 			if treated.has(et.body):
 				continue
@@ -135,10 +137,16 @@ static func build(doc: CadDocument, host: Node) -> Array:
 				var root_ef := doc.feature_by_id(et.body) as ExtrudeFeature
 				if root_ef == null:
 					continue
-				var tm := et.build_treated_mesh(doc, root_ef)
+				var ets: Array = []
+				for g in doc.live_features():
+					if g is EdgeTreatFeature \
+							and (g as EdgeTreatFeature).body == et.body:
+						ets.append(g)
+				var tm := EdgeTreatFeature.build_combined(doc, root_ef, ets)
 				if tm != null:
 					bt["mesh"] = tm
-					(bt["feature_ids"] as Array).append(et.id)
+					for g in ets:
+						(bt["feature_ids"] as Array).append((g as Feature).id)
 					treated[et.body] = true
 		elif f is TransformFeature:
 			var tf := f as TransformFeature

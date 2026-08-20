@@ -195,7 +195,7 @@ Status: PENDING sign-off
 - [X] 2. Extrude a box (with a hole in it for interest). Export STL.
    **Expect:** file dialog defaults to .stl with an "ASCII STL" checkbox
    (unticked); saving reports the triangle count in the status bar.
-- [!] 3. Open the exported file in an external viewer/slicer (PrusaSlicer,
+- [~] 3. Open the exported file in an external viewer/slicer (PrusaSlicer,
    Cura, Windows 3D Viewer...). **Expect:** the part loads at the right
    SIZE in mm (a 40 x 30 x 10 sketch box measures 40 x 30 x 10 mm), is
    watertight (no slicer repair warnings), and shows no inverted faces.
@@ -777,19 +777,19 @@ Status: PENDING sign-off
    following the curve; no twisting.
 - [~] 3. Try a path with a hairpin tighter than the profile. **Expect:**
    refused with the status message about self-intersection.
-- [!] 4. Profile with a HOLE (circle inside a rect): sweep. **Expect:** the
+- [X] 4. Profile with a HOLE (circle inside a rect): sweep. **Expect:** the
    hole runs the length (check by orbiting/looking down the bore).
   Caps aren't drawn when we do this
   See M34-1
-- [!] 5. **Loft**: circle on XY, bigger/smaller circle on an offset plane;
+- [~] 5. **Loft**: circle on XY, bigger/smaller circle on an offset plane;
    click both, OK. **Expect:** a smooth frustum; caps closed. Try a
    square→circle loft: walls stay sane (no bowtie twist).
     Loft should allow me to select an axis to loft around. right now it wants two bodies instead
 - [~] 6. Loft/sweep with Cut against an existing body. **Expect:** carves
    like extrude/revolve cuts do.
-- [ ] 7. Chips: suppress/rollback/delete both features; edit the profile
+- [~] 7. Chips: suppress/rollback/delete both features; edit the profile
    sketch afterward. **Expect:** replay updates the solids.
-- [ ] 8. Export a swept part to STL and slice it. **Expect:** watertight.
+- [~] 8. Export a swept part to STL and slice it. **Expect:** watertight.
 
 ### §M34 fix log
 
@@ -853,25 +853,31 @@ Status: PENDING sign-off
 
 Status: PENDING sign-off
 
-- [!] 1. Extrude a rectangle; select the body; **Fillet Edges**, size,
+- [X] 1. Extrude a rectangle; select the body; **Fillet Edges**, size,
    Side corners only. **Expect:** all four vertical edges round; the
    silhouette reads clean; a Fillet chip lands on the timeline.
    	Only front 8 edges have fillet, rear 4 don't. however this tool isn't supposed to fillet all edges, only the edges that we select. it should be select tool, then select all edges to fillet, adjust radius if needed, then accept. same for chamfer
    	Update: Unable to individually select front edges of a the body. it instead wants to only select the entire rectangular loop. filleted side edges worked as expected
-- [ ] 2. Double-click the chip, change the size. **Expect:** re-rounds
+- [X] 2. Double-click the chip, change the size. **Expect:** re-rounds
    parametrically; suppress restores the sharp body.
-- [ ] 3. **Chamfer Edges** with Top rim on a fresh box. **Expect:** a flat
+- [!] 3. **Chamfer Edges** with Top rim on a fresh box. **Expect:** a flat
    45° band around the top; Bottom rim ticks the base too.
-- [ ] 4. Fillet Top rim on a CYLINDER. **Expect:** a smooth donut-edge cap.
-- [ ] 5. Edit the source sketch (resize the rect). **Expect:** treatment
+    Does work, but can't chamfer and fillet edges on same body at same time (different edges)
+- [!] 4. Fillet Top rim on a CYLINDER. **Expect:** a smooth donut-edge cap.
+    Makes me select every edge on the cylinder instead of just the chain. for curved objects, it makes sense to select a section / chain of edges that make up a curve. like in illustrator
+- [X] 5. Edit the source sketch (resize the rect). **Expect:** treatment
    replays on the new shape.
-- [ ] 6. Oversize (radius > half an edge / taller than the body).
+- [X] 6. Oversize (radius > half an edge / taller than the body).
    **Expect:** refused with a status hint, nothing added.
-- [ ] 7. Try it on a body with a Cut, on a revolve, on a swept body.
+    No hint given if editing from timeline chip
+- [~] 7. Try it on a body with a Cut, on a revolve, on a swept body.
    **Expect:** refused with the prismatic-scope hint (documented — general
    mesh fillets are the B-rep-kernel tier tracked in the backlog).
-- [ ] 8. Fillet a real bracket (corners + top rim), export STL, slice.
+- [~] 8. Fillet a real bracket (corners + top rim), export STL, slice.
    **Expect:** watertight, printable.
+
+New Issues:
+filleting or chamfering two adjacent edges on a cube makes the other joining edges have an odd meeting point. in fusion this would be fixed by making it blend in at a 45. This should be thought of and fixed for all shapes / models. do some research and determine the correct way to fix this
 
 ### §M35 fix log
 
@@ -904,6 +910,27 @@ Status: PENDING sign-off
   prismatic-tier limits: a rim treatment stops flat at an untreated
   neighbor (no Fusion-style corner ball), and rims across lateral corner
   ARCS stay sharp. Covered by `tests/m36_qa_fixes.gd` (C).
+- Item 3 (2026-08-19): fillet + chamfer now STACK on the same body. The
+  one-treatment-per-body guard is gone: every live treatment on a body
+  combines into a single rebuild, each picked corner/segment carrying its
+  own {kind, size}. Edges an existing treatment covers are not offered
+  again in a later pick (and re-treating one via RPC refuses). One honest
+  limit: two DIFFERENT treatments (or two sizes) meeting at the same rim
+  corner refuse with a hint — a chamfer cone and a fillet round share no
+  joint curve at the prismatic tier; treat both corner edges alike or
+  leave one corner edge untreated. Covered by `tests/m37_qa_fixes.gd` (A).
+- Item 4 (2026-08-19): Illustrator-style chain select. Rim segments that
+  meet at a SMOOTH vertex (turn under 25° — the same threshold that
+  decides a vertex is not a "corner") now share a chain: hovering any
+  segment of a cylinder's rim highlights the whole rim, and one click
+  selects/deselects it as one. A box rim still picks edge-by-edge (its
+  corners are sharp), and a rounded-rect rim chains straights + arcs into
+  one loop. Covered by `tests/m37_qa_fixes.gd` (B, D).
+- Item 6 (2026-08-19): the timeline-chip size edit now VALIDATES before
+  committing — an oversize entry (or one that breaks the combined build)
+  shows the specific refusal in the status bar and keeps the dialog open;
+  previously the bad size was committed and replay silently kept the
+  untreated body. Covered by `tests/m37_qa_fixes.gd` (C).
 
 ### Additional
 commit changes

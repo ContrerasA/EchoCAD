@@ -2503,10 +2503,32 @@ func _commit_edge_treat() -> void:
 	if not r["ok"] or float(r["mm"]) <= 0.0:
 		set_status_hint("Fillet/Chamfer: enter a size")
 		return
+	if _treat_edit_fid == "":
+		_treat_dialog.hide()
+		return
+	# Oversize guard (QA §M35.6): validate the edited size against the
+	# combined build BEFORE committing — otherwise replay silently keeps
+	# the untreated body and the user never learns why.
+	var cur := doc.feature_by_id(_treat_edit_fid) as EdgeTreatFeature
+	var root := doc.feature_by_id(cur.body) as ExtrudeFeature \
+		if cur != null else null
+	if cur != null and root != null:
+		var trial := EdgeTreatFeature.from_dict(cur.to_dict())
+		trial.size_mm = float(r["mm"])
+		var ets: Array = []
+		for f in doc.live_features():
+			if f is EdgeTreatFeature \
+					and (f as EdgeTreatFeature).body == cur.body:
+				ets.append(trial if f == cur else f)
+		if EdgeTreatFeature.build_combined(doc, root, ets) == null:
+			set_status_hint("Fillet/Chamfer: "
+				+ (EdgeTreatFeature.build_error
+					if EdgeTreatFeature.build_error != ""
+					else "size too large for the body"))
+			return   # dialog stays open for another try
 	_treat_dialog.hide()
-	if _treat_edit_fid != "":
-		stack.push_no_merge(CmdSetFeatureFlag.new(_treat_edit_fid, "size_mm",
-			float(r["mm"])))
+	stack.push_no_merge(CmdSetFeatureFlag.new(_treat_edit_fid, "size_mm",
+		float(r["mm"])))
 
 
 ## --- the edge pick (create flow) ---------------------------------------------
@@ -2525,9 +2547,20 @@ func _start_edge_treat_pick(p_kind: String) -> void:
 	var root := _edge_treat_root(_treat_body)
 	if root == null:
 		return
-	_treat_pick_edges = EdgeTreatFeature.pickable_edges(doc, root)
-	if _treat_pick_edges.is_empty():
+	var all_edges := EdgeTreatFeature.pickable_edges(doc, root)
+	if all_edges.is_empty():
 		set_status_hint("Fillet/Chamfer: no treatable edges on this body")
+		return
+	# Edges an existing treatment already covers are not offered again —
+	# stacked features may share a body but never an edge (QA §M35.3).
+	var used := _edge_treat_used_keys(_treat_body, all_edges)
+	_treat_pick_edges = []
+	for e: Dictionary in all_edges:
+		if not used.has(String(e["key"])):
+			_treat_pick_edges.append(e)
+	if _treat_pick_edges.is_empty():
+		set_status_hint("Fillet/Chamfer: every edge on this body is already "
+			+ "treated — edit those features instead")
 		return
 	_treat_selected = {}
 	picking_treat_edges = true
@@ -2630,6 +2663,50 @@ func _end_edge_treat_pick() -> void:
 	_refresh_ui()
 
 
+## Edge keys already covered by live treatments on `body_id`, expanded
+## against the full pickable list (empty corner/segment lists mean "all").
+func _edge_treat_used_keys(body_id: String, all_edges: Array) -> Dictionary:
+	var corner_all: Array = []
+	var seg_all: Array = []
+	for e: Dictionary in all_edges:
+		var ks := String(e["key"])
+		if ks.begins_with("corner:"):
+			corner_all.append(int(ks.substr(7)))
+		elif ks.begins_with("top:"):
+			seg_all.append(int(ks.substr(4)))
+	var used := {}
+	for f in doc.live_features():
+		var et := f as EdgeTreatFeature
+		if et == null or et.body != body_id:
+			continue
+		if et.lateral:
+			for c in (et.corners if not et.corners.is_empty() else corner_all):
+				used["corner:%d" % int(c)] = true
+		if et.top:
+			for s in (et.top_segs if not et.top_segs.is_empty() else seg_all):
+				used["top:%d" % int(s)] = true
+		if et.bottom:
+			for s in (et.bottom_segs if not et.bottom_segs.is_empty()
+					else seg_all):
+				used["bottom:%d" % int(s)] = true
+	return used
+
+
+## Every pick-list key sharing the clicked edge's chain — smooth rim runs
+## (a cylinder's rim) toggle as one (QA §M35.4).
+func _treat_chain_keys(key: String) -> Array:
+	var chain := key
+	for e: Dictionary in _treat_pick_edges:
+		if String(e["key"]) == key:
+			chain = String(e.get("chain", key))
+			break
+	var out: Array = []
+	for e: Dictionary in _treat_pick_edges:
+		if String(e.get("chain", e["key"])) == chain:
+			out.append(String(e["key"]))
+	return out
+
+
 ## The treat edge (by key) nearest the ray, within a few screen pixels of
 ## it. "" on a miss.
 func _treat_edge_under_ray(origin: Vector3, dir: Vector3) -> String:
@@ -2658,10 +2735,6 @@ func _edge_treat_root(body_id: String) -> ExtrudeFeature:
 		return null
 	var root_part := root.solid_part(doc)
 	for f in doc.live_features():
-		if f is EdgeTreatFeature and (f as EdgeTreatFeature).body == body_id:
-			set_status_hint("Fillet/Chamfer: this body is already treated "
-				+ "(edit that feature instead)")
-			return null
 		var sf2 := f as SolidFeature
 		if sf2 != null and sf2 != root \
 				and sf2.operation != SolidFeature.OP_NEW_BODY \
@@ -2689,6 +2762,26 @@ func edge_treat(body_id: String, p_kind: String, size: float,
 	if not (lat or top or bot):
 		set_status_hint("Fillet/Chamfer: pick at least one edge set")
 		return ""
+	# Overlap guard: stacked treatments may share the body, never an edge.
+	var all_edges := EdgeTreatFeature.pickable_edges(doc, root)
+	var used := _edge_treat_used_keys(body_id, all_edges)
+	var req: Array = []
+	for e: Dictionary in all_edges:
+		var ks := String(e["key"])
+		if ks.begins_with("corner:") and lat and (corner_list.is_empty()
+				or corner_list.has(int(ks.substr(7)))):
+			req.append(ks)
+		elif ks.begins_with("top:") and top and (top_list.is_empty()
+				or top_list.has(int(ks.substr(4)))):
+			req.append(ks)
+		elif ks.begins_with("bottom:") and bot and (bot_list.is_empty()
+				or bot_list.has(int(ks.substr(7)))):
+			req.append(ks)
+	for rk in req:
+		if used.has(rk):
+			set_status_hint("Fillet/Chamfer: some of those edges are "
+				+ "already treated — edit that feature or pick other edges")
+			return ""
 	var et := EdgeTreatFeature.new()
 	et.id = doc.next_feature_id()
 	et.name = doc.auto_name("Fillet"
@@ -2705,9 +2798,18 @@ func edge_treat(body_id: String, p_kind: String, size: float,
 		et.top_segs.append(int(s))
 	for s in bot_list:
 		et.bottom_segs.append(int(s))
-	if et.build_treated_mesh(doc, root) == null:
-		set_status_hint("Fillet/Chamfer failed: size too large for the "
-			+ "body, or the profile has holes")
+	# Validate the COMBINED result (this treatment plus any existing ones on
+	# the body) so a stacking conflict refuses before touching the timeline.
+	var ets: Array = []
+	for f in doc.live_features():
+		if f is EdgeTreatFeature and (f as EdgeTreatFeature).body == body_id:
+			ets.append(f)
+	ets.append(et)
+	if EdgeTreatFeature.build_combined(doc, root, ets) == null:
+		set_status_hint("Fillet/Chamfer failed: "
+			+ (EdgeTreatFeature.build_error if EdgeTreatFeature.build_error
+				!= "" else "size too large for the body, or the profile "
+				+ "has holes"))
 		return ""
 	stack.push_no_merge(CmdAddFeature.new(et))
 	return et.id
@@ -3991,10 +4093,19 @@ func _on_viewport_input(event: InputEvent) -> void:
 			var rayt := rig.pixel_ray(mb.position)
 			var tkey := _treat_edge_under_ray(rayt[0], rayt[1])
 			if tkey != "":
-				if _treat_selected.has(tkey):
-					_treat_selected.erase(tkey)
-				else:
-					_treat_selected[tkey] = true
+				# A click toggles the whole smooth chain (one segment on a
+				# box; the full rim on a cylinder — QA §M35.4).
+				var ckeys := _treat_chain_keys(tkey)
+				var all_sel := true
+				for ck in ckeys:
+					if not _treat_selected.has(ck):
+						all_sel = false
+						break
+				for ck in ckeys:
+					if all_sel:
+						_treat_selected.erase(ck)
+					else:
+						_treat_selected[ck] = true
 				world.show_treat_edges(_treat_pick_edges, _treat_selected,
 					_axis_hover_width_mm())
 				_update_treat_pick_count()
@@ -4629,8 +4740,9 @@ func _refresh_ui() -> void:
 	elif picking_treat_edges:
 		_status_hint.text = (("Fillet" if _treat_kind
 			== EdgeTreatFeature.KIND_FILLET else "Chamfer")
-			+ ": click edges to select — rims select as a loop, click again "
-			+ "to deselect — then Apply (Esc to cancel)")
+			+ ": click edges to select — smooth runs (a cylinder rim) select "
+			+ "as one chain, click again to deselect — then Apply "
+			+ "(Esc to cancel)")
 	elif picking_plane:
 		_status_hint.text = "Select a plane or a flat body face (Esc to cancel)"
 	elif picking_offset_base:

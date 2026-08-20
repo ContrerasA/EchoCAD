@@ -1298,13 +1298,19 @@ func show_treat_edges(edges: Array, selected: Dictionary,
 				e["b"] as Vector3, width_mm, COLOR_TREAT_SELECTED))
 
 
-## Thick highlight over the edge (or whole rim — every edge sharing `key`)
-## the click would toggle. "" clears.
+## Thick highlight over the edges the click would toggle — the hovered
+## edge's whole smooth CHAIN (one segment on a box, the full rim on a
+## cylinder — QA §M35.4). "" clears.
 func set_treat_edge_hover(key: String, edges: Array, width_mm: float) -> void:
 	if key == "":
 		clear_treat_edge_hover()
 		return
-	var k := "%s|%.3f" % [key, width_mm]
+	var chain := key
+	for e: Dictionary in edges:
+		if String(e["key"]) == key:
+			chain = String(e.get("chain", key))
+			break
+	var k := "%s|%.3f" % [chain, width_mm]
 	if k == _treat_hover_key and _treat_hover_root != null:
 		return
 	clear_treat_edge_hover()
@@ -1312,7 +1318,7 @@ func set_treat_edge_hover(key: String, edges: Array, width_mm: float) -> void:
 	_treat_hover_root.name = "TreatEdgeHover"
 	add_child(_treat_hover_root)
 	for e: Dictionary in edges:
-		if String(e["key"]) == key:
+		if String(e.get("chain", e["key"])) == chain:
 			_treat_hover_root.add_child(_edge_tube(e["a"] as Vector3,
 				e["b"] as Vector3, width_mm, COLOR_TREAT_HOVER))
 	_treat_hover_key = k

@@ -33,8 +33,13 @@ var bottom_segs: Array = []
 const FILLET_STEPS := 10
 const CORNER_ARC_STEPS := 16
 ## Corners flatter than this are left alone (a tessellated circle's
-## vertices are not "corners").
+## vertices are not "corners"). The same threshold decides which rim
+## segments chain together for one-click selection (QA §M35.4).
 const CORNER_MIN_DEG := 25.0
+
+## Why the last build_combined / build refused, for the status bar. Cleared
+## at the start of every build_combined call.
+static var build_error := ""
 
 
 func kind() -> String:
@@ -107,6 +112,18 @@ static func treat_corners(poly: PackedVector2Array, p_treat: String,
 ## picked rim segments landed on.
 static func treat_corners_mapped(poly: PackedVector2Array, p_treat: String,
 		size: float, only := {}) -> Dictionary:
+	var cmap := {}
+	for i in poly.size():
+		if only.is_empty() or only.has(i):
+			cmap[i] = {"treat": p_treat, "size": size}
+	return treat_corners_multi(poly, cmap)
+
+
+## Per-corner variant: `cmap` maps a polygon index to {treat, size}, so a
+## fillet and a chamfer can live on the same profile (QA §M35.3 — stacked
+## treatments). Same contract as treat_corners_mapped otherwise.
+static func treat_corners_multi(poly: PackedVector2Array,
+		cmap: Dictionary) -> Dictionary:
 	var n := poly.size()
 	var out := PackedVector2Array()
 	var seg: Array = []
@@ -114,11 +131,13 @@ static func treat_corners_mapped(poly: PackedVector2Array, p_treat: String,
 		var prev := poly[(i - 1 + n) % n]
 		var cur := poly[i]
 		var next := poly[(i + 1) % n]
-		if not corner_eligible(prev, cur, next) \
-				or (not only.is_empty() and not only.has(i)):
+		if not corner_eligible(prev, cur, next) or not cmap.has(i):
 			out.append(cur)
 			seg.append(i)
 			continue
+		var prm: Dictionary = cmap[i]
+		var p_treat := String(prm["treat"])
+		var size := float(prm["size"])
 		var u := (prev - cur).normalized()
 		var w := (next - cur).normalized()
 		var theta := acos(clampf(u.dot(w), -1.0, 1.0))
@@ -176,13 +195,42 @@ static func pickable_edges(doc: CadDocument, ef: ExtrudeFeature) -> Array:
 				poly[(i + 1) % n]):
 			continue
 		var base: Vector3 = xf * Vector3(poly[i].x, poly[i].y, 0.0)
-		out.append({"key": "corner:%d" % i, "a": base, "b": base + off})
+		out.append({"key": "corner:%d" % i, "chain": "corner:%d" % i,
+			"a": base, "b": base + off})
+	# Rim segments joined at a SMOOTH vertex (turn under CORNER_MIN_DEG)
+	# share a chain id, so one click picks a whole tangent-continuous run —
+	# a cylinder's rim, the arc of a rounded corner (QA §M35.4).
+	var chain_of: Array = []
+	chain_of.resize(n)
+	var smooth: Array = []
+	for i in n:
+		var u := (poly[(i - 1 + n) % n] - poly[i]).normalized()
+		var w := (poly[(i + 1) % n] - poly[i]).normalized()
+		var theta := acos(clampf(u.dot(w), -1.0, 1.0))
+		smooth.append(rad_to_deg(PI - theta) < CORNER_MIN_DEG)
+	var start := -1
+	for i in n:
+		if not smooth[i]:   # vertex i joins edges i-1 and i
+			start = i
+			break
+	if start < 0:
+		for i in n:
+			chain_of[i] = 0   # fully smooth loop: one chain
+	else:
+		var cid := -1
+		for k in n:
+			var i := (start + k) % n
+			if not smooth[i]:
+				cid += 1
+			chain_of[i] = cid
 	for i in n:
 		var a: Vector3 = xf * Vector3(poly[i].x, poly[i].y, 0.0)
 		var b: Vector3 = xf * Vector3(poly[(i + 1) % n].x,
 			poly[(i + 1) % n].y, 0.0)
-		out.append({"key": "top:%d" % i, "a": a + off, "b": b + off})
-		out.append({"key": "bottom:%d" % i, "a": a, "b": b})
+		out.append({"key": "top:%d" % i, "chain": "top#%d" % chain_of[i],
+			"a": a + off, "b": b + off})
+		out.append({"key": "bottom:%d" % i,
+			"chain": "bottom#%d" % chain_of[i], "a": a, "b": b})
 	return out
 
 
@@ -199,6 +247,84 @@ static func cap_schedule(p_treat: String, size: float) -> Array:
 		out.append({"dz": size - size * sin(a),
 			"inset": size - size * cos(a)})
 	return out
+
+
+## {treat, size} for the multi-treatment maps below.
+func _param() -> Dictionary:
+	return {"treat": treat, "size": size_mm}
+
+
+## corner index -> {treat, size} for this feature (empty corners = every
+## corner; eligibility is filtered inside treat_corners_multi).
+func _corner_map(n0: int) -> Dictionary:
+	var out := {}
+	if not lateral:
+		return out
+	for c in (corners if not corners.is_empty() else range(n0)):
+		out[int(c)] = _param()
+	return out
+
+
+## rim segment index -> {treat, size} for one rim of this feature.
+func _rim_map(flag: bool, segs: Array, n0: int) -> Dictionary:
+	var out := {}
+	if not flag:
+		return out
+	for s in (segs if not segs.is_empty() else range(n0)):
+		out[int(s)] = _param()
+	return out
+
+
+## ALL live treatments on one body baked into a single mesh (QA §M35.3 —
+## a fillet and a chamfer can stack on the same body, different edges).
+## null = refuse, with the reason in `build_error`.
+static func build_combined(doc: CadDocument, ef: ExtrudeFeature,
+		ets: Array) -> ArrayMesh:
+	build_error = ""
+	if ets.is_empty():
+		return null
+	if ets.size() == 1:
+		var one := ets[0] as EdgeTreatFeature
+		var m := one.build_treated_mesh(doc, ef)
+		if m == null and build_error == "":
+			build_error = ("size too large for the body, or the profile "
+				+ "has holes")
+		return m
+	var sf := doc.sketch_feature(ef.sketch_id)
+	if sf == null:
+		return null
+	var healed := ProfileFinder.profile_at_healed(sf.sketch, ef.anchor)
+	if healed.is_empty():
+		return null
+	var prof: Dictionary = healed["prof"]
+	ef.anchor = healed["at"]
+	if not (prof.get("holes", []) as Array).is_empty():
+		build_error = "the profile has holes"
+		return null
+	var poly: PackedVector2Array = (prof["polygon"] as PackedVector2Array).duplicate()
+	if ExtrudeFeature._signed_area(poly) < 0.0:
+		poly.reverse()
+	var n0 := poly.size()
+	var cmap := {}
+	var tmap := {}
+	var bmap := {}
+	for f in ets:
+		var et := f as EdgeTreatFeature
+		if et == null:
+			continue
+		for k in et._corner_map(n0):
+			if not cmap.has(k):
+				cmap[k] = et._param()
+		for k in et._rim_map(et.top, et.top_segs, n0):
+			if not tmap.has(k):
+				tmap[k] = et._param()
+		for k in et._rim_map(et.bottom, et.bottom_segs, n0):
+			if not bmap.has(k):
+				bmap[k] = et._param()
+	var mesh := _build_multi_mesh(doc, ef, poly, cmap, tmap, bmap)
+	if mesh == null and build_error == "":
+		build_error = "size too large for the body"
+	return mesh
 
 
 ## The treated replacement mesh for `ef`'s body, or null (with the reason
@@ -222,7 +348,9 @@ func build_treated_mesh(doc: CadDocument, ef: ExtrudeFeature) -> ArrayMesh:
 	var n0 := poly.size()
 	if (top and not _rim_full(top_segs, n0)) \
 			or (bottom and not _rim_full(bottom_segs, n0)):
-		return _build_partial_mesh(doc, ef, poly)
+		return EdgeTreatFeature._build_multi_mesh(doc, ef, poly,
+			_corner_map(n0), _rim_map(top, top_segs, n0),
+			_rim_map(bottom, bottom_segs, n0))
 	if lateral:
 		var only := {}
 		for ci in corners:
@@ -357,53 +485,82 @@ static func _rim_full(segs: Array, n: int) -> bool:
 	return segs.is_empty() or segs.size() >= n
 
 
-## Partial-rim builder (QA §M35.1 round 2): rim segments are individually
-## selectable, so a treated rim may cover only SOME of the profile's edges.
-## Built segment-wise in the sketch's local frame (z 0..h): full-height
-## walls under untreated rim edges, shortened walls + inset band strips
-## under treated ones, miter joints where two treated edges meet, flat end
+## Size of a nullable {treat, size} param (0.0 for untreated).
+static func _p_size(p: Variant) -> float:
+	return 0.0 if p == null else float((p as Dictionary)["size"])
+
+
+static func _same_param(a: Dictionary, b: Dictionary) -> bool:
+	return String(a["treat"]) == String(b["treat"]) \
+		and absf(float(a["size"]) - float(b["size"])) < 1e-9
+
+
+## General treated-mesh builder (QA §M35.1 round 2 + §M35.3): rim segments
+## are individually selectable and every corner/segment carries its OWN
+## {treat, size} (so stacked fillet + chamfer features combine). Built
+## segment-wise in the sketch's local frame (z 0..h): full-height walls
+## under untreated rim edges, shortened walls + inset band strips under
+## treated ones, miter joints where two same-treatment edges meet, flat end
 ## fans where a treated run stops, and caps triangulated over the mixed
 ## boundary. Corner arcs/cuts from the lateral pass count as untreated rim
 ## (rolling a rim treatment around a rounded corner is B-rep-kernel tier).
-func _build_partial_mesh(doc: CadDocument, ef: ExtrudeFeature,
-		poly0: PackedVector2Array) -> ArrayMesh:
+## Two DIFFERENT treatments meeting at a shared rim corner are refused —
+## their band surfaces have no common joint curve at this tier.
+static func _build_multi_mesh(doc: CadDocument, ef: ExtrudeFeature,
+		poly0: PackedVector2Array, cmap: Dictionary, tmap: Dictionary,
+		bmap: Dictionary) -> ArrayMesh:
 	var n0 := poly0.size()
 	var sf := doc.sketch_feature(ef.sketch_id)
 	var xf := sf.plane_transform()
 	var h := absf(ef.distance)
 	var zsign := 1.0 if ef.distance >= 0.0 else -1.0
-	if size_mm <= 0.0 or ((top and bottom) and 2.0 * size_mm > h - 1e-6) \
-			or ((top or bottom) and size_mm > h - 1e-6):
-		return null
+	for prm_any: Variant in cmap.values() + tmap.values() + bmap.values():
+		if float((prm_any as Dictionary)["size"]) <= 0.0:
+			return null
+	for j0 in n0:
+		var ts := _p_size(tmap.get(j0))
+		var bs := _p_size(bmap.get(j0))
+		if ts + bs > h - 1e-6:
+			build_error = "size too large for the body height"
+			return null
 	var poly := poly0
 	var seg: Array = []
 	for i in n0:
 		seg.append(i)
-	if lateral:
-		var only := {}
-		for ci in corners:
-			only[int(ci)] = true
-		var mapped := treat_corners_mapped(poly0, treat, size_mm, only)
+	if not cmap.is_empty():
+		var mapped := treat_corners_multi(poly0, cmap)
 		poly = mapped["poly"]
 		seg = mapped["seg"]
 		if poly.is_empty():
+			build_error = "corner size too large for its edges"
 			return null
 	var m := poly.size()
-	var t_set := {}
-	var b_set := {}
-	if top:
-		for i in (top_segs if not top_segs.is_empty() else range(n0)):
-			t_set[int(i)] = true
-	if bottom:
-		for i in (bottom_segs if not bottom_segs.is_empty() else range(n0)):
-			b_set[int(i)] = true
-	var et_top: Array = []
-	var et_bot: Array = []
+	# Per treated-poly edge: this edge's rim params (or null), by rim.
+	var pt: Array = []
+	var pb: Array = []
 	for j in m:
-		et_top.append(int(seg[j]) >= 0 and t_set.has(int(seg[j])))
-		et_bot.append(int(seg[j]) >= 0 and b_set.has(int(seg[j])))
-	var sched := cap_schedule(treat, size_mm)   # ordered rim -> cap
-	var ks := sched.size()
+		var s0 := int(seg[j])
+		pt.append(tmap.get(s0) if s0 >= 0 else null)
+		pb.append(bmap.get(s0) if s0 >= 0 else null)
+	# Mixed treatments meeting at a shared corner: no joint curve exists at
+	# this tier (a chamfer cone and a fillet torus don't meet in a line).
+	for j in m:
+		for arr: Array in [pt, pb]:
+			var a_p: Variant = arr[j]
+			var b_p: Variant = arr[(j + 1) % m]
+			if a_p != null and b_p != null and not _same_param(
+					a_p as Dictionary, b_p as Dictionary):
+				build_error = ("a fillet and a chamfer (or two sizes) meet "
+					+ "at the same corner — use one treatment for edges "
+					+ "that share a corner")
+				return null
+	var sched_cache := {}
+	var sched_of := func(p: Dictionary) -> Array:
+		var key := "%s|%.6f" % [String(p["treat"]), float(p["size"])]
+		if not sched_cache.has(key):
+			sched_cache[key] = cap_schedule(String(p["treat"]),
+				float(p["size"]))
+		return sched_cache[key]
 
 	var norms_in: Array = []   # inward edge normals (ccw polygon)
 	for j in m:
@@ -436,20 +593,29 @@ func _build_partial_mesh(doc: CadDocument, ef: ExtrudeFeature,
 
 	var tris := PackedVector3Array()   # local coords, z in 0..h
 
-	# Band strips + (fallback) end fans, per treated edge, per rim.
+	# Band strips + (fallback) end fans, per treated edge, per rim. Each
+	# edge uses its OWN schedule; a mitered neighbor shares it (equal
+	# params enforced above), so the stations line up along the joint.
 	for j in m:
 		for is_top in [true, false]:
-			var et: Array = et_top if is_top else et_bot
-			if not et[j]:
+			var arr_e: Array = pt if is_top else pb
+			if arr_e[j] == null:
 				continue
+			var prm: Dictionary = arr_e[j]
+			var sz := float(prm["size"])
+			var sched: Array = sched_of.call(prm)
+			var ks: int = sched.size()
 			var zof := func(dz: float) -> float:
 				return h - dz if is_top else dz
-			var lead_i_other := size_mm if et[(j - 1 + m) % m] else 0.0
-			var trail_i_other := size_mm if et[(j + 1) % m] else 0.0
+			var lead_on: bool = arr_e[(j - 1 + m) % m] != null
+			var trail_on: bool = arr_e[(j + 1) % m] != null
 			# Fit: the cap-level ring must keep some edge length.
-			var pk: Dictionary = corner_off.call(j, true, size_mm, lead_i_other)
-			var qk: Dictionary = corner_off.call(j, false, size_mm, trail_i_other)
+			var pk: Dictionary = corner_off.call(j, true, sz,
+				sz if lead_on else 0.0)
+			var qk: Dictionary = corner_off.call(j, false, sz,
+				sz if trail_on else 0.0)
 			if (pk["p"] as Vector2).distance_to(qk["p"] as Vector2) < 1e-6:
+				build_error = "size too large for an edge"
 				return null
 			for k in ks - 1:
 				var ia := float(sched[k]["inset"])
@@ -457,31 +623,31 @@ func _build_partial_mesh(doc: CadDocument, ef: ExtrudeFeature,
 				var za: float = zof.call(float(sched[k]["dz"]))
 				var zb: float = zof.call(float(sched[k + 1]["dz"]))
 				var pa: Vector2 = corner_off.call(j, true, ia,
-					ia if et[(j - 1 + m) % m] else 0.0)["p"]
+					ia if lead_on else 0.0)["p"]
 				var qa: Vector2 = corner_off.call(j, false, ia,
-					ia if et[(j + 1) % m] else 0.0)["p"]
-				var pb: Vector2 = corner_off.call(j, true, ib,
-					ib if et[(j - 1 + m) % m] else 0.0)["p"]
+					ia if trail_on else 0.0)["p"]
+				var pb2: Vector2 = corner_off.call(j, true, ib,
+					ib if lead_on else 0.0)["p"]
 				var qb: Vector2 = corner_off.call(j, false, ib,
-					ib if et[(j + 1) % m] else 0.0)["p"]
+					ib if trail_on else 0.0)["p"]
 				if is_top:
 					tris.append_array([
 						Vector3(pa.x, pa.y, za), Vector3(qa.x, qa.y, za),
 						Vector3(qb.x, qb.y, zb),
 						Vector3(pa.x, pa.y, za), Vector3(qb.x, qb.y, zb),
-						Vector3(pb.x, pb.y, zb)])
+						Vector3(pb2.x, pb2.y, zb)])
 				else:
 					tris.append_array([
-						Vector3(pb.x, pb.y, zb), Vector3(qb.x, qb.y, zb),
+						Vector3(pb2.x, pb2.y, zb), Vector3(qb.x, qb.y, zb),
 						Vector3(qa.x, qa.y, za),
-						Vector3(pb.x, pb.y, zb), Vector3(qa.x, qa.y, za),
+						Vector3(pb2.x, pb2.y, zb), Vector3(qa.x, qa.y, za),
 						Vector3(pa.x, pa.y, za)])
 			# Sealing fans only for near-parallel fallback ends.
 			for lead in [true, false]:
 				var other := (j - 1 + m) % m if lead else (j + 1) % m
-				if et[other]:
+				if arr_e[other] != null:
 					continue
-				var probe: Dictionary = corner_off.call(j, lead, size_mm, 0.0)
+				var probe: Dictionary = corner_off.call(j, lead, sz, 0.0)
 				if probe["ok"]:
 					continue
 				var v := poly[j] if lead else poly[(j + 1) % m]
@@ -509,28 +675,33 @@ func _build_partial_mesh(doc: CadDocument, ef: ExtrudeFeature,
 		var length := a2.distance_to(b2)
 		var u_of := func(p: Vector2) -> float:
 			return (p - a2).dot(dir)
-		var zlo: float = size_mm if et_bot[j] else 0.0
-		var zhi: float = h - (size_mm if et_top[j] else 0.0)
+		var zlo: float = _p_size(pb[j])
+		var zhi: float = h - _p_size(pt[j])
 		if zhi - zlo < 1e-6:
+			build_error = "size too large for the body height"
 			return null
 		# Does the corner at `lead` get clipped by the neighbor's band on
 		# rim `is_top`? Only when edge j itself is untreated there, the
 		# neighbor IS treated, and the corner solve is non-degenerate.
+		# The curve follows the NEIGHBOR's schedule (its treat + size).
 		var clip_curve := func(lead: bool, is_top: bool) -> PackedVector2Array:
-			var et: Array = et_top if is_top else et_bot
+			var arr_e: Array = pt if is_top else pb
 			var other := (j - 1 + m) % m if lead else (j + 1) % m
-			if et[j] or not et[other]:
+			if arr_e[j] != null or arr_e[other] == null:
 				return PackedVector2Array()
-			var probe: Dictionary = corner_off.call(j, lead, 0.0, size_mm)
+			var op: Dictionary = arr_e[other]
+			var probe: Dictionary = corner_off.call(j, lead, 0.0,
+				float(op["size"]))
 			if not probe["ok"]:
 				return PackedVector2Array()
+			var so: Array = sched_of.call(op)
 			# (u, z) points from the rim shoulder toward the cap.
 			var out2 := PackedVector2Array()
-			for k in ks:
+			for k in so.size():
 				var q: Vector2 = corner_off.call(j, lead, 0.0,
-					float(sched[k]["inset"]))["p"]
-				var zq: float = (h - float(sched[k]["dz"])) if is_top \
-					else float(sched[k]["dz"])
+					float(so[k]["inset"]))["p"]
+				var zq: float = (h - float(so[k]["dz"])) if is_top \
+					else float(so[k]["dz"])
 				out2.append(Vector2(u_of.call(q), zq))
 			return out2
 		var bl: PackedVector2Array = clip_curve.call(true, false)
@@ -542,22 +713,22 @@ func _build_partial_mesh(doc: CadDocument, ef: ExtrudeFeature,
 		if bl.is_empty():
 			wall.append(Vector2(0.0, zlo))
 		else:
-			for k in ks:   # (0, s) down the curve to (u_K, 0)
+			for k in bl.size():   # (0, s) down the curve to (u_K, 0)
 				wall.append(bl[k])
 		if br.is_empty():
 			wall.append(Vector2(length, zlo))
 		else:
-			for k in range(ks - 1, -1, -1):
+			for k in range(br.size() - 1, -1, -1):
 				wall.append(br[k])
 		if tr.is_empty():
 			wall.append(Vector2(length, zhi))
 		else:
-			for k in ks:   # (len, h-s) up the curve to the cap corner
+			for k in tr.size():   # (len, h-s) up the curve to the cap corner
 				wall.append(tr[k])
 		if tl.is_empty():
 			wall.append(Vector2(0.0, zhi))
 		else:
-			for k in range(ks - 1, -1, -1):
+			for k in range(tl.size() - 1, -1, -1):
 				wall.append(tl[k])
 		# Dedupe consecutive repeats, then triangulate in wall space.
 		var wpoly := PackedVector2Array()
@@ -586,16 +757,16 @@ func _build_partial_mesh(doc: CadDocument, ef: ExtrudeFeature,
 	# treated, 0 when not — both 0 keeps the original vertex).
 	var cap_loops: Array = []   # [{boundary: PackedVector2Array, z: float}]
 	for is_top in [true, false]:
-		var et: Array = et_top if is_top else et_bot
+		var arr_c: Array = pt if is_top else pb
 		var boundary := PackedVector2Array()
 		var push := func(p: Vector2) -> void:
 			if boundary.is_empty() \
 					or boundary[boundary.size() - 1].distance_to(p) > 1e-6:
 				boundary.append(p)
 		for j in m:
-			var i_self: float = size_mm if et[j] else 0.0
-			var i_lead: float = size_mm if et[(j - 1 + m) % m] else 0.0
-			var i_trail: float = size_mm if et[(j + 1) % m] else 0.0
+			var i_self := _p_size(arr_c[j])
+			var i_lead := _p_size(arr_c[(j - 1 + m) % m])
+			var i_trail := _p_size(arr_c[(j + 1) % m])
 			push.call(corner_off.call(j, true, i_self, i_lead)["p"])
 			push.call(corner_off.call(j, false, i_self, i_trail)["p"])
 		if boundary.size() > 1 and boundary[0].distance_to(
@@ -603,6 +774,7 @@ func _build_partial_mesh(doc: CadDocument, ef: ExtrudeFeature,
 			boundary.remove_at(boundary.size() - 1)
 		if boundary.size() < 3 \
 				or ExtrudeFeature._signed_area(boundary) <= 0.0:
+			build_error = "size too large — the inset cap crosses itself"
 			return null   # inset crossed itself — size too big for the edge
 		var idx := Geometry2D.triangulate_polygon(boundary)
 		if idx.is_empty():
