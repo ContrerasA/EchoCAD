@@ -9,8 +9,10 @@ extends RefCounted
 ## Line/text ink is theme-sourced (dim_line / dim_driven): the near-white it
 ## used to hardcode vanished against the light theme (QA §M26.5). Selected
 ## amber and conflict red read on both themes and stay fixed.
-const COLOR_SELECTED := Color(1.0, 0.85, 0.3)
-const COLOR_CONFLICT := Color(0.87, 0.39, 0.38)
+static func COLOR_SELECTED() -> Color:
+	return ThemeService.col("constraint_selected")
+static func COLOR_CONFLICT() -> Color:
+	return ThemeService.col("constraint_conflict")
 const ARROW_PX := 7.0
 const EXT_GAP_PX := 3.0
 
@@ -57,11 +59,11 @@ static func draw(overlay: Control, view: SketchView, sk: Sketch,
 			groups_drawn[c.group] = true
 		var color := ThemeService.col("dim_line")
 		if (analysis.get("conflicts", []) as Array).has(i):
-			color = COLOR_CONFLICT
+			color = COLOR_CONFLICT()
 		elif c.driven:
 			color = ThemeService.col("dim_driven")
 		if i == selected:
-			color = COLOR_SELECTED
+			color = COLOR_SELECTED()
 		var rect := _draw_one(overlay, view, sk, c, color, unit)
 		if rect != Rect2():
 			hits.append({"index": i, "rect": rect})

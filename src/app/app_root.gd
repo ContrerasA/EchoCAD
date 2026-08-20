@@ -127,6 +127,14 @@ var _file_dialog_saving := false
 var _pivot_pick: OptionButton
 ## M26 shelf: group panels by caption, for mode-based show/hide.
 var _shelf_groups := {}
+## M36 shell pieces whose footprint follows theme metrics.
+var _ribbon: PanelContainer = null
+var _menu_panel: PanelContainer = null
+var _browser_panel: PanelContainer = null
+var _timeline_panel: PanelContainer = null
+var _status_panel: PanelContainer = null
+var _big_buttons: Array = []
+var _small_buttons: Array = []
 var _prefs_dialog: Window = null
 var _theme_pick: OptionButton = null
 ## M27 viewing: Look At pick state, projection toggle, named views, units.
@@ -1160,27 +1168,101 @@ func _tool_group_for(tid: String, g_select: Control, g_create: Control,
 	return g_create
 
 
-## --- theme + preferences (M26) ----------------------------------------------
+## --- theme + preferences (M26, file-driven themes M36) -----------------------
 
+## Switch to a theme by id (a file stem under res://themes or user://themes).
+## Returns the id that actually loaded (unknown ids fall back to the default).
+func set_theme_id(id: String) -> String:
+	var loaded := ThemeService.load_theme(id)
+	ThemeService.save_settings()
+	apply_theme()
+	return loaded
+
+
+## Convenience kept from M26: flip between the dark and light variant of the
+## active theme family. A theme without a sibling variant falls back to the
+## Modernist pair.
 func set_dark_theme(on: bool) -> void:
 	if ThemeService.dark == on:
 		return
-	ThemeService.dark = on
-	ThemeService.save_settings()
-	apply_theme()
+	var want := _sibling_theme(ThemeService.theme_id, on)
+	set_theme_id(want)
 
 
-## Push the current ThemeService palette everywhere it is consumed.
+## The dark/light twin of `id`: same stem with the "-dark"/"-light" suffix
+## swapped when such a theme exists, else the Modernist default of that
+## appearance.
+func _sibling_theme(id: String, want_dark: bool) -> String:
+	var ids := {}
+	for t: Dictionary in ThemeService.available_themes():
+		ids[t["id"]] = t["appearance"]
+	var stem := id.trim_suffix("-dark").trim_suffix("-light")
+	var cand := stem + ("-dark" if want_dark else "-light")
+	if ids.has(cand):
+		return cand
+	return ThemeService.LEGACY_DARK if want_dark else ThemeService.LEGACY_LIGHT
+
+
+## Push the current ThemeService tokens everywhere they are consumed.
 func apply_theme() -> void:
 	theme = ThemeService.build_theme()
 	if world != null:
 		world.apply_theme()
+		world.rebuild_sketches(doc)
 	if sketch_view != null:
+		sketch_view.mark_dirty()
 		sketch_view.queue_redraw()
 	if overlay != null:
 		overlay.queue_redraw()
-	if _theme_pick != null:
-		_theme_pick.select(0 if ThemeService.dark else 1)
+	if view_cube != null:
+		view_cube.apply_theme()
+	if timeline != null:
+		timeline.refresh()
+	if browser != null:
+		browser.refresh()
+	_apply_theme_metrics()
+	_sync_theme_pick()
+
+
+## Controls whose footprint comes from theme metrics (ribbon button sizes,
+## panel widths) re-read them here so a theme with a denser scale reflows.
+func _apply_theme_metrics() -> void:
+	for b in _big_buttons:
+		if is_instance_valid(b):
+			(b as Control).custom_minimum_size = Vector2(
+				ThemeService.metric("big_button_w"), ThemeService.metric("big_button_h"))
+	for b in _small_buttons:
+		if is_instance_valid(b):
+			(b as Control).custom_minimum_size = Vector2(
+				ThemeService.metric("small_button_w"), ThemeService.metric("small_button_h"))
+	if _ribbon != null:
+		_ribbon.custom_minimum_size.y = ThemeService.metric("ribbon_height")
+	if _browser_panel != null:
+		_browser_panel.custom_minimum_size.x = ThemeService.metric("browser_width")
+	if _menu_panel != null:
+		_menu_panel.custom_minimum_size.y = ThemeService.metric("menubar_height")
+	if _timeline_panel != null:
+		_timeline_panel.custom_minimum_size.y = ThemeService.metric("timeline_height")
+	if _status_panel != null:
+		_status_panel.custom_minimum_size.y = ThemeService.metric("status_height")
+
+
+func _sync_theme_pick() -> void:
+	if _theme_pick == null:
+		return
+	_theme_pick.clear()
+	var sel := 0
+	var i := 0
+	for t: Dictionary in ThemeService.available_themes():
+		var label := String(t["name"])
+		if not bool(t["builtin"]):
+			label += "  (user)"
+		_theme_pick.add_item(label)
+		_theme_pick.set_item_metadata(i, t["id"])
+		if t["id"] == ThemeService.theme_id:
+			sel = i
+		i += 1
+	_theme_pick.select(sel)
 
 
 func _open_prefs_dialog() -> void:
@@ -1188,35 +1270,62 @@ func _open_prefs_dialog() -> void:
 		_prefs_dialog = Window.new()
 		_prefs_dialog.name = "PrefsDialog"
 		_prefs_dialog.title = "Preferences"
-		_prefs_dialog.size = Vector2i(280, 132)
+		_prefs_dialog.size = Vector2i(340, 190)
 		_prefs_dialog.exclusive = false
 		_prefs_dialog.close_requested.connect(
 			func() -> void: _prefs_dialog.hide())
+		var margin := MarginContainer.new()
+		margin.set_anchors_preset(Control.PRESET_FULL_RECT)
+		for side in ["left", "right", "top", "bottom"]:
+			margin.add_theme_constant_override("margin_" + side, 12)
+		_prefs_dialog.add_child(margin)
 		var box := VBoxContainer.new()
-		box.set_anchors_preset(Control.PRESET_FULL_RECT)
-		_prefs_dialog.add_child(box)
+		box.add_theme_constant_override("separation", 8)
+		margin.add_child(box)
 		var row := HBoxContainer.new()
 		box.add_child(row)
 		var lab := Label.new()
 		lab.text = "Theme"
+		lab.custom_minimum_size.x = 64
 		row.add_child(lab)
 		_theme_pick = OptionButton.new()
 		_theme_pick.name = "ThemePick"
 		_theme_pick.focus_mode = Control.FOCUS_NONE
-		_theme_pick.add_item("Dark", 0)
-		_theme_pick.add_item("Light", 1)
-		_theme_pick.select(0 if ThemeService.dark else 1)
+		_theme_pick.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		_theme_pick.item_selected.connect(func(i: int) -> void:
-			set_dark_theme(i == 0))
+			set_theme_id(String(_theme_pick.get_item_metadata(i))))
 		row.add_child(_theme_pick)
+		var trow := HBoxContainer.new()
+		box.add_child(trow)
+		var spacer := Control.new()
+		spacer.custom_minimum_size.x = 64
+		trow.add_child(spacer)
+		var openb := Button.new()
+		openb.name = "OpenThemesBtn"
+		openb.text = "Open themes folder"
+		openb.tooltip_text = ("Drop a .json theme here (or copy one from the "
+			+ "built-in themes/ folder to edit) — it appears in the list on Reload")
+		openb.focus_mode = Control.FOCUS_NONE
+		openb.pressed.connect(func() -> void:
+			OS.shell_open(ThemeService.user_theme_dir()))
+		trow.add_child(openb)
+		var reloadb := Button.new()
+		reloadb.name = "ReloadThemesBtn"
+		reloadb.text = "Reload"
+		reloadb.tooltip_text = "Rescan theme folders and re-apply the current theme"
+		reloadb.focus_mode = Control.FOCUS_NONE
+		reloadb.pressed.connect(func() -> void: set_theme_id(ThemeService.theme_id))
+		trow.add_child(reloadb)
 		var urow := HBoxContainer.new()
 		box.add_child(urow)
 		var ulab := Label.new()
 		ulab.text = "Units"
+		ulab.custom_minimum_size.x = 64
 		urow.add_child(ulab)
 		_unit_pick = OptionButton.new()
 		_unit_pick.name = "UnitPick"
 		_unit_pick.focus_mode = Control.FOCUS_NONE
+		_unit_pick.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		_unit_pick.add_item("Millimeters", UnitConverter.Unit.MM)
 		_unit_pick.add_item("Centimeters", UnitConverter.Unit.CM)
 		_unit_pick.add_item("Inches", UnitConverter.Unit.IN)
@@ -1227,10 +1336,13 @@ func _open_prefs_dialog() -> void:
 		var okb := Button.new()
 		okb.name = "PrefsCloseBtn"
 		okb.text = "Close"
+		okb.theme_type_variation = "PrimaryButton"
 		okb.focus_mode = Control.FOCUS_NONE
+		okb.size_flags_horizontal = Control.SIZE_SHRINK_END
 		okb.pressed.connect(func() -> void: _prefs_dialog.hide())
 		box.add_child(okb)
 		add_child(_prefs_dialog)
+	_sync_theme_pick()
 	_unit_pick.select(_unit_pick.get_item_index(doc.display_unit))
 	_prefs_dialog.popup_centered()
 
@@ -4537,7 +4649,7 @@ func _on_overlay_draw() -> void:
 			if selection.has(e.id):
 				c = Color(1.0, 0.85, 0.3)
 			elif constrained_pts.has(e.id):
-				c = RenderBridge.COLOR_CONSTRAINED
+				c = RenderBridge.color_constrained()
 			overlay.draw_rect(Rect2(p - Vector2(2.5, 2.5), Vector2(5, 5)), c)
 	for id in selection:
 		var e := sk.entity(id)

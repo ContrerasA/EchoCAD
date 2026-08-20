@@ -1,0 +1,68 @@
+{
+  "$schema": "echocad-theme/1",
+  "id": "modernist-light",
+  "name": "Modernist Light",
+  "appearance": "light",
+  "extends": "modernist-dark",
+  "_comment": "The light ground of the Modernist system (#f3f2f2 paper, #201e1d ink). Only the tokens that change are listed; everything else comes from modernist-dark.",
+
+  "palette": {
+    "ink-0":   "#c9c5c4",
+    "ink-1":   "#e6e4e3",
+    "ink-2":   "#f3f2f2",
+    "ink-3":   "#eae9e9",
+    "ink-4":   "#e2e0e0",
+    "ink-5":   "#f6f5f5",
+    "paper-1": "#9b9797",
+    "paper-2": "#7d7979",
+    "paper-3": "#605d5d",
+    "paper-4": "#2d2b2b",
+    "paper-5": "#201e1d",
+    "black":   "#201e1d",
+    "red-500": "#ec3013",
+    "red-400": "#dd2b0f",
+    "red-300": "#ae1800",
+    "green":   "#3f9a4a",
+    "blue":    "#3b74c4",
+    "salmon":  "#d24a3a",
+    "violet":  "#7d4fc2",
+    "magenta": "#b23fb2"
+  },
+
+  "colors": {
+    "panel_alt":   "#efeeee",
+    "field":       "#ffffff",
+    "hud":         "#f6f5f5*0.92",
+    "border_soft": "@black*0.18",
+    "divider":     "@black*0.14",
+
+    "btn_hover":          "@black*0.06",
+    "btn_hover_border":   "@black*0.10",
+    "btn_pressed":        "@red-500*0.12",
+    "btn_pressed_border": "@red-500*0.45",
+    "btn_pressed_text":   "@red-300",
+
+    "text_strong": "#000000",
+    "selection":   "@red-500*0.12",
+    "success_bg":  "#e2f1e2",
+
+    "bg3d":          "#e9e8e8",
+    "ambient":       "#b8b6b4",
+    "sketch_bg":     "#f3f2f2",
+    "grid_minor":    "@black*0.08",
+    "grid_major":    "@black*0.16",
+    "sk_grid_minor": "@black*0.09",
+    "sk_grid_major": "@black*0.18",
+    "plane":         "#3b74c4*0.10",
+    "plane_hover":   "#3b74c4*0.28",
+    "body":          "#8f8b88",
+    "body_edge":     "#4a4745",
+    "hover":         "#e08c00*0.35",
+
+    "ink_reference":       "#73808c*0.75",
+    "dim_line":            "#2d2b2b",
+    "dim_driven":          "#7d7979",
+    "constraint_unsolved": "#5a5d66",
+    "constraint_selected": "#b58a00"
+  }
+}

@@ -35,11 +35,8 @@ const MODEL_VEIL_ALPHA := 0.82
 ## ladder stays shared (that is a units question, the same in both places); the
 ## colours answer a rendering question and each surface answers it for itself.
 ## (Theme-sourced since M26: sk_grid_minor / sk_grid_major.)
-const COLOR_AXIS_X := Color(0.85, 0.30, 0.30, 0.8)
-const COLOR_AXIS_Y := Color(0.35, 0.80, 0.35, 0.8)
 ## Closed regions get a translucent face under the geometry, Fusion-style —
 ## the "this sketch closes, it can be extruded" affordance (QA §M18.1).
-const COLOR_REGION_FILL := Color(0.30, 0.62, 0.96, 0.10)
 
 var bridge: RenderBridge = null
 ## M30: supplies reference images for the ACTIVE sketch plane —
@@ -465,11 +462,11 @@ func _draw() -> void:
 		# an "Invalid polygon data" error per frame; they paint nothing anyway.
 		if absf((tb - ta).cross(tc - ta)) > 0.05:
 			draw_colored_polygon(PackedVector2Array([ta, tb, tc]),
-				COLOR_REGION_FILL)
+				ThemeService.col("region_fill"))
 		ti += 3
 	# Origin axes on top of the grid.
 	var o := world_to_screen(Vector2.ZERO)
 	if o.y >= 0 and o.y <= size.y:
-		draw_line(Vector2(0, o.y), Vector2(size.x, o.y), COLOR_AXIS_X, 1.0)
+		draw_line(Vector2(0, o.y), Vector2(size.x, o.y), ThemeService.col("axis_x"), 1.0)
 	if o.x >= 0 and o.x <= size.x:
-		draw_line(Vector2(o.x, 0), Vector2(o.x, size.y), COLOR_AXIS_Y, 1.0)
+		draw_line(Vector2(o.x, 0), Vector2(o.x, size.y), ThemeService.col("axis_y"), 1.0)

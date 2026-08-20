@@ -5,11 +5,17 @@ extends RefCounted
 ## in AppRoot/SelectTool. Colors follow Fusion/echo_vector conventions:
 ## green satisfied, grey unsolved, amber redundant, red conflicting.
 
-const COLOR_OK := Color(0.34, 0.69, 0.55)
-const COLOR_UNSOLVED := Color(0.76, 0.78, 0.82)
-const COLOR_REDUNDANT := Color(0.85, 0.63, 0.25)
-const COLOR_CONFLICT := Color(0.87, 0.39, 0.38)
-const COLOR_SELECTED := Color(1.0, 0.85, 0.3)
+## Badge colors come from the theme (M36).
+static func COLOR_OK() -> Color:
+	return ThemeService.col("constraint_ok")
+static func COLOR_UNSOLVED() -> Color:
+	return ThemeService.col("constraint_unsolved")
+static func COLOR_REDUNDANT() -> Color:
+	return ThemeService.col("constraint_redundant")
+static func COLOR_CONFLICT() -> Color:
+	return ThemeService.col("constraint_conflict")
+static func COLOR_SELECTED() -> Color:
+	return ThemeService.col("constraint_selected")
 const SATISFIED_TOL := 0.01     # mm
 
 const GLYPH := {
@@ -110,13 +116,13 @@ static func draw(overlay: Control, view: SketchView, sk: Sketch,
 		var c := sk.constraints[i]
 		if c.is_dimensional():
 			continue   # DimensionOverlay draws those as real annotations
-		var color := COLOR_OK
+		var color := COLOR_OK()
 		if (analysis.get("conflicts", []) as Array).has(i):
-			color = COLOR_CONFLICT
+			color = COLOR_CONFLICT()
 		elif (analysis.get("redundant", []) as Array).has(i):
-			color = COLOR_REDUNDANT
+			color = COLOR_REDUNDANT()
 		elif unsolved.has(i):
-			color = COLOR_UNSOLVED
+			color = COLOR_UNSOLVED()
 		var label: String = GLYPH.get(c.type, "?")
 		var sz := font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 11)
 		# ONE BADGE PER OPERAND: a Parallel marks both lines, an Equal marks
@@ -129,8 +135,8 @@ static func draw(overlay: Control, view: SketchView, sk: Sketch,
 			used_slots[cell] = slot + 1
 			screen += Vector2(slot * 20.0, 0)
 			var rect := Rect2(screen - Vector2(3, 10), sz + Vector2(7, 6))
-			overlay.draw_rect(rect, Color(0.10, 0.11, 0.13, 0.85))
-			overlay.draw_rect(rect, COLOR_SELECTED if i == selected else color,
+			overlay.draw_rect(rect, ThemeService.col("hud"))
+			overlay.draw_rect(rect, COLOR_SELECTED() if i == selected else color,
 				false, 2.0 if i == selected else 1.0)
 			overlay.draw_string(font, screen, label, HORIZONTAL_ALIGNMENT_LEFT,
 				-1, 11, color)

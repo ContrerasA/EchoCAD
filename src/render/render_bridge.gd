@@ -10,15 +10,20 @@ extends RefCounted
 ## diff handles come with the tool milestones when interaction makes rebuild
 ## cost visible.
 
-const COLOR_FREE := Color(0.30, 0.62, 0.96)          # under-constrained (Fusion blue)
-const COLOR_CONSTRAINED := Color(0.42, 0.82, 0.55)   # fully constrained: green
-const COLOR_CONSTRUCTION := Color(0.72, 0.55, 0.95)  # construction: violet dashed
-## Projected (linked) geometry — Fusion's magenta. Solid stroke: it is real,
-## snappable, profile-forming geometry, just owned by its source.
-const COLOR_PROJECTED := Color(0.85, 0.45, 0.85)
-## Geometry from OTHER sketches, drawn dim so it reads as context rather than
-## as something the active sketch owns.
-const COLOR_REFERENCE := Color(0.45, 0.50, 0.58, 0.55)
+## Sketch ink comes from the theme (M36): under-constrained, fully
+## constrained, construction (dashed), projected/linked (solid — real,
+## snappable, profile-forming geometry owned by its source) and reference
+## geometry from OTHER sketches (dim, so it reads as context).
+static func color_free() -> Color:
+	return ThemeService.col("ink_free")
+static func color_constrained() -> Color:
+	return ThemeService.col("ink_constrained")
+static func color_construction() -> Color:
+	return ThemeService.col("ink_construction")
+static func color_projected() -> Color:
+	return ThemeService.col("ink_projected")
+static func color_reference() -> Color:
+	return ThemeService.col("ink_reference")
 const STROKE_PX := 2.0                               # on-screen stroke width
 
 var _canvas: TVGCanvas = null
@@ -118,19 +123,19 @@ func _add_entity(sketch: Sketch, e: SketchEntity, reference := false) -> void:
 	if reference:
 		# One flat dim stroke: reference geometry must not advertise its own
 		# construction/constrained state and compete with the active sketch.
-		_canvas.set_stroke(handle, _stroke_mm * 0.75, COLOR_REFERENCE,
+		_canvas.set_stroke(handle, _stroke_mm * 0.75, color_reference(),
 			TVGCanvas.CAP_ROUND, TVGCanvas.JOIN_ROUND)
 		return
 	if e.is_projected():
-		_canvas.set_stroke(handle, _stroke_mm, COLOR_PROJECTED,
+		_canvas.set_stroke(handle, _stroke_mm, color_projected(),
 			TVGCanvas.CAP_ROUND, TVGCanvas.JOIN_ROUND)
 	elif e.construction:
-		_canvas.set_stroke(handle, _stroke_mm * 0.75, COLOR_CONSTRUCTION,
+		_canvas.set_stroke(handle, _stroke_mm * 0.75, color_construction(),
 			TVGCanvas.CAP_ROUND, TVGCanvas.JOIN_ROUND)
 		_canvas.set_stroke_dash(handle, PackedFloat32Array(
 			[_stroke_mm * 4.0, _stroke_mm * 3.0]), 0.0)
 	else:
-		var color := COLOR_CONSTRAINED if _is_constrained(e) else COLOR_FREE
+		var color := color_constrained() if _is_constrained(e) else color_free()
 		_canvas.set_stroke(handle, _stroke_mm, color,
 			TVGCanvas.CAP_ROUND, TVGCanvas.JOIN_ROUND)
 

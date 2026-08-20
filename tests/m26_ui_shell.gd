@@ -106,18 +106,24 @@ func _run() -> bool:
 	_root.set_dark_theme(false)
 	if ThemeService.dark:
 		return _fail("set_dark_theme(false) did not stick")
-	if env.environment.background_color != ThemeService.LIGHT["bg3d"]:
+	if ThemeService.theme_id != "modernist-light":
+		return _fail("set_dark_theme(false) did not pick the light sibling (got %s)"
+			% ThemeService.theme_id)
+	var light_bg := ThemeService.col("bg3d")
+	if light_bg.get_luminance() < 0.5:
+		return _fail("light theme bg3d is not light")
+	if env.environment.background_color != light_bg:
 		return _fail("light theme did not recolor the 3D background")
-	if SketchView.bg_color() != ThemeService.LIGHT["bg3d"]:
+	if SketchView.bg_color() != light_bg:
 		return _fail("light theme did not reach the sketch canvas")
 	var th := _root.theme
 	if th == null:
 		return _fail("no UI theme applied")
 	var light_btn := (th.get_stylebox("normal", "Button") as StyleBoxFlat).bg_color
-	if light_btn != ThemeService.LIGHT["btn"]:
+	if light_btn != ThemeService.col("btn"):
 		return _fail("UI theme not rebuilt for light mode")
 	_root.set_dark_theme(true)
-	if env.environment.background_color != ThemeService.DARK["bg3d"]:
+	if env.environment.background_color != ThemeService.col("bg3d") 			or ThemeService.col("bg3d").get_luminance() > 0.5:
 		return _fail("dark theme did not restore the 3D background")
 
 	# Persistence: save (via set_dark_theme), corrupt the static, reload.
@@ -131,13 +137,48 @@ func _run() -> bool:
 	_root._open_prefs_dialog()
 	await _idle()
 	var pick := _root.find_child("ThemePick", true, false) as OptionButton
-	if pick == null or pick.item_count != 2:
-		return _fail("preferences dialog has no theme picker")
-	if pick.selected != 1:
+	if pick == null or pick.item_count < 3:
+		return _fail("preferences dialog does not list the built-in themes")
+	if String(pick.get_item_metadata(pick.selected)) != "modernist-light":
 		return _fail("theme picker out of sync (light should be selected)")
-	pick.item_selected.emit(0)
-	if not ThemeService.dark:
-		return _fail("picking Dark in preferences did not switch")
+	var dark_idx := -1
+	var classic_idx := -1
+	for i in pick.item_count:
+		if String(pick.get_item_metadata(i)) == "modernist-dark":
+			dark_idx = i
+		if String(pick.get_item_metadata(i)) == "classic-dark":
+			classic_idx = i
+	if dark_idx < 0 or classic_idx < 0:
+		return _fail("theme picker lacks built-in themes")
+	pick.item_selected.emit(dark_idx)
+	if not ThemeService.dark or ThemeService.theme_id != "modernist-dark":
+		return _fail("picking Modernist Dark in preferences did not switch")
+	# A theme that `extends` another: inherits what it does not override.
+	pick.item_selected.emit(classic_idx)
+	if ThemeService.theme_id != "classic-dark":
+		return _fail("picking Classic Dark did not switch")
+	if ThemeService.metric("radius") != 4.0:
+		return _fail("classic-dark metric override not applied")
+	if ThemeService.metric("ribbon_height") != 92.0:
+		return _fail("classic-dark did not inherit ribbon_height from its parent")
+	if ThemeService.col("accent") == ThemeService.col("ink_construction"):
+		return _fail("classic-dark palette re-tint did not resolve")
+	# User themes: a file dropped into user://themes shows up after a rescan
+	# and can override a built-in by id.
+	var udir := ThemeService.user_theme_dir()
+	var uf := FileAccess.open(udir.path_join("qa-user-theme.json"), FileAccess.WRITE)
+	uf.store_string(JSON.stringify({"id": "qa-user", "name": "QA User",
+		"extends": "modernist-dark", "colors": {"accent": "#00ff00"}}))
+	uf.close()
+	var loaded := _root.set_theme_id("qa-user")
+	if loaded != "qa-user" or ThemeService.col("accent") != Color.html("#00ff00"):
+		return _fail("user theme from user://themes not loaded (%s)" % loaded)
+	if ThemeService.col("text") != Color.html("#dedbda"):
+		return _fail("user theme did not inherit text color from modernist-dark")
+	DirAccess.remove_absolute(udir.path_join("qa-user-theme.json"))
+	# Unknown ids fall back to the default rather than leaving a broken UI.
+	if _root.set_theme_id("no-such-theme") != ThemeService.DEFAULT_THEME:
+		return _fail("unknown theme id did not fall back to the default")
 	_root._prefs_dialog.hide()
 
 	# Leave the user's setting the way we found it.
@@ -146,5 +187,5 @@ func _run() -> bool:
 	ThemeService.save_settings()
 
 	print("M26_UI_SHELL OK: shelf groups, icons, tooltips, RPC names, ",
-		"theme switch + persistence, preferences dialog")
+		"theme files (extends, palette refs, user dir) + persistence, prefs dialog")
 	return true

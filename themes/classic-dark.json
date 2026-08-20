@@ -1,0 +1,42 @@
+{
+  "$schema": "echocad-theme/1",
+  "id": "classic-dark",
+  "name": "Classic Dark (blue)",
+  "appearance": "dark",
+  "extends": "modernist-dark",
+  "_comment": "The pre-M36 EchoCAD palette — cool slate neutrals with a Fusion-blue accent and rounder corners. Kept as a worked example of re-tinting the Modernist layout with a different swatch set.",
+
+  "palette": {
+    "ink-0":   "#14161a",
+    "ink-1":   "#1c1e23",
+    "ink-2":   "#212329",
+    "ink-3":   "#292b31",
+    "ink-4":   "#2e3037",
+    "ink-5":   "#222429",
+    "paper-1": "#7a7f88",
+    "paper-2": "#99a0ad",
+    "paper-3": "#e0e5ef",
+    "paper-4": "#e6e8ec",
+    "paper-5": "#f2f4f8",
+    "red-500": "#4d9ef5",
+    "red-400": "#74b4ff",
+    "red-300": "#b8d8ff"
+  },
+
+  "colors": {
+    "panel_alt":   "#222429",
+    "field":       "#1c1d21",
+    "bg3d":        "#212429",
+    "ambient":     "#8c919e",
+    "sketch_bg":   "#212429",
+    "body":        "#9ea8b8",
+    "region_fill": "@red-500*0.12",
+    "ink_free":    "@red-500",
+    "ink_constrained": "#6bd18c"
+  },
+
+  "metrics": {
+    "radius": 4,
+    "radius_small": 3
+  }
+}

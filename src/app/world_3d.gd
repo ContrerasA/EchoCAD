@@ -8,19 +8,24 @@ extends Node3D
 ## the +u/+v quadrant with its corner on the origin, so this is a full side
 ## rather than a half-extent — hit tests run 0..PLANE_SIDE, not ±.
 const PLANE_SIDE := 120.0
-const COLOR_PLANE := Color(0.55, 0.65, 0.85, 0.10)
-const COLOR_PLANE_HOVER := Color(0.55, 0.75, 1.0, 0.28)
+static func COLOR_PLANE() -> Color:
+	return ThemeService.col("plane")
+static func COLOR_PLANE_HOVER() -> Color:
+	return ThemeService.col("plane_hover")
 ## Construction planes read tan/amber (Fusion-ish) so they never get
 ## mistaken for origin planes.
 const COLOR_CPLANE := Color(0.88, 0.76, 0.38, 0.12)
 const COLOR_CPLANE_HOVER := Color(0.95, 0.85, 0.45, 0.30)
 ## Flat body face hovered while picking a sketch plane (M22).
 const COLOR_FACE_HOVER := Color(0.95, 0.85, 0.45, 0.35)
-const COLOR_SKETCH := Color(0.30, 0.62, 0.96)
-const COLOR_CONSTRUCTION := Color(0.72, 0.55, 0.95)
+static func COLOR_SKETCH() -> Color:
+	return ThemeService.col("ink_free")
+static func COLOR_CONSTRUCTION() -> Color:
+	return ThemeService.col("ink_construction")
 ## Closed sketch regions render as translucent faces (Fusion-style) so an
 ## extrudable profile reads as a surface, not bare wireframe (QA §M18.1).
-const COLOR_REGION_FILL := Color(0.30, 0.62, 0.96, 0.12)
+static func COLOR_REGION_FILL() -> Color:
+	return ThemeService.col("region_fill")
 ## Profile-pick hover: the region under the cursor while Extrude waits.
 const COLOR_REGION_HOVER := Color(1.0, 0.72, 0.25, 0.35)
 ## How far a region fill sits BELOW its sketch plane (mm): under the sketch
@@ -30,10 +35,13 @@ const FILL_SINK_MM := 0.02
 ## environment's clear colour, sketch mode fills the 2D canvas with it, so
 ## switching modes does not change the colour under the work.
 const COLOR_BG := Color(0.13, 0.14, 0.16)
-const COLOR_BODY := Color(0.62, 0.66, 0.72)
-const COLOR_BODY_SELECTED := Color(1.0, 0.72, 0.25)
+static func COLOR_BODY() -> Color:
+	return ThemeService.col("body")
+static func COLOR_BODY_SELECTED() -> Color:
+	return ThemeService.col("body_selected")
 ## Solid edge overlay — dark, Fusion-style, so silhouettes read at any angle.
-const COLOR_BODY_EDGE := Color(0.10, 0.11, 0.13)
+static func COLOR_BODY_EDGE() -> Color:
+	return ThemeService.col("body_edge")
 const AXIS_LEN := 150.0
 ## Transparent draw order: the grid draws early among transparents.
 const GRID_RENDER_PRIORITY := -1
@@ -190,9 +198,9 @@ func _ready() -> void:
 func _build_axes() -> void:
 	var im := ImmediateMesh.new()
 	for axis: Array in [
-			[Vector3(AXIS_LEN, 0, 0), Color(0.85, 0.30, 0.30)],
-			[Vector3(0, AXIS_LEN, 0), Color(0.35, 0.80, 0.35)],
-			[Vector3(0, 0, AXIS_LEN), Color(0.35, 0.55, 0.95)]]:
+			[Vector3(AXIS_LEN, 0, 0), ThemeService.col("axis_x")],
+			[Vector3(0, AXIS_LEN, 0), ThemeService.col("axis_y")],
+			[Vector3(0, 0, AXIS_LEN), ThemeService.col("axis_z")]]:
 		im.surface_begin(Mesh.PRIMITIVE_LINES)
 		im.surface_set_color(axis[1])
 		im.surface_add_vertex(Vector3.ZERO)
@@ -449,6 +457,18 @@ func apply_theme() -> void:
 		if mat != null:
 			mat.set_shader_parameter("minor_color", ThemeService.col("grid_minor"))
 			mat.set_shader_parameter("major_color", ThemeService.col("grid_major"))
+	# Axes, origin planes, sketch lines and bodies bake their colors into
+	# materials at build time — rebuild them so a theme switch recolors the
+	# whole scene, not just the backdrop.
+	if _axes != null:
+		_axes.queue_free()
+		_axes = null
+		_build_axes()
+	for k in _plane_meshes:
+		var pm := _plane_meshes[k] as MeshInstance3D
+		if pm != null and pm.material_override is StandardMaterial3D:
+			(pm.material_override as StandardMaterial3D).albedo_color = COLOR_PLANE()
+	# Sketch lines + bodies: the owner calls rebuild_sketches after this.
 
 
 func set_grid_shown(shown: bool) -> void:
@@ -482,7 +502,7 @@ func _build_planes() -> void:
 		var mat := StandardMaterial3D.new()
 		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-		mat.albedo_color = COLOR_PLANE
+		mat.albedo_color = COLOR_PLANE()
 		mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 		mi.material_override = mat
 		mi.visible = false
@@ -629,10 +649,10 @@ func set_selected_body(fid: String) -> void:
 		if mat == null:
 			continue
 		# Deselecting restores the body's OWN appearance — painting plain
-		# COLOR_BODY here erased the M32 per-body color the moment the body
+		# COLOR_BODY() here erased the M32 per-body color the moment the body
 		# was deselected (QA §M27 issue note).
 		var mfid := String(mi.get_meta("feature_id"))
-		mat.albedo_color = COLOR_BODY_SELECTED if mfid == fid \
+		mat.albedo_color = COLOR_BODY_SELECTED() if mfid == fid \
 			else _body_base_color(mfid)
 
 
@@ -648,7 +668,7 @@ func _body_base_color(fid: String) -> Color:
 			var own: Color = b.get("color", Color(0, 0, 0, 0))
 			if own.a > 0.0:
 				return Color(own.r, own.g, own.b)
-	return COLOR_BODY
+	return COLOR_BODY()
 
 
 func _body_mesh(fid: String) -> MeshInstance3D:
@@ -684,7 +704,7 @@ func set_plane_hover(plane_name: String) -> void:
 	for k: String in _plane_meshes:
 		var mat := (_plane_meshes[k] as MeshInstance3D).material_override \
 			as StandardMaterial3D
-		mat.albedo_color = COLOR_PLANE_HOVER if k == plane_name else COLOR_PLANE
+		mat.albedo_color = COLOR_PLANE_HOVER() if k == plane_name else COLOR_PLANE()
 	for k: String in _cplane_meshes:
 		var cmat := (_cplane_meshes[k] as MeshInstance3D).material_override \
 			as StandardMaterial3D
@@ -935,8 +955,8 @@ func rebuild_sketches(doc: CadDocument) -> void:
 		# violet dashed look (M21 QA: it rendered exactly like normal
 		# geometry in the 3D view). Normal entities stay solid line strips.
 		var mats: Array = []
-		var mat_normal := _line_material(COLOR_SKETCH)
-		var mat_cons := _line_material(COLOR_CONSTRUCTION)
+		var mat_normal := _line_material(COLOR_SKETCH())
+		var mat_cons := _line_material(COLOR_CONSTRUCTION())
 		for e in sf.sketch.entities():
 			var pts := _entity_polyline(sf.sketch, e)
 			if pts.size() < 2:
@@ -976,7 +996,7 @@ func rebuild_sketches(doc: CadDocument) -> void:
 			fmi.name = sf.name + "Fill"
 			fmi.mesh = fill
 			fmi.set_meta("sketch_fill_for", sf.id)
-			fmi.material_override = _fill_material(COLOR_REGION_FILL, false)
+			fmi.material_override = _fill_material(COLOR_REGION_FILL(), false)
 			fmi.visible = sketch_shown(sf.id)
 			_sketch_root.add_child(fmi)
 	_rebuild_bodies(doc)
@@ -1146,8 +1166,8 @@ func show_axis_candidates(sf: SketchFeature) -> void:
 	var xf := sf.plane_transform()
 	var im := ImmediateMesh.new()
 	for axis: Array in [
-			[Vector2(-AXIS_LEN, 0), Vector2(AXIS_LEN, 0), Color(0.85, 0.30, 0.30)],
-			[Vector2(0, -AXIS_LEN), Vector2(0, AXIS_LEN), Color(0.35, 0.80, 0.35)]]:
+			[Vector2(-AXIS_LEN, 0), Vector2(AXIS_LEN, 0), ThemeService.col("axis_x")],
+			[Vector2(0, -AXIS_LEN), Vector2(0, AXIS_LEN), ThemeService.col("axis_y")]]:
 		im.surface_begin(Mesh.PRIMITIVE_LINES)
 		im.surface_set_color(axis[2])
 		var a: Vector2 = axis[0]
@@ -1414,8 +1434,8 @@ func _apply_bodies(bodies: Array) -> void:
 		var mat := StandardMaterial3D.new()
 		# Per-body appearance (M32): the root feature's color, when set.
 		var own: Color = b.get("color", Color(0, 0, 0, 0))
-		mat.albedo_color = COLOR_BODY_SELECTED if b["id"] == _selected_body \
-			else (Color(own.r, own.g, own.b) if own.a > 0.0 else COLOR_BODY)
+		mat.albedo_color = COLOR_BODY_SELECTED() if b["id"] == _selected_body \
+			else (Color(own.r, own.g, own.b) if own.a > 0.0 else COLOR_BODY())
 		mat.metallic = 0.1
 		mat.roughness = 0.7
 		# Double-sided: with a closed outward-wound shell the back faces are
@@ -1428,8 +1448,8 @@ func _apply_bodies(bodies: Array) -> void:
 		smi.set_surface_override_material(0, mat)
 		if mesh.get_surface_count() > 1 \
 				and mesh.surface_get_primitive_type(1) == Mesh.PRIMITIVE_LINES:
-			var emat := _line_material(COLOR_BODY_EDGE)
-			emat.albedo_color = COLOR_BODY_EDGE
+			var emat := _line_material(COLOR_BODY_EDGE())
+			emat.albedo_color = COLOR_BODY_EDGE()
 			smi.set_surface_override_material(1, emat)
 		smi.visible = _body_shown(b["id"])
 		_sketch_root.add_child(smi)

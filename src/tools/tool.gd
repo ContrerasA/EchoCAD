@@ -78,7 +78,7 @@ static func ghost(alpha: float) -> Color:
 
 
 static func _construction_tint(c: Color) -> Color:
-	var t := RenderBridge.COLOR_CONSTRUCTION
+	var t := RenderBridge.color_construction()
 	return Color(t.r, t.g, t.b, c.a)
 
 

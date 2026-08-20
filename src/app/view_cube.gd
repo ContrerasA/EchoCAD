@@ -21,6 +21,12 @@ var _cam: Camera3D = null
 var rotation_hint := Vector3.ZERO
 
 
+## Re-read the theme's body color (M36).
+func apply_theme() -> void:
+	if _cube != null and _cube.material_override is StandardMaterial3D:
+		(_cube.material_override as StandardMaterial3D).albedo_color = 			ThemeService.col("body")
+
+
 func _ready() -> void:
 	custom_minimum_size = Vector2(SIZE_PX, SIZE_PX)
 	stretch = true
@@ -41,7 +47,7 @@ func _ready() -> void:
 	_cube.mesh = box
 	var mat := StandardMaterial3D.new()
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_PER_VERTEX
-	mat.albedo_color = Color(0.75, 0.78, 0.84)
+	mat.albedo_color = ThemeService.col("body")
 	_cube.material_override = mat
 	root.add_child(_cube)
 	var light := DirectionalLight3D.new()

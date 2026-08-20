@@ -159,7 +159,7 @@ func _run() -> bool:
 		return _fail("no mesh for body " + bid)
 	# Bodies carry their shaded material on surface 0 (surface 1 = edges).
 	var mat := mesh.get_surface_override_material(0) as StandardMaterial3D
-	if mat.albedo_color != CadWorld.COLOR_BODY_SELECTED:
+	if mat.albedo_color != CadWorld.COLOR_BODY_SELECTED():
 		return _fail("selected body is not highlighted")
 	# Selecting must not touch the model — it is view state.
 	var depth := _root.stack.can_undo()
@@ -167,7 +167,7 @@ func _run() -> bool:
 	if _root.stack.can_undo() != depth:
 		return _fail("selecting a body pushed onto the command stack")
 	if (mesh.get_surface_override_material(0) as StandardMaterial3D).albedo_color \
-			!= CadWorld.COLOR_BODY:
+			!= CadWorld.COLOR_BODY():
 		return _fail("deselected body kept its highlight")
 
 	# --- hidden bodies are neither pickable nor framed --------------------

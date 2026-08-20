@@ -328,12 +328,13 @@ func _run() -> bool:
 	await _idle()
 
 	# --- I. ghost ink + dialog backdrops follow the theme ------------------
-	var was_dark := ThemeService.dark
-	ThemeService.dark = true
+	# M36: ink comes from the theme file, so switch themes for real.
+	var was_theme := ThemeService.theme_id
+	_root.set_dark_theme(true)
 	var g_dark := SketchTool.ghost(0.5)
-	ThemeService.dark = false
+	_root.set_dark_theme(false)
 	var g_light := SketchTool.ghost(0.5)
-	ThemeService.dark = was_dark
+	_root.set_theme_id(was_theme)
 	if g_dark.get_luminance() < 0.5 or g_light.get_luminance() > 0.5:
 		return _fail("I: ghost ink does not flip with the theme (dark %s / "
 			% str(g_dark) + "light %s)" % str(g_light))
