@@ -1019,7 +1019,7 @@ Run windowed at ≥1280×800. Default theme is Modernist Dark.
 - [X] **Menus**: File ▸ Save/Open/Import/Export/Preferences, Edit ▸
       Undo/Redo/Parameters, View ▸ Fit/Look At/Orthographic (check mark
       tracks the HUD toggle) + Theme radio list, Help ▸ About all work.
-- [ ] **Theme switch**: Preferences ▸ Theme → Modernist Light: chrome,
+- [X] **Theme switch**: Preferences ▸ Theme → Modernist Light: chrome,
       browser, viewport background, grids, sketch ink, axes, planes, bodies,
       badges, view cube, popups and dialogs all flip — no dark remnants
       (dialog TITLE BARS included). Classic Dark (blue) retints the accent
@@ -1028,7 +1028,7 @@ Run windowed at ≥1280×800. Default theme is Modernist Dark.
       survives restart.
       	Was [!]: dialog title bars stayed dark in light mode — fixed (see
       	"Fixes" below). Re-check.
-- [ ] **User theme**: Preferences ▸ Open themes folder → the folder opens
+- [X] **User theme**: Preferences ▸ Open themes folder → the folder opens
       with a `README.txt` and an `examples/` copy of every built-in theme.
       Copy `examples/modernist-dark.json` UP into the themes folder as
       `mine.json`, change `"id"` to `mine`, `"name"`, and `"red-500"` in the
@@ -1043,7 +1043,7 @@ Run windowed at ≥1280×800. Default theme is Modernist Dark.
       finish sketch, re-enter — ribbon, timeline and canvas all consistent.
 - [X] **Narrow window** (1024 wide): ribbon groups wrap to a second row
       rather than pushing buttons off-screen; nothing overlaps the HUD.
-- [ ] **Dialogs** (Extrude, Parameters, Preferences, file dialogs, About):
+- [X] **Dialogs** (Extrude, Parameters, Preferences, file dialogs, About):
       themed panel, accent primary button, readable in both appearances —
       title bar, close glyph and border follow the theme too.
       	Was [!]: see Theme switch. Re-check.
@@ -1051,32 +1051,33 @@ Run windowed at ≥1280×800. Default theme is Modernist Dark.
       `action.set_theme {theme: "modernist-light"}` switches live.
 
 ### Additional (round 1 notes → fixes)
-- [ ] **Menu bar alignment**: File / Edit / View / Help sit on the same
+- [X] **Menu bar alignment**: File / Edit / View / Help sit on the same
       centre line as the brand mark, "EchoCAD — file" and the unit badge.
-- [ ] **Ribbon icons + stacks**: icons are 24–26px. Rectangle, Circle, Arc,
+- [X] **Ribbon icons + stacks**: icons are 24–26px. Rectangle, Circle, Arc,
       Slot and Pattern are STACKS: a small triangle in the corner; right-click
       or press-and-hold (~0.45s) opens a flyout listing the variants
       (Circle ▸ 3-Pt Circle; Slot ▸ Overall / Center Pt; Arc ▸ 3-Pt / Center /
       Tangent; Rect Pattern ▸ Circ Pattern). Picking one activates it AND
       makes it the button's face; the face also follows keyboard shortcuts
       (press C… then the circle stack shows whichever circle tool is live).
-- [ ] **Group captions** (CREATE › …) are centred under their buttons.
-- [ ] **View cube**: ~150px, faces labelled FRONT / BACK / TOP / BOTTOM /
+- [X] **Group captions** (CREATE › …) are centred under their buttons.
+- [!] **View cube**: ~150px, faces labelled FRONT / BACK / TOP / BOTTOM /
       LEFT / RIGHT, X/Y/Z triad beside it in the axis colours; clicking a
       face still snaps the view; labels follow the theme (light mode too).
-- [ ] **Browser root component**: the tree's first row is the document
+      	It is dark gray. should be light gray cube, and there is clipping happening where we can't see the axis gizmos
+- [X] **Browser root component**: the tree's first row is the document
       ("Untitled" until saved, then the file stem) with a filled accent
       dot = active component; Origin / Construction / Sketches / Canvases /
       Bodies nest under it. Save As → the row renames.
-- [ ] **No File group** in the ribbon; Save / Open live in File ▸ (Ctrl+S /
+- [X] **No File group** in the ribbon; Save / Open live in File ▸ (Ctrl+S /
       Ctrl+O still work).
-- [ ] **Uniform buttons**: every ribbon button is the same icon square.
+- [X] **Uniform buttons**: every ribbon button is the same icon square.
       Preferences ▸ "Show tool names in the ribbon" (off by default) puts
       every title under its icon (ribbon grows); the setting survives
       restart; the stack face's title follows its current variant.
-- [ ] **Light-mode dialogs**: open File ▸ Open… in Modernist Light — title
+- [X] **Light-mode dialogs**: open File ▸ Open… in Modernist Light — title
       bar, border and close glyph are light; the title is readable.
-- [ ] **Menu shortcuts**: File / Edit / View entries show their shortcut
+- [X] **Menu shortcuts**: File / Edit / View entries show their shortcut
       right-aligned in a dimmer colour than the action text; the shortcut
       fires ONCE (Ctrl+Z from the canvas undoes one step, not two).
 
