@@ -865,6 +865,7 @@ Status: PENDING sign-off
     Does work, but can't chamfer and fillet edges on same body at same time (different edges)
 - [!] 4. Fillet Top rim on a CYLINDER. **Expect:** a smooth donut-edge cap.
     Makes me select every edge on the cylinder instead of just the chain. for curved objects, it makes sense to select a section / chain of edges that make up a curve. like in illustrator
+    Update: When trying to perform chamfer on cylinder get error: "Model Fillet/Chamfer failed: the cap failed to trangulate. one cap is already filleted, I'm just trying to chamfer the other cap
 - [X] 5. Edit the source sketch (resize the rect). **Expect:** treatment
    replays on the new shape.
 - [X] 6. Oversize (radius > half an edge / taller than the body).
@@ -926,6 +927,17 @@ filleting or chamfering two adjacent edges on a cube makes the other joining edg
   selects/deselects it as one. A box rim still picks edge-by-edge (its
   corners are sharp), and a rounded-rect rim chains straights + arcs into
   one loop. Covered by `tests/m37_qa_fixes.gd` (B, D).
+- Item 4 update (2026-08-20), "cap failed to triangulate" when chamfering
+  the second cap of a cylinder whose other cap is filleted: reproduced —
+  and broader than reported: ANY second treatment on the other rim of a
+  cylinder refused (fillet+fillet too). A body with two treatments goes
+  through the multi-edge builder, whose corner solve treated any turn under
+  ~11° as "parallel" and offset each edge along its own normal instead of
+  mitering; on a circle's ~5° polygon every cap vertex became a zigzag
+  pair, the boundary self-overlapped, and triangulation failed. Equal-inset
+  corners now use the closed-form bisector miter (stable at any turn
+  angle). All four fillet/chamfer pairings build watertight with the exact
+  ring volume removed. Covered by `tests/m38_qa_fixes.gd`.
 - Item 6 (2026-08-19): the timeline-chip size edit now VALIDATES before
   committing — an oversize entry (or one that breaks the combined build)
   shows the specific refusal in the status bar and keeps the dialog open;

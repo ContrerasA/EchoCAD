@@ -653,9 +653,20 @@ static func _build_multi_mesh(doc: CadDocument, ef: ExtrudeFeature,
 		var m1: Vector2 = norms_in[j]
 		var m2: Vector2 = norms_in[other]
 		var det := m1.x * m2.y - m1.y * m2.x
+		if absf(i_self - i_other) < 1e-9:
+			# Equal insets: the miter lies on the angle bisector at
+			# i / cos(turn/2) — closed form, stable at ANY turn angle
+			# (the determinant form below is ill-conditioned on the
+			# ~5° turns of a circle's polygon). QA §M35.4 update: the
+			# old "near-parallel -> offset along my own normal" shortcut
+			# gave every circle vertex TWO different points, so a second
+			# rim treatment on a cylinder produced a zigzag cap boundary
+			# that refused to triangulate.
+			var dn := 1.0 + m1.dot(m2)
+			if dn < 1e-6:
+				return {"p": v + m1 * i_self, "ok": false}   # reflex U-turn
+			return {"p": v + (m1 + m2) * (i_self / dn), "ok": true}
 		if absf(det) < 0.2:
-			if absf(i_self - i_other) < 1e-9:
-				return {"p": v + m1 * i_self, "ok": true}   # parallel: exact
 			return {"p": v + m1 * i_self, "ok": false}
 		return {"p": v + Vector2((i_self * m2.y - i_other * m1.y) / det,
 			(i_other * m1.x - i_self * m2.x) / det), "ok": true}
