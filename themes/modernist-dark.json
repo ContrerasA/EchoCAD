@@ -84,6 +84,8 @@
     "body":          "#aaa6a3",
     "body_selected": "@amber",
     "body_edge":     "@ink-3",
+    "view_cube":     "#cfcbc8",
+    "view_cube_text": "#2a2827",
     "hover":         "#ffe08c*0.35",
 
     "ink_free":            "@paper-5",

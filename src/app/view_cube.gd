@@ -1,16 +1,21 @@
-class_name ViewCube
+﻿class_name ViewCube
 extends SubViewportContainer
 ## Fusion-style view cube: a corner viewport with a labelled cube (FRONT /
-## TOP / RIGHT …) whose orientation mirrors the main camera, plus an X/Y/Z
+## TOP / RIGHT â€¦) whose orientation mirrors the main camera, plus an X/Y/Z
 ## axis triad under it; clicking a face snaps the main camera to that view.
 ## Face detection is math (ray vs box), no physics.
 
 signal face_picked(normal: Vector3, up: Vector3)
 
 const SIZE_PX := 150
-const CUBE_HALF := 22.0
+const CUBE_HALF := 20.0
 const CAM_DIST := 118.0
-const AXIS_LEN := 16.0
+const AXIS_LEN := 14.0
+## Camera-space offsets: the cube sits up-right of centre, the triad pinned
+## to the bottom-left corner of the widget (Fusion's layout) so neither ever
+## clips at the viewport edge whichever way the view turns.
+const CUBE_SHIFT := Vector3(-7.0, -8.0, 0.0)
+const TRIAD_AT := Vector3(-29.0, -31.0, 0.0)
 
 ## Face normal -> [label, on-screen up]. World is Z-up; the home view looks
 ## from -Y, so -Y is FRONT and +X is RIGHT (matches Fusion's default cube).
@@ -28,10 +33,11 @@ var _cam: Camera3D = null
 var _labels: Array = []        # Label3D per face
 var _axes: Array = []          # [{mesh: MeshInstance3D, label: Label3D, role}]
 var _edges: MeshInstance3D = null
+var _triad: Node3D = null
 
 ## Orientation to adopt in `_ready`. The rig emits `moved` from its own
 ## `_ready`, which runs before this widget exists, so the first sync would
-## otherwise not arrive until the user orbited — leaving the cube facing front
+## otherwise not arrive until the user orbited â€” leaving the cube facing front
 ## while the view sat at the 3/4 home angle. Owners set this before adding the
 ## node (or call `sync_orientation` right after) to start in agreement.
 var rotation_hint := Vector3.ZERO
@@ -43,11 +49,11 @@ func apply_theme() -> void:
 		(_cube.material_override as StandardMaterial3D).albedo_color = \
 			ThemeService.col("body")
 	for l in _labels:
-		(l as Label3D).modulate = ThemeService.col("body_edge")
+		(l as Label3D).modulate = ThemeService.col("view_cube_text")
 		(l as Label3D).font = ThemeService.font(ThemeService.font_weight("weight_bold"))
 	if _edges != null and _edges.material_override is StandardMaterial3D:
 		(_edges.material_override as StandardMaterial3D).albedo_color = \
-			ThemeService.col("body_edge")
+			ThemeService.col("view_cube_text")
 	for a: Dictionary in _axes:
 		var c := ThemeService.col(String(a["role"]))
 		((a["mesh"] as MeshInstance3D).material_override as StandardMaterial3D) \
@@ -86,7 +92,7 @@ func _ready() -> void:
 	_cube.mesh = box
 	var mat := StandardMaterial3D.new()
 	mat.shading_mode = BaseMaterial3D.SHADING_MODE_PER_VERTEX
-	mat.albedo_color = ThemeService.col("body")
+	mat.albedo_color = ThemeService.col("view_cube")
 	_cube.material_override = mat
 	root.add_child(_cube)
 	_build_edges(root)
@@ -103,7 +109,7 @@ func _ready() -> void:
 	root.add_child(_cam)
 	# Seed a defined orientation. The owner overwrites this with the rig's real
 	# rotation, but the cube must never sit in an unset pose waiting for the
-	# first orbit — that is exactly the bug this guards against.
+	# first orbit â€” that is exactly the bug this guards against.
 	sync_orientation(rotation_hint)
 
 
@@ -127,7 +133,7 @@ func _build_edges(root: Node3D) -> void:
 	_edges.mesh = im
 	var m := StandardMaterial3D.new()
 	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	m.albedo_color = ThemeService.col("body_edge")
+	m.albedo_color = ThemeService.col("view_cube_text")
 	_edges.material_override = m
 	root.add_child(_edges)
 
@@ -140,7 +146,7 @@ func _build_labels(root: Node3D) -> void:
 		l.font = ThemeService.font(ThemeService.font_weight("weight_bold"))
 		l.font_size = 64
 		l.pixel_size = 0.14
-		l.modulate = ThemeService.col("body_edge")
+		l.modulate = ThemeService.col("view_cube_text")
 		l.alpha_cut = Label3D.ALPHA_CUT_OPAQUE_PREPASS
 		l.double_sided = false
 		l.shaded = false
@@ -151,38 +157,41 @@ func _build_labels(root: Node3D) -> void:
 		_labels.append(l)
 
 
-## X/Y/Z triad from the cube's -X,-Y,-Z corner, in the viewport axis colors.
+## X/Y/Z triad in the viewport axis colors. Lives under `_triad`, which
+## sync_orientation pins to the widget's bottom-left corner (world-aligned,
+## so it turns with the view like the cube does).
 func _build_axes(root: Node3D) -> void:
-	# Off the cube's near-bottom corner, so the triad reads beside the cube
-	# rather than under its silhouette.
-	var origin := Vector3(-CUBE_HALF * 1.5, -CUBE_HALF * 1.5, -CUBE_HALF * 1.25)
+	_triad = Node3D.new()
+	_triad.name = "Triad"
+	root.add_child(_triad)
 	var defs := [[Vector3.RIGHT, "X", "axis_x"], [Vector3(0, 1, 0), "Y", "axis_y"],
 		[Vector3(0, 0, 1), "Z", "axis_z"]]
 	for d in defs:
 		var dir: Vector3 = d[0]
 		var im := ImmediateMesh.new()
 		im.surface_begin(Mesh.PRIMITIVE_LINES)
-		im.surface_add_vertex(origin)
-		im.surface_add_vertex(origin + dir * AXIS_LEN)
+		im.surface_add_vertex(Vector3.ZERO)
+		im.surface_add_vertex(dir * AXIS_LEN)
 		im.surface_end()
 		var mi := MeshInstance3D.new()
 		mi.mesh = im
 		var m := StandardMaterial3D.new()
 		m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		m.no_depth_test = true
 		m.albedo_color = ThemeService.col(String(d[2]))
 		mi.material_override = m
-		root.add_child(mi)
+		_triad.add_child(mi)
 		var l := Label3D.new()
 		l.text = String(d[1])
 		l.font = ThemeService.font(ThemeService.font_weight("weight_bold"))
 		l.font_size = 64
-		l.pixel_size = 0.16
+		l.pixel_size = 0.13
 		l.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 		l.no_depth_test = true
 		l.shaded = false
 		l.modulate = ThemeService.col(String(d[2]))
-		l.position = origin + dir * (AXIS_LEN + 5.0)
-		root.add_child(l)
+		l.position = dir * (AXIS_LEN + 4.0)
+		_triad.add_child(l)
 		_axes.append({"mesh": mi, "label": l, "role": d[2]})
 
 
@@ -192,7 +201,9 @@ func sync_orientation(rig_rotation: Vector3) -> void:
 	if _cam == null:
 		return
 	var b := Basis.from_euler(rig_rotation)
-	_cam.transform = Transform3D(b, b * Vector3(0, 0, CAM_DIST))
+	_cam.transform = Transform3D(b, b * (Vector3(0, 0, CAM_DIST) + CUBE_SHIFT))
+	if _triad != null:
+		_triad.position = _cam.transform * (TRIAD_AT + Vector3(0, 0, -CAM_DIST))
 
 
 func _gui_input(event: InputEvent) -> void:

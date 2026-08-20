@@ -57,6 +57,8 @@
     "plane_hover":   "#3b74c4*0.28",
     "body":          "#8f8b88",
     "body_edge":     "#4a4745",
+    "view_cube":     "#e4e2e0",
+    "view_cube_text": "#2a2827",
     "hover":         "#e08c00*0.35",
 
     "ink_reference":       "#73808c*0.75",

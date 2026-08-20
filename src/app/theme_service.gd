@@ -78,6 +78,7 @@ const FALLBACK_COLORS := {
 	"axis_x": "#e05a4a", "axis_y": "#7fc97f", "axis_z": "#6f9fd8",
 	"plane": "#8ca6d91a", "plane_hover": "#8cbfff47",
 	"body": "#9e9a97", "body_selected": "#ffb840", "body_edge": "#1a1919",
+	"view_cube": "#cfcbc8", "view_cube_text": "#2a2827",
 	"hover": "#ffe08c59",
 	# sketch ink
 	"ink_free": "#f0edeb", "ink_constrained": "#7fc97f",

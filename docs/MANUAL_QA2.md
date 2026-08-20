@@ -1061,10 +1061,15 @@ Run windowed at ≥1280×800. Default theme is Modernist Dark.
       makes it the button's face; the face also follows keyboard shortcuts
       (press C… then the circle stack shows whichever circle tool is live).
 - [X] **Group captions** (CREATE › …) are centred under their buttons.
-- [!] **View cube**: ~150px, faces labelled FRONT / BACK / TOP / BOTTOM /
-      LEFT / RIGHT, X/Y/Z triad beside it in the axis colours; clicking a
-      face still snaps the view; labels follow the theme (light mode too).
-      	It is dark gray. should be light gray cube, and there is clipping happening where we can't see the axis gizmos
+- [ ] **View cube**: ~150px, light-grey cube (`view_cube` role) with
+      FRONT / BACK / TOP / BOTTOM / LEFT / RIGHT on the faces, X/Y/Z triad
+      pinned to the widget's bottom-left corner (never clipped, turns with
+      the view); clicking a face still snaps the view; cube + labels follow
+      the theme (light mode too).
+      	Round 1 [!] "dark gray cube, axis gizmo clipped": cube now uses the
+      	new `view_cube` / `view_cube_text` colour roles (light grey, dark
+      	text); the triad is placed in camera space at the widget corner
+      	instead of off the cube's corner. Re-check.
 - [X] **Browser root component**: the tree's first row is the document
       ("Untitled" until saved, then the file stem) with a filled accent
       dot = active component; Origin / Construction / Sketches / Canvases /
