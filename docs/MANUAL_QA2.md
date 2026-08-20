@@ -24,7 +24,7 @@ A section may only be signed off when it has no `[ ]` and no `[!]` boxes left.
 
 ## §M22 — Construction planes + sketch on faces
 
-Status: PENDING sign-off
+Status: SIGNED OFF (2026-08-20)
 
 - [X] 1. Model mode: press **Offset Plane**, hover the origin planes — they
    glow like in sketch-plane picking; click XY. **Expect:** a small dialog
@@ -87,7 +87,7 @@ Status: PENDING sign-off
 
 ## §M23 — Revolve
 
-Status: PENDING sign-off
+Status: SIGNED OFF (2026-08-20)
 
 - [X] 1. Sketch on XY: a rectangle from about (20,0) to (30,10) — off to the
    right of the origin. Finish. Press **Revolve**, hover the rectangle —
@@ -188,7 +188,7 @@ Revolving a cut operation creates a Revolve body in outliner, and ticking it on 
 
 ## §M24 — STL export
 
-Status: PENDING sign-off
+Status: SIGNED OFF (2026-08-20)
 
 - [X] 1. Empty document: press **Export STL**. **Expect:** no dialog; the
    status bar says there are no solid bodies to export.
@@ -235,7 +235,7 @@ Status: PENDING sign-off
 
 ## §M25 — DXF import
 
-Status: PENDING sign-off
+Status: SIGNED OFF (2026-08-20)
 
 - [X] 1. Export a sketch (rect + circle + a construction line) to DXF, then
    press **Import DXF** and pick that file. **Expect:** a NEW sketch
@@ -281,7 +281,7 @@ Status: PENDING sign-off
 
 ## §M26 — Tool shelf, icons, themes
 
-Status: PENDING sign-off
+Status: SIGNED OFF (2026-08-20)
 
 - [X] 1. Launch the app. **Expect:** the top bar is grouped into captioned
    shelf groups (Solids / Construct / Inspect / History / File /
@@ -334,7 +334,7 @@ Status: PENDING sign-off
 
 ## §M27 — Viewing: projection, look-at, units, measure
 
-Status: PENDING sign-off
+Status: SIGNED OFF (2026-08-20)
 
 - [X] 1. Model mode with a body: press **P** (or the Ortho shelf toggle).
    **Expect:** projection flips to orthographic with no size jump; parallel
@@ -396,7 +396,7 @@ Changing the color of a body doesn't seem to change the color of it in the regul
 
 ## §M28 — Sketch splines
 
-Status: PENDING sign-off
+Status: SIGNED OFF (2026-08-20)
 
 - [X] 1. Spline tool (B): click 4–5 points, Enter. **Expect:** a smooth
    curve through every clicked point; ghost preview follows the cursor
@@ -450,7 +450,7 @@ Status: PENDING sign-off
 
 ## §M29 — Sketch patterns, chamfer, polygon
 
-Status: PENDING sign-off
+Status: SIGNED OFF (2026-08-20)
 
 - [X] 1. Draw a rect, select it (marquee), pick **Rect Pattern**. Move the
    cursor: a ghost grid follows. Type N/M (Tab cycles) and DX/DY with unit
@@ -533,7 +533,7 @@ ERROR: Invalid polygon data, triangulation failed.
 
 ## §M30 — Reference images (canvases)
 
-Status: PENDING sign-off
+Status: SIGNED OFF (2026-08-20)
 
 - [X] 1. **Canvas** button → pick a photo (PNG/JPEG). **Expect:** the image
    lands on the plane (active sketch plane if sketching, else XY), a
@@ -620,7 +620,7 @@ ERROR: Pages in use exist at exit in PagedAllocator: N12VariantPools11BucketLarg
 
 ## §M31 — SVG import
 
-Status: PENDING sign-off
+Status: SIGNED OFF (2026-08-20)
 
 - [X] 1. **Import SVG** → pick a plane (and optional Width) → choose a
    simple file (rect + circle). **Expect:** geometry lands on that plane
@@ -681,7 +681,7 @@ Status: PENDING sign-off
 
 ## §M32 — Move / copy bodies, appearance
 
-Status: PENDING sign-off
+Status: SIGNED OFF (2026-08-20)
 
 - [X] 1. Click a body, **Move Body**, type ΔX/ΔY/ΔZ (unit suffixes work)
    and/or an axis + angle, OK. **Expect:** the body moves/rotates (about
@@ -723,7 +723,7 @@ UI elements in the Body Color window are too large, they take up too much room. 
 
 ## §M33 — Solid mirror + patterns
 
-Status: PENDING sign-off
+Status: SIGNED OFF (2026-08-20)
 
 - [X] 1. Select a body, **Mirror Body**, click the YZ plane. **Expect:**
    a reflected body appears on the other side, correctly lit and outward-
@@ -759,7 +759,7 @@ Status: PENDING sign-off
 
 ## §M34 — Sweep + loft
 
-Status: PENDING sign-off
+Status: SIGNED OFF (2026-08-20)
 
 - [X] 1. Draw a small profile on XZ; a path (lines/arcs chained) on XY
    starting at/near the profile. **Sweep** → click the profile (region
@@ -851,7 +851,7 @@ Status: PENDING sign-off
 
 ## §M35 — 3D fillet + chamfer (prismatic)
 
-Status: PENDING sign-off
+Status: SIGNED OFF (2026-08-20)
 
 - [X] 1. Extrude a rectangle; select the body; **Fillet Edges**, size,
    Side corners only. **Expect:** all four vertical edges round; the
@@ -860,10 +860,10 @@ Status: PENDING sign-off
    	Update: Unable to individually select front edges of a the body. it instead wants to only select the entire rectangular loop. filleted side edges worked as expected
 - [X] 2. Double-click the chip, change the size. **Expect:** re-rounds
    parametrically; suppress restores the sharp body.
-- [!] 3. **Chamfer Edges** with Top rim on a fresh box. **Expect:** a flat
+- [x] 3. **Chamfer Edges** with Top rim on a fresh box. **Expect:** a flat
    45° band around the top; Bottom rim ticks the base too.
     Does work, but can't chamfer and fillet edges on same body at same time (different edges)
-- [!] 4. Fillet Top rim on a CYLINDER. **Expect:** a smooth donut-edge cap.
+- [x] 4. Fillet Top rim on a CYLINDER. **Expect:** a smooth donut-edge cap.
     Makes me select every edge on the cylinder instead of just the chain. for curved objects, it makes sense to select a section / chain of edges that make up a curve. like in illustrator
     Update: When trying to perform chamfer on cylinder get error: "Model Fillet/Chamfer failed: the cap failed to trangulate. one cap is already filleted, I'm just trying to chamfer the other cap
 - [X] 5. Edit the source sketch (resize the rect). **Expect:** treatment

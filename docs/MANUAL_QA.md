@@ -25,7 +25,7 @@ A section may only be signed off when it has no `[ ]` and no `[!]` boxes left.
 
 ## §M2 — 3D shell + sketch mode
 
-Status: PENDING sign-off
+Status: SIGNED OFF (2026-08-20)
 
 - [x] 1. Launch the app. **Expect:** window opens; 3D view with red/green/blue
    origin axes; the browser tree sits on the left with "Origin" and "Bodies"
@@ -126,7 +126,7 @@ Status: PENDING sign-off
 - [x] 24. Untick "Grid" under Origin in the browser. **Expect:** the grid
     disappears, in both model and sketch mode, and stays gone across a
     sketch enter/exit round trip until re-ticked.
-- [!] 25. With Sketch1 finished and containing geometry, create Sketch2 on the
+- [x] 25. With Sketch1 finished and containing geometry, create Sketch2 on the
     same plane. **Expect:** Sketch1's geometry is still visible in the 2D
     canvas, drawn dimly as reference, and Sketch2's own geometry draws on
     top at full strength, and the 3D model (solids from earlier extrudes)
@@ -396,7 +396,7 @@ reference-sketch rendering.
 
 ## §M3 — Automation API
 
-Status: PENDING sign-off
+Status: SIGNED OFF (2026-08-20)
 
 - [x] 1. Launch `godot --path . -- --automation-port=4777`, then run
    `python3 tests/rpc/demo_tour.py`. **Expect:** the app visibly orbits,
@@ -450,7 +450,7 @@ Consequences, so this is not re-litigated later:
 
 ## §M4 — Line tool, snapping, inference
 
-Status: PENDING sign-off
+Status: SIGNED OFF (2026-08-20)
 
 - [x] 1. Enter a sketch. **Expect:** toolbar shows Select / Line / Point; Select
    active; status bar shows cursor coordinates in inches as you move.
@@ -533,7 +533,7 @@ Fix log:
 
 ## §M5 — Rectangle + circle
 
-Status: PENDING sign-off
+Status: SIGNED OFF (2026-08-20)
 
 - [x] 1. Rectangle (R): click two corners. **Expect:** live preview; result is 4
    lines with shared corner points; top/bottom horizontal, sides vertical
@@ -557,7 +557,7 @@ Fix log:
 
 ## §M6 — Arcs + constraint solver
 
-Status: PENDING sign-off
+Status: SIGNED OFF (2026-08-20)
 
 - [x] 1. 3-Pt Arc (A): click start, end, then a bulge point — preview follows the
    third pick, arc lands through all three. Winding matches the bulge side.
@@ -774,7 +774,7 @@ Fix log:
 
 ## §M7 — Constraint palette + DOF UI
 
-Status: PENDING sign-off
+Status: SIGNED OFF (2026-08-20)
 
 - [X] 1. In a sketch, the constraint bar shows Coincident/H/V/Parallel/
    Perpendicular/Collinear/Equal/Midpoint/Concentric/Tangent/PointOn/Fix/
@@ -838,7 +838,7 @@ Fix log:
 
 ## §M8 — Dimensions + parameters
 
-Status: PENDING sign-off
+Status: SIGNED OFF (2026-08-20)
 
 - [X] 1. Smart Dimension (D): click a line — a live dimension follows the cursor
    showing its length; click empty space to park it. Extension lines,
@@ -907,7 +907,7 @@ Fix log:
 
 ## §M9 — Slot tool
 
-Status: PENDING sign-off
+Status: SIGNED OFF (2026-08-20)
 
 - [X] 1. Slot (S) — center-to-center: click two center points, move the cursor
    off-axis (live outline + W readout follows), click to set width. Result:
@@ -942,7 +942,7 @@ Fix log:
 
 ## §M10 — Modify tools
 
-Status: PENDING sign-off
+Status: SIGNED OFF (2026-08-20)
 
 - [X] 1. Trim (T): draw crossing geometry; hovering a piece highlights exactly
    the doomed span (red, thick) between its nearest intersections; click
@@ -1032,7 +1032,7 @@ Fix log:
 
 ## §M11 — Timeline
 
-Status: PENDING sign-off
+Status: SIGNED OFF (2026-08-20)
 
 - [X] 1. The timeline bar (above the status bar) shows one chip per feature in
    order, with the ‖ rollback marker after the last.
@@ -1058,7 +1058,7 @@ Fix log:
 
 ## §M12 — Extrude
 
-Status: PENDING sign-off
+Status: SIGNED OFF (2026-08-20)
 
 - [X] 1. Sketch a closed rectangle on XY, Finish, click Extrude, then click
    inside the rectangle in the 3D view. **Expect:** a distance dialog;
@@ -1122,7 +1122,7 @@ Fix log:
 
 ## §M14 — Orbitable sketch view
 
-Status: PENDING sign-off
+Status: SIGNED OFF (2026-08-20)
 
 - [X] 1. Enter a sketch (any plane), draw a rectangle, pan/zoom somewhere
    deliberate. Shift+MMB drag. **Expect:** the view orbits away from the
@@ -1158,7 +1158,7 @@ Fix log:
 
 ## §M15 — Project / reference geometry
 
-Status: PENDING sign-off
+Status: SIGNED OFF (2026-08-20)
 
 - [X] 1. Sketch a rectangle on XY, Finish. New sketch on XY — the rectangle
    shows dimmed. Click Project, hover the dimmed edges. **Expect:** amber
@@ -1182,7 +1182,7 @@ Status: PENDING sign-off
 
 ## §M16 — Threaded solver
 
-Status: PENDING sign-off
+Status: SIGNED OFF (2026-08-20)
 
 - [~] 1. Build a heavily constrained sketch (100+ entities: rects, slots,
    fillets, dimensions). Drag an under-constrained point around fast.
@@ -1207,7 +1207,7 @@ Fix log:
 
 ## §M17 — Per-DOF drag (rails)
 
-Status: PENDING sign-off
+Status: SIGNED OFF (2026-08-20)
 
 - [X] 1. Two lines, Parallel between them. Drag an endpoint of one around.
    **Expect:** it slides along the line's direction; the OTHER line never
@@ -1258,7 +1258,7 @@ Fix log:
 
 ## §M18 — Extrude holes + booleans
 
-Status: PENDING sign-off
+Status: SIGNED OFF (2026-08-20)
 
 - [X] 1. Sketch on XY: rectangle, then a circle inside it. Finish. Extrude,
    hover/click the RING between rect and circle. **Expect:** the extrude
@@ -1396,7 +1396,7 @@ Fix log:
 
 ## §M19 — Modify-tool constraint upkeep
 
-Status: PENDING sign-off
+Status: SIGNED OFF (2026-08-20)
 
 - [X] 1. Rectangle, then Offset (O) and a single click on ONE edge.
    **Expect:** the whole rectangle offsets as a ring, not just that edge;
@@ -1559,7 +1559,7 @@ Status: Signed off 2026-08-17
 
 ## §M21 — DXF export
 
-Status: PENDING sign-off
+Status: SIGNED OFF (2026-08-20)
 
 - [X] 1. Sketch with a line, circle, arc, slot, and a construction line
    (select any curve and press **X** to toggle it construction — fix 1).
