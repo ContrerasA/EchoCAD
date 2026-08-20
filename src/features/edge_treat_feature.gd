@@ -121,12 +121,16 @@ static func treat_corners_mapped(poly: PackedVector2Array, p_treat: String,
 
 ## Per-corner variant: `cmap` maps a polygon index to {treat, size}, so a
 ## fillet and a chamfer can live on the same profile (QA §M35.3 — stacked
-## treatments). Same contract as treat_corners_mapped otherwise.
+## treatments). Also returns "ctr": per out-vertex, the fillet corner-arc
+## CENTER (null off the arcs) — the vertex-blend builder offsets arc
+## vertices radially toward it (a chord-normal offset opens cracks between
+## the fan's bands). Same contract as treat_corners_mapped otherwise.
 static func treat_corners_multi(poly: PackedVector2Array,
 		cmap: Dictionary) -> Dictionary:
 	var n := poly.size()
 	var out := PackedVector2Array()
 	var seg: Array = []
+	var ctr: Array = []
 	for i in n:
 		var prev := poly[(i - 1 + n) % n]
 		var cur := poly[i]
@@ -134,6 +138,7 @@ static func treat_corners_multi(poly: PackedVector2Array,
 		if not corner_eligible(prev, cur, next) or not cmap.has(i):
 			out.append(cur)
 			seg.append(i)
+			ctr.append(null)
 			continue
 		var prm: Dictionary = cmap[i]
 		var p_treat := String(prm["treat"])
@@ -145,14 +150,17 @@ static func treat_corners_multi(poly: PackedVector2Array,
 			else size / tan(theta * 0.5)
 		if leg > prev.distance_to(cur) * 0.5 - 1e-6 \
 				or leg > next.distance_to(cur) * 0.5 - 1e-6:
-			return {"poly": PackedVector2Array(), "seg": []}   # does not fit
+			# does not fit
+			return {"poly": PackedVector2Array(), "seg": [], "ctr": []}
 		var t1 := cur + u * leg
 		var t2 := cur + w * leg
 		if p_treat == KIND_CHAMFER:
 			out.append(t1)
 			seg.append(-1)
+			ctr.append(null)
 			out.append(t2)
 			seg.append(i)
+			ctr.append(null)
 			continue
 		var bis := (u + w).normalized()
 		var center := cur + bis * (size / sin(theta * 0.5))
@@ -163,7 +171,8 @@ static func treat_corners_multi(poly: PackedVector2Array,
 			var a := a0 + sweep * k / CORNER_ARC_STEPS
 			out.append(center + Vector2(cos(a), sin(a)) * size)
 			seg.append(i if k == CORNER_ARC_STEPS else -1)
-	return {"poly": out, "seg": seg}
+			ctr.append(center)
+	return {"poly": out, "seg": seg, "ctr": ctr}
 
 
 ## The selectable edges of `ef`'s prismatic body, for the M35 viewport
@@ -525,12 +534,15 @@ static func _build_multi_mesh(doc: CadDocument, ef: ExtrudeFeature,
 			return null
 	var poly := poly0
 	var seg: Array = []
+	var ctr: Array = []
 	for i in n0:
 		seg.append(i)
+		ctr.append(null)
 	if not cmap.is_empty():
 		var mapped := treat_corners_multi(poly0, cmap)
 		poly = mapped["poly"]
 		seg = mapped["seg"]
+		ctr = mapped["ctr"]
 		if poly.is_empty():
 			build_error = "corner size too large for its edges"
 			return null
@@ -542,6 +554,45 @@ static func _build_multi_mesh(doc: CadDocument, ef: ExtrudeFeature,
 		var s0 := int(seg[j])
 		pt.append(tmap.get(s0) if s0 >= 0 else null)
 		pb.append(bmap.get(s0) if s0 >= 0 else null)
+	# VERTEX BLENDS (QA §M35 round 3, the "odd meeting point"): where a
+	# treated lateral corner meets rim treatments on BOTH flanking edges
+	# with the SAME {kind, size}, the corner's cut/arc edges inherit the
+	# rim treatment — the generic band code then sweeps the standard blend
+	# for free: a 45° diagonal band on a chamfer corner, and the true
+	# sphere-octant "ball corner" on a fillet corner (the plan offset of
+	# the corner arc IS the sphere's latitude circle). A one-sided or
+	# mixed corner refuses — no joint surface exists at this tier (the old
+	# code silently emitted a non-manifold mess there).
+	if not cmap.is_empty():
+		var jr := 0
+		while jr < m:
+			if int(seg[jr]) >= 0:
+				jr += 1
+				continue
+			var j0 := jr   # run of corner-cut edges [j0, jr)
+			while jr < m and int(seg[jr]) < 0:
+				jr += 1
+			var c := int(seg[jr % m])          # the corner's original index
+			var prev := int(seg[(j0 - 1 + m) % m])
+			for rims: Array in [[tmap, pt], [bmap, pb]]:
+				var rmap: Dictionary = rims[0]
+				var arr: Array = rims[1]
+				var a_p: Variant = rmap.get(prev)
+				var b_p: Variant = rmap.get(c)
+				if a_p == null and b_p == null:
+					continue   # rim stays sharp across this corner
+				if a_p == null or b_p == null \
+						or not _same_param(a_p as Dictionary,
+							b_p as Dictionary) \
+						or not _same_param(a_p as Dictionary,
+							cmap[c] as Dictionary):
+					build_error = ("a treated corner blends only when the "
+						+ "corner and BOTH its edges carry the same "
+						+ "treatment and size — pick them together, or "
+						+ "leave the corner edges untreated")
+					return null
+				for jj in range(j0, jr):
+					arr[jj] = a_p
 	# Mixed treatments meeting at a shared corner: no joint curve exists at
 	# this tier (a chamfer cone and a fillet torus don't meet in a line).
 	for j in m:
@@ -579,7 +630,25 @@ static func _build_multi_mesh(doc: CadDocument, ef: ExtrudeFeature,
 	# caller falls back to a plain offset plus a sealing end fan.
 	var corner_off := func(j: int, lead: bool, i_self: float,
 			i_other: float) -> Dictionary:
-		var v := poly[j] if lead else poly[(j + 1) % m]
+		var vidx := j if lead else (j + 1) % m
+		var v := poly[vidx]
+		# Fillet corner-ARC vertices offset RADIALLY toward the arc center:
+		# the offset of the arc at inset i is the exact latitude circle of
+		# the vertex-blend sphere (radius s - i). The generic chord-normal
+		# parallel branch below is only approximate there and opens cracks
+		# between the fan's bands (and piles a zigzag blob at the cap pole).
+		if ctr[vidx] != null and absf(i_self - i_other) < 1e-9:
+			var co: Vector2 = ctr[vidx]
+			var rad := v - co
+			var rl := rad.length()
+			# rl comes back through float32 storage: at the cap the inset
+			# equals the radius only to ~1e-6, so clamp instead of reject
+			# (the pole collapse there is exactly the intended blend).
+			if rl > 1e-9 and i_self <= rl + rl * 1e-4 + 1e-6:
+				var f := maxf(rl - i_self, 0.0) / rl
+				if f < 1e-5:
+					f = 0.0   # snap the cap pole exactly — no slivers
+				return {"p": co + rad * f, "ok": true}
 		var other := (j - 1 + m) % m if lead else (j + 1) % m
 		var m1: Vector2 = norms_in[j]
 		var m2: Vector2 = norms_in[other]
@@ -592,6 +661,11 @@ static func _build_multi_mesh(doc: CadDocument, ef: ExtrudeFeature,
 			(i_other * m1.x - i_self * m2.x) / det), "ok": true}
 
 	var tris := PackedVector3Array()   # local coords, z in 0..h
+	# Zero-area triangles appear where blend stations collapse (a fillet
+	# ball corner's cap pole) — skip them at emit time.
+	var add_tri := func(a3: Vector3, b3: Vector3, c3: Vector3) -> void:
+		if ((b3 - a3).cross(c3 - a3)).length_squared() > 1e-16:
+			tris.append_array([a3, b3, c3])
 
 	# Band strips + (fallback) end fans, per treated edge, per rim. Each
 	# edge uses its OWN schedule; a mitered neighbor shares it (equal
@@ -610,11 +684,14 @@ static func _build_multi_mesh(doc: CadDocument, ef: ExtrudeFeature,
 			var lead_on: bool = arr_e[(j - 1 + m) % m] != null
 			var trail_on: bool = arr_e[(j + 1) % m] != null
 			# Fit: the cap-level ring must keep some edge length.
+			# Corner-cut edges (seg < 0) skip the fit check: a fillet ball
+			# corner legitimately collapses to the cap pole.
 			var pk: Dictionary = corner_off.call(j, true, sz,
 				sz if lead_on else 0.0)
 			var qk: Dictionary = corner_off.call(j, false, sz,
 				sz if trail_on else 0.0)
-			if (pk["p"] as Vector2).distance_to(qk["p"] as Vector2) < 1e-6:
+			if int(seg[j]) >= 0 and (pk["p"] as Vector2).distance_to(
+					qk["p"] as Vector2) < 1e-6:
 				build_error = "size too large for an edge"
 				return null
 			for k in ks - 1:
@@ -631,17 +708,15 @@ static func _build_multi_mesh(doc: CadDocument, ef: ExtrudeFeature,
 				var qb: Vector2 = corner_off.call(j, false, ib,
 					ib if trail_on else 0.0)["p"]
 				if is_top:
-					tris.append_array([
-						Vector3(pa.x, pa.y, za), Vector3(qa.x, qa.y, za),
-						Vector3(qb.x, qb.y, zb),
-						Vector3(pa.x, pa.y, za), Vector3(qb.x, qb.y, zb),
-						Vector3(pb2.x, pb2.y, zb)])
+					add_tri.call(Vector3(pa.x, pa.y, za),
+						Vector3(qa.x, qa.y, za), Vector3(qb.x, qb.y, zb))
+					add_tri.call(Vector3(pa.x, pa.y, za),
+						Vector3(qb.x, qb.y, zb), Vector3(pb2.x, pb2.y, zb))
 				else:
-					tris.append_array([
-						Vector3(pb2.x, pb2.y, zb), Vector3(qb.x, qb.y, zb),
-						Vector3(qa.x, qa.y, za),
-						Vector3(pb2.x, pb2.y, zb), Vector3(qa.x, qa.y, za),
-						Vector3(pa.x, pa.y, za)])
+					add_tri.call(Vector3(pb2.x, pb2.y, zb),
+						Vector3(qb.x, qb.y, zb), Vector3(qa.x, qa.y, za))
+					add_tri.call(Vector3(pb2.x, pb2.y, zb),
+						Vector3(qa.x, qa.y, za), Vector3(pa.x, pa.y, za))
 			# Sealing fans only for near-parallel fallback ends.
 			for lead in [true, false]:
 				var other := (j - 1 + m) % m if lead else (j + 1) % m
@@ -739,9 +814,11 @@ static func _build_multi_mesh(doc: CadDocument, ef: ExtrudeFeature,
 				wpoly[wpoly.size() - 1]) <= 1e-7:
 			wpoly.remove_at(wpoly.size() - 1)
 		if wpoly.size() < 3:
+			build_error = "a wall degenerated (edge too short for the size)"
 			return null
 		var widx := Geometry2D.triangulate_polygon(wpoly)
 		if widx.is_empty():
+			build_error = "a wall failed to triangulate"
 			return null
 		# A CCW (u, z) triangle maps to the OUTWARD wall normal (-inward).
 		var t := 0
@@ -778,6 +855,7 @@ static func _build_multi_mesh(doc: CadDocument, ef: ExtrudeFeature,
 			return null   # inset crossed itself — size too big for the edge
 		var idx := Geometry2D.triangulate_polygon(boundary)
 		if idx.is_empty():
+			build_error = "the cap failed to triangulate"
 			return null
 		var zc := h if is_top else 0.0
 		var t2 := 0

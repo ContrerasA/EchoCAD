@@ -931,6 +931,28 @@ filleting or chamfering two adjacent edges on a cube makes the other joining edg
   shows the specific refusal in the status bar and keeps the dialog open;
   previously the bad size was committed and replay silently kept the
   untreated body. Covered by `tests/m37_qa_fixes.gd` (C).
+- "New Issues" / odd meeting point (2026-08-19), researched + fixed. What
+  the probe found: two adjacent treated edges on the SAME rim were already
+  correct — the crease between them is the exact cylinder-cylinder
+  intersection, the same result Fusion's rolling-ball gives there. The
+  actually-broken case was a treated VERTICAL corner meeting a treated top
+  edge at a shared vertex: the mesh there was non-manifold (overlapping
+  band, full-height corner wall and cap fighting each other) — that is the
+  odd meeting point. The correct blends, per how rolling-ball kernels
+  (Parasolid et al) handle a vertex where treated edges meet:
+  fillet = a SPHERE-OCTANT ball corner (the corner arc's plan offset is
+  exactly the sphere's latitude circle), chamfer = a 45° corner band.
+  Implemented: when a treated corner and BOTH its flanking rim edges carry
+  the same {kind, size}, the corner's cut/arc edges inherit the rim
+  treatment and the band builder sweeps the blend (corner-arc vertices
+  offset RADIALLY toward the arc center — exact latitude points, no
+  cracks; the cap pole snaps exact). Volumes match the analytic sphere-
+  octant/corner-band values within tessellation error and the meshes are
+  watertight. One-sided or mixed-size corners now REFUSE with a hint
+  instead of emitting the broken mesh ("a treated corner blends only when
+  the corner and BOTH its edges carry the same treatment and size").
+  Refusal messages also name the failing stage (wall/cap triangulation)
+  instead of returning silently. Covered by `tests/m37_qa_fixes.gd` (E).
 
 ### Additional
 commit changes

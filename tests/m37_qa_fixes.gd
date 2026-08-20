@@ -11,6 +11,11 @@ extends SceneTree
 #     an oversize entry refuses with a hint and no timeline change.
 #  D. Hover follows the chain: hovering one cylinder rim segment highlights
 #     the whole rim.
+#  E. §M35 "odd meeting point" — vertex blends where a treated lateral
+#     corner meets treated rim edges: fillet gets the true ball corner
+#     (sphere octant, analytic volume), chamfer gets the 45° corner band;
+#     both watertight. One-sided combos refuse (they used to emit a
+#     non-manifold mess).
 
 var _root: AppRoot = null
 
@@ -54,6 +59,36 @@ func _body_volume(bodies: Array, body_id: String) -> float:
 		if String(b["id"]) == body_id:
 			return BodyBuilder.mesh_volume(b["mesh"])
 	return -1.0
+
+
+func _body_mesh(bodies: Array, body_id: String) -> ArrayMesh:
+	for b: Dictionary in bodies:
+		if String(b["id"]) == body_id:
+			return b["mesh"]
+	return null
+
+
+## Closed 2-manifold check: every directed edge appears exactly once and
+## its reverse exactly once.
+func _manifold_ok(mesh: ArrayMesh) -> bool:
+	var verts: PackedVector3Array = mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]
+	var edges := {}
+	var t := 0
+	while t + 2 < verts.size():
+		for pair in [[verts[t], verts[t + 1]], [verts[t + 1], verts[t + 2]],
+				[verts[t + 2], verts[t]]]:
+			var k := "%.4f,%.4f,%.4f|%.4f,%.4f,%.4f" % [
+				(pair[0] as Vector3).x, (pair[0] as Vector3).y,
+				(pair[0] as Vector3).z, (pair[1] as Vector3).x,
+				(pair[1] as Vector3).y, (pair[1] as Vector3).z]
+			edges[k] = int(edges.get(k, 0)) + 1
+		t += 3
+	for k in edges:
+		var parts: PackedStringArray = String(k).split("|")
+		if int(edges[k]) != 1 \
+				or int(edges.get(parts[1] + "|" + parts[0], 0)) != 1:
+			return false
+	return true
 
 
 func _run() -> bool:
@@ -175,6 +210,46 @@ func _run() -> bool:
 		return _fail("B: cylinder top rim should be ONE chain, got %d"
 			% cyl_chains.size())
 
+	# --- E. §M35 vertex blends (the "odd meeting point") --------------------
+	var cshared := (seg40 + 1) % poly.size()
+	var seg_side2 := (seg40 + 1) % poly.size()
+	# One-sided: lateral corner + only ONE flanking rim edge — refuse.
+	if _root.edge_treat(box_id, EdgeTreatFeature.KIND_FILLET, 3.0,
+			true, true, false, [cshared], [seg40]) != "":
+		return _fail("E: one-sided corner blend accepted (was non-manifold)")
+	# Ball corner: lateral + BOTH flanking rim edges, equal size. Analytic:
+	# bands 37+27 mm + lateral column 7 mm at A=(9 - 9pi/4), plus the
+	# corner cube 27 minus a sphere octant (4.5pi).
+	var fide := _root.edge_treat(box_id, EdgeTreatFeature.KIND_FILLET, 3.0,
+		true, true, false, [cshared], [seg40, seg_side2])
+	if fide == "":
+		return _fail("E: ball-corner fillet refused (%s)"
+			% EdgeTreatFeature.build_error)
+	bodies = await BodyBuilder.build(_root.doc, _root)
+	var af := 9.0 - PI * 9.0 / 4.0
+	var bwant := 12000.0 - (af * (37.0 + 27.0 + 7.0) + 27.0 - 4.5 * PI)
+	var bgot := _body_volume(bodies, box_id)
+	if absf(bgot - bwant) > bwant * 0.01:
+		return _fail("E: ball corner volume %f vs %f" % [bgot, bwant])
+	if not _manifold_ok(_body_mesh(bodies, box_id)):
+		return _fail("E: ball corner mesh is not watertight")
+	_root.stack.undo()
+	# 45° chamfer corner: same picks, chamfer kind. The corner band leaves
+	# between 0 and 4.5 of the 27 corner cube -> volume in a tight window.
+	var fidc2 := _root.edge_treat(box_id, EdgeTreatFeature.KIND_CHAMFER, 3.0,
+		true, true, false, [cshared], [seg40, seg_side2])
+	if fidc2 == "":
+		return _fail("E: 45-corner chamfer refused (%s)"
+			% EdgeTreatFeature.build_error)
+	bodies = await BodyBuilder.build(_root.doc, _root)
+	var cgot2 := _body_volume(bodies, box_id)
+	if cgot2 < 11640.0 or cgot2 > 11670.0:
+		return _fail("E: 45 chamfer corner volume %f out of window" % cgot2)
+	if not _manifold_ok(_body_mesh(bodies, box_id)):
+		return _fail("E: 45 chamfer corner mesh is not watertight")
+	_root.stack.undo()
+	await _idle()
+
 	# --- D. hover highlights the whole chain --------------------------------
 	_root.world.set_treat_edge_hover(String(top_keys[0]), cyl_edges, 1.0)
 	var hover := _root.world.get_node_or_null("TreatEdgeHover")
@@ -186,5 +261,6 @@ func _run() -> bool:
 
 	print("M37_QA_FIXES OK: fillet+chamfer stack (M35.3), mixing/overlap ",
 		"refusals, chip-edit size validation (M35.6), smoothness chains + ",
-		"chain hover (M35.4)")
+		"chain hover (M35.4), vertex blends: ball corner + 45 chamfer ",
+		"corner, one-sided refusal")
 	return true
