@@ -92,12 +92,12 @@ const FALLBACK_COLORS := {
 
 const FALLBACK_METRICS := {
 	"radius": 3.0, "radius_small": 2.0, "border_width": 1.0,
-	"menubar_height": 26.0, "ribbon_height": 92.0,
-	"big_button_w": 58.0, "big_button_h": 54.0,
-	"small_button_w": 36.0, "small_button_h": 32.0,
+	"menubar_height": 26.0, "ribbon_height": 84.0,
+	"big_button_w": 64.0, "big_button_h": 64.0,
+	"small_button_w": 48.0, "small_button_h": 44.0,
 	"browser_width": 238.0, "row_height": 22.0, "hud_height": 30.0,
 	"timeline_height": 52.0, "timeline_chip_w": 52.0, "status_height": 24.0,
-	"icon_big": 26.0, "icon_small": 24.0, "icon_row": 14.0,
+	"icon_big": 36.0, "icon_small": 24.0, "icon_row": 14.0,
 	"title_height": 28.0,
 }
 
@@ -754,16 +754,26 @@ static func build_theme() -> Theme:
 	t.set_stylebox("selected", "Tree", tsel)
 	t.set_stylebox("selected_focus", "Tree", tsel)
 	t.set_stylebox("hovered", "Tree", _fill(col("btn_hover")))
+	t.set_stylebox("hovered_dimmed", "Tree", _fill(col("btn_hover")))
+	# Hover-while-selected has its own entries (Godot 4.4+); left unset, the
+	# engine defaults paint the selected label white over our pale band.
+	t.set_stylebox("hovered_selected", "Tree", tsel)
+	t.set_stylebox("hovered_selected_focus", "Tree", tsel)
 	t.set_stylebox("cursor", "Tree", _empty())
 	t.set_stylebox("cursor_unfocused", "Tree", _empty())
 	t.set_color("font_selected_color", "Tree", col("text_strong"))
+	t.set_color("font_hovered_color", "Tree", col("text_strong"))
+	t.set_color("font_hovered_selected_color", "Tree", col("text_strong"))
+	t.set_color("font_hovered_dimmed_color", "Tree", col("text_dim"))
+	t.set_color("font_disabled_color", "Tree", col("text_dim"))
 	t.set_color("guide_color", "Tree", Color.TRANSPARENT)
 	t.set_color("relationship_line_color", "Tree", col("divider"))
 	t.set_color("children_hl_line_color", "Tree", col("divider"))
 	t.set_color("parent_hl_line_color", "Tree", col("divider"))
 	t.set_constant("v_separation", "Tree", int(metric("row_height")) - 16)
-	t.set_constant("item_margin", "Tree", 16)
-	t.set_constant("inner_item_margin_left", "Tree", 4)
+	t.set_constant("item_margin", "Tree", 12)
+	t.set_constant("inner_item_margin_left", "Tree", 2)
+	t.set_constant("h_separation", "Tree", 6)
 	t.set_icon("checked", "Tree", _eye_icon(true))
 	t.set_icon("unchecked", "Tree", _eye_icon(false))
 	t.set_icon("checked_disabled", "Tree", _eye_icon(true))
@@ -790,23 +800,6 @@ static func build_theme() -> Theme:
 	t.set_stylebox("grabber", "HScrollBar", _flat(col("btn_hover"),
 		Color.TRANSPARENT, 2.0, Vector2(0, 0)))
 	return t
-
-
-## Browser "active component" marker: a filled accent dot.
-static func active_dot_icon() -> Texture2D:
-	var s := 12
-	var img := Image.create(s, s, false, Image.FORMAT_RGBA8)
-	img.fill(Color(0, 0, 0, 0))
-	var c := col("accent")
-	var r := 4.0
-	for y in s:
-		for x in s:
-			var d := Vector2(x + 0.5 - s / 2.0, y + 0.5 - s / 2.0).length()
-			if d <= r:
-				_dot(img, x, y, c)
-			elif d <= r + 1.0:
-				_dot(img, x, y, Color(c.r, c.g, c.b, c.a * (r + 1.0 - d)))
-	return ImageTexture.create_from_image(img)
 
 
 ## Title-bar close glyph: a thin × in the given color.

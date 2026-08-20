@@ -185,9 +185,77 @@ func _run() -> bool:
 	if absf(_last_len(sk, line) - len_before) > 0.001:
 		return _fail("driven dimension moved geometry")
 
+	# --- Dimension to an ORIGIN AXIS: a vertical line, then the Y axis ->
+	# LINE_DIST (the line's distance from x=0) on a pinned construction axis
+	# line minted in the same undo step; typing drives the line there.
+	_root.set_dimension_driven(dim_index, false)
+	_root.tools.set_active("line")
+	_click(Vector2(30, 60))
+	_click(Vector2(30, 90))
+	_root.tools.handle_cancel()
+	var vline: SketchLine = null
+	for e in sk.entities():
+		if e.kind() == "line":
+			vline = e
+	var ents_before := sk.entities().size()
+	var cons_before := sk.constraints.size()
+	var snap_axis := _snap_no_ids()
+	_root.tools.set_active("dimension")
+	_click(Vector2(30, 75))            # the line
+	_click(Vector2(0, 120))            # empty spot ON the Y axis
+	_click(Vector2(15, 110))           # park
+	var ad := _last_dim(sk)
+	if ad == null or ad.type != T.LINE_DIST:
+		return _fail("line + Y axis should infer LINE_DIST")
+	if absf(ad.value - 30.0) > 0.01:
+		return _fail("axis gap measured %f, want 30" % ad.value)
+	if sk.entities().size() != ents_before + 2:
+		return _fail("axis pick should mint one construction line + far point")
+	var axis_line := sk.entity(ad.operands[1]) as SketchLine
+	if axis_line == null or not axis_line.construction 			or (axis_line.p0 != sk.origin_id() and axis_line.p1 != sk.origin_id()):
+		return _fail("axis operand is not a construction line from the origin")
+	_type_commit("0.5")                # display unit is inch -> 12.7 mm
+	var vx := sk.point(vline.p0).pos.x
+	if absf(absf(vx) - 12.7) > 0.01:
+		return _fail("axis gap did not drive the line: x=%f" % vx)
+	_root.stack.undo()
+	if _snap_no_ids() != snap_axis:
+		return _fail("axis pick + park + type should be ONE undo step")
+	_root.stack.redo()
+	# A second axis dimension REUSES the same axis line.
+	var ents_mid := sk.entities().size()
+	_root.tools.set_active("dimension")
+	_click(Vector2(0, 150))            # Y axis first
+	_click(sk.point(vline.p1).pos)     # then the line's top point -> POINT_LINE_DIST
+	_click(Vector2(10, 130))
+	var pd := _last_dim(sk)
+	if pd == null or pd.type != T.POINT_LINE_DIST:
+		return _fail("axis + point should infer POINT_LINE_DIST")
+	if sk.entities().size() != ents_mid:
+		return _fail("second axis pick should reuse the existing axis line")
+	_root.tools.handle_cancel()
+	# Cancelling after an axis pick (before parking) leaves no stray geometry.
+	var ents_c := sk.entities().size()
+	_root.tools.set_active("dimension")
+	_click(Vector2(-150, 0))           # X axis -> mints a new axis line
+	if sk.entities().size() != ents_c + 2:
+		return _fail("X axis pick should mint its line")
+	_root.tools.handle_cancel()
+	if sk.entities().size() != ents_c:
+		return _fail("cancel after axis pick left stray construction")
+
 	print("M08_DIMENSIONS OK: infer line/circle/angle, park+type one step, "
-		+ "expressions, parameter re-drive, driven")
+		+ "expressions, parameter re-drive, driven, origin-axis picks")
 	return true
+
+
+## Document snapshot minus id_counter (minted ids are never rewound by undo).
+func _snap_no_ids() -> String:
+	var d: Dictionary = _root.doc.to_dict()
+	for f in d["features"]:
+		if f.has("sketch"):
+			(f["sketch"] as Dictionary).erase("id_counter")
+	return JSON.stringify(d)
 
 
 func _last_len(sk: Sketch, line: SketchLine) -> float:

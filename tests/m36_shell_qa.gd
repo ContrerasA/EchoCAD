@@ -70,7 +70,7 @@ func _run() -> bool:
 			return _fail("B: %s not labelled (%s)" % [b.name, b.text])
 	await _idle()
 	if _root._ribbon.custom_minimum_size.y <= ThemeService.metric("ribbon_height"):
-		return _fail("B: ribbon did not grow for labelled two-row grids")
+		return _fail("B: ribbon did not grow for labelled buttons")
 	if not ThemeService.show_tool_names:
 		return _fail("B: preference not stored")
 	ThemeService.load_settings()
@@ -82,8 +82,10 @@ func _run() -> bool:
 	for g: Dictionary in _root._ribbon_grids:
 		if (g["grid"] as Control).get_child_count() == 14:
 			cons_grid = g["grid"]
-	if cons_grid == null or cons_grid.columns != 7:
-		return _fail("B: constraint grid not back to 7 columns")
+	# Round 2: every group is a single row — the 14 constraint tools never
+	# wrap (columns is set past any group's tool count).
+	if cons_grid == null or cons_grid.columns < cons_grid.get_child_count():
+		return _fail("B: constraint tools should sit in a single row")
 	var cap := (_root._shelf_groups["Create"] as Control).find_child("Caption",
 		true, false) as Label
 	if cap == null or cap.horizontal_alignment != HORIZONTAL_ALIGNMENT_CENTER:
@@ -212,14 +214,20 @@ func _run() -> bool:
 	_root.browser.refresh()
 	var troot := _root.browser.get_root()
 	var comp := troot.get_first_child()
-	if comp == null or comp.get_text(1) != "Untitled":
+	var cn := BrowserTree.COL_NAME
+	if comp == null or comp.get_text(cn) != "Untitled":
 		return _fail("H: browser root component row missing")
-	if comp.get_icon(1) == null:
+	# Active marker is the accent-coloured name (round 2: the dot icon pushed
+	# the name out of line with the folders), and eye + name share one column
+	# so indentation is a single step per level.
+	if comp.get_custom_color(cn) != ThemeService.col("accent_text"):
 		return _fail("H: root component lacks its active marker")
+	if _root.browser.columns != 1 or BrowserTree.COL_EYE != cn:
+		return _fail("H: browser should be a single eye+name column")
 	var folders := {}
 	var it := comp.get_first_child()
 	while it != null:
-		folders[it.get_text(1)] = true
+		folders[it.get_text(cn)] = true
 		it = it.get_next()
 	for want in ["Origin", "Sketches", "Bodies"]:
 		if not folders.has(want):

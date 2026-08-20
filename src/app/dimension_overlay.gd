@@ -41,6 +41,54 @@ static func label_text(c: SketchConstraint, unit: UnitConverter.Unit) -> String:
 	return txt
 
 
+## World point that `label_offset` is relative to — MUST match what `_draw_one`
+## adds the offset to, or the parked/dragged label lands away from the cursor
+## (angles used the lines' midpoint mean while drawing from the apex, so the
+## label ran off in the opposite direction as the mouse moved).
+static func label_anchor(sk: Sketch, c: SketchConstraint) -> Vector2:
+	var T := SketchConstraint.Type
+	match c.type:
+		T.ANGLE:
+			var l1 := sk.entity(c.operands[0]) as SketchLine
+			var l2 := sk.entity(c.operands[1]) as SketchLine
+			if l1 == null or l2 == null:
+				return Vector2.ZERO
+			return ConstraintSolver.angle_arms(sk.point(l1.p0).pos,
+				sk.point(l1.p1).pos, sk.point(l2.p0).pos, sk.point(l2.p1).pos)[0]
+		T.RADIUS, T.DIAMETER:
+			var e := sk.entity(c.operands[0])
+			if e is SketchCircle:
+				return sk.point((e as SketchCircle).center).pos
+			if e is SketchArc:
+				return sk.point((e as SketchArc).center).pos
+			return Vector2.ZERO
+		T.LINE_DIST:
+			var l1 := sk.entity(c.operands[0]) as SketchLine
+			var l2 := sk.entity(c.operands[1]) as SketchLine
+			if l1 == null or l2 == null:
+				return Vector2.ZERO
+			var m2 := SketchGeometry.line_midpoint(sk, l2)
+			var a1 := sk.point(l1.p0)
+			var b1 := sk.point(l1.p1)
+			if not m2.get("ok", false) or a1 == null or b1 == null:
+				return Vector2.ZERO
+			var d: Vector2 = (b1.pos - a1.pos).normalized()
+			var foot: Vector2 = a1.pos + d * ((m2["pos"] as Vector2) - a1.pos).dot(d)
+			return (foot + (m2["pos"] as Vector2)) * 0.5
+		T.POINT_LINE_DIST:
+			var p := sk.point(c.operands[0])
+			var l := sk.entity(c.operands[1]) as SketchLine
+			if p == null or l == null:
+				return Vector2.ZERO
+			var a1 := sk.point(l.p0)
+			var b1 := sk.point(l.p1)
+			var d: Vector2 = (b1.pos - a1.pos).normalized()
+			var foot: Vector2 = a1.pos + d * (p.pos - a1.pos).dot(d)
+			return (p.pos + foot) * 0.5
+		_:
+			return ConstraintOverlay.anchor_of(sk, c)
+
+
 ## Draw every dimensional constraint; -> [{index, rect}].
 static func draw(overlay: Control, view: SketchView, sk: Sketch,
 		analysis: Dictionary, selected: int,
@@ -211,28 +259,12 @@ static func _angle(overlay: Control, view: SketchView, sk: Sketch,
 	var b1 := sk.point(l1.p1).pos
 	var a2 := sk.point(l2.p0).pos
 	var b2 := sk.point(l2.p1).pos
-	# Live intersection of the infinite lines (fallback: midpoint mean).
-	var apex := (a1 + b1 + a2 + b2) * 0.25
-	var d1 := b1 - a1
-	var d2 := b2 - a2
-	var denom := d1.cross(d2)
-	if absf(denom) > 1e-9:
-		var t := (a2 - a1).cross(d2) / denom
-		apex = a1 + d1 * t
-	# Arms measured OUTWARD FROM THE APEX, not from the lines' stored
-	# directions. A line's p0->p1 direction is an authoring detail: it may well
-	# point back through the apex, and using it drew the arc on the opposite
-	# side from the angle the user was actually dimensioning. The arm is the
-	# direction of whichever endpoint is further from the apex — that is the
-	# side the line visibly occupies.
-	var arm1 := (b1 - apex) if apex.distance_to(b1) >= apex.distance_to(a1) \
-		else (a1 - apex)
-	var arm2 := (b2 - apex) if apex.distance_to(b2) >= apex.distance_to(a2) \
-		else (a2 - apex)
-	if arm1.length() < 1e-9 or arm2.length() < 1e-9:
-		return Rect2()
-	arm1 = arm1.normalized()
-	arm2 = arm2.normalized()
+	# Apex + outward arms come from the solver's helper so the arc spans
+	# exactly the angle the ANGLE constraint measures.
+	var arms := ConstraintSolver.angle_arms(a1, b1, a2, b2)
+	var apex: Vector2 = arms[0]
+	var arm1: Vector2 = arms[1]
+	var arm2: Vector2 = arms[2]
 	var label_world := apex + (c.label_offset if c.label_offset != Vector2.ZERO
 		else (arm1 + arm2) * 8.0)
 	var r_screen := view.world_to_screen(label_world).distance_to(

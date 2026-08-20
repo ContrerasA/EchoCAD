@@ -164,7 +164,7 @@ func _run() -> bool:
 		return _fail("picking Classic Dark did not switch")
 	if ThemeService.metric("radius") != 4.0:
 		return _fail("classic-dark metric override not applied")
-	if ThemeService.metric("ribbon_height") != 92.0:
+	if ThemeService.metric("ribbon_height") != 84.0:
 		return _fail("classic-dark did not inherit ribbon_height from its parent")
 	if ThemeService.col("accent") == ThemeService.col("ink_construction"):
 		return _fail("classic-dark palette re-tint did not resolve")

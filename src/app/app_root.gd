@@ -1082,8 +1082,8 @@ const TOOL_STACKS := {
 
 ## The ribbon (M36): a 92px strip of captioned groups. Model and sketch mode
 ## each own a row of groups; _refresh_ui swaps them. Every button is the same
-## icon square (title under it when "Show tool names" is on); groups with
-## many tools fold them into two-row grids.
+## icon square (title under it when "Show tool names" is on), and every
+## group is a single row of them.
 func _build_ribbon(parent: Control) -> void:
 	_ribbon = PanelContainer.new()
 	_ribbon.name = "Ribbon"
@@ -1601,11 +1601,14 @@ func _tool_button(parent: Control, text: String, handler: Callable,
 	return b
 
 
-## A grid of tool buttons inside a group's button row (two rows when the
-## group has more than `columns` tools).
+## The tool strip inside a group's button row. Every group lays its tools
+## out in ONE row (QA round 2: two-row grids shrank the icons to fit; a
+## single row lets them run at icon_big). `columns` is kept as the
+## historical wrap width for callers but no longer wraps — it is recorded
+## for the RPC layout query only.
 func _tool_grid(row: Control, columns: int) -> GridContainer:
 	var g := GridContainer.new()
-	g.columns = columns
+	g.columns = 64
 	g.add_theme_constant_override("h_separation", 1)
 	g.add_theme_constant_override("v_separation", 1)
 	g.size_flags_vertical = Control.SIZE_SHRINK_BEGIN

@@ -497,7 +497,7 @@ func draw_overlay(overlay: Control) -> void:
 	if not c.is_dimensional():
 		return
 	var at := view().world_to_screen(
-		ConstraintOverlay.anchor_of(sk, c) + c.label_offset) + Vector2(0, 20)
+		DimensionOverlay.label_anchor(sk, c) + c.label_offset) + Vector2(0, 20)
 	_dim_fields.draw(overlay, at, app.doc.display_unit, [c.value])
 
 

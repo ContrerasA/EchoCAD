@@ -490,9 +490,11 @@ static func residuals(sk: Sketch, c: SketchConstraint, pos: Dictionary,
 			var b := _pt(sk, c.operands[1], pos)
 			return [absf(b.y - a.y) - c.value]
 		T.ANGLE:
-			var d1 := _line_dir(sk, c.operands[0], pos)
-			var d2 := _line_dir(sk, c.operands[1], pos)
-			var ang := absf(wrapf(d2.angle() - d1.angle(), -PI, PI))
+			var e1 := _line_ends(sk, c.operands[0], pos)
+			var e2 := _line_ends(sk, c.operands[1], pos)
+			var arms := angle_arms(e1[0], e1[1], e2[0], e2[1])
+			var ang := absf(wrapf((arms[2] as Vector2).angle()
+				- (arms[1] as Vector2).angle(), -PI, PI))
 			return [ang - deg_to_rad(c.value)]
 		T.RADIUS:
 			return [_radius_of(sk, c.operands[0], pos, rad) - c.value]
@@ -638,6 +640,15 @@ static func _angle_between(sk: Sketch, l1: String, l2: String, pos: Dictionary,
 	var d1: Vector2 = (pos[i1[1]] as Vector2) - (pos[i1[0]] as Vector2)
 	var d2: Vector2 = (pos[i2[1]] as Vector2) - (pos[i2[0]] as Vector2)
 	var cur := wrapf(d2.angle() - d1.angle(), -PI, PI)
+	if not either_dir:
+		# ANGLE measures between the arms that leave the apex (the visible
+		# corner), not between p0->p1 authoring directions — otherwise a 60°
+		# corner reads 120° whenever one line happens to be drawn "backwards".
+		# Rotating a segment rotates its arm identically, so the correction
+		# below is unchanged; only the measured angle differs.
+		var arms := angle_arms(pos[i1[0]], pos[i1[1]], pos[i2[0]], pos[i2[1]])
+		cur = wrapf((arms[2] as Vector2).angle() - (arms[1] as Vector2).angle(),
+			-PI, PI)
 	var err := 0.0
 	if either_dir:
 		# Wrap into [-PI/2, PI/2] so anti-parallel counts as parallel.
@@ -1187,6 +1198,29 @@ static func _project_arc_radius(sk: Sketch, arc: SketchArc, pos: Dictionary,
 
 static func _pt(sk: Sketch, id: String, pos: Dictionary) -> Vector2:
 	return pos.get(id, Vector2.ZERO)
+
+
+## Apex + outward arms of the angle between two segments: [apex, arm1, arm2].
+## The apex is the intersection of the infinite lines (fallback: endpoint
+## mean); each arm points from the apex toward whichever endpoint of that
+## segment lies further away — the side the line visibly occupies. Shared by
+## the ANGLE residual/projection and DimensionOverlay so the solved value is
+## exactly the angle the arc on screen spans.
+static func angle_arms(a1: Vector2, b1: Vector2, a2: Vector2, b2: Vector2) -> Array:
+	var apex := (a1 + b1 + a2 + b2) * 0.25
+	var d1 := b1 - a1
+	var d2 := b2 - a2
+	var denom := d1.cross(d2)
+	if absf(denom) > 1e-9:
+		var t := (a2 - a1).cross(d2) / denom
+		apex = a1 + d1 * t
+	var arm1 := (b1 - apex) if apex.distance_to(b1) >= apex.distance_to(a1) 		else (a1 - apex)
+	var arm2 := (b2 - apex) if apex.distance_to(b2) >= apex.distance_to(a2) 		else (a2 - apex)
+	if arm1.length() < 1e-9:
+		arm1 = d1
+	if arm2.length() < 1e-9:
+		arm2 = d2
+	return [apex, arm1.normalized(), arm2.normalized()]
 
 
 static func _line_ids(sk: Sketch, id: String) -> Array:

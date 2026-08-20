@@ -1061,7 +1061,7 @@ Run windowed at ≥1280×800. Default theme is Modernist Dark.
       makes it the button's face; the face also follows keyboard shortcuts
       (press C… then the circle stack shows whichever circle tool is live).
 - [X] **Group captions** (CREATE › …) are centred under their buttons.
-- [ ] **View cube**: ~150px, light-grey cube (`view_cube` role) with
+- [X] **View cube**: ~150px, light-grey cube (`view_cube` role) with
       FRONT / BACK / TOP / BOTTOM / LEFT / RIGHT on the faces, X/Y/Z triad
       pinned to the widget's bottom-left corner (never clipped, turns with
       the view); clicking a face still snaps the view; cube + labels follow
@@ -1116,3 +1116,5 @@ Run windowed at ≥1280×800. Default theme is Modernist Dark.
   `client.click_control` opens the flyout (right-click) on its own.
 - Tests: `tests/m36_shell_qa.gd` (A–H); `m26_ui_shell` + RPC
   `test_ui_shelf` updated for the hidden Save/Open buttons.
+
+### Additional

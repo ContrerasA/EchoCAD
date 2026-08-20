@@ -11,8 +11,14 @@ extends Tree
 ## plane keeps it hidden even while a sketch plane is being picked, but
 ## checking it does not force it visible in plain model mode.
 
+## Single column: Godot's Tree applies the depth indent and fold arrow to
+## column 0 only, so a separate eye column pushed every name a further eye
+## width to the right of an already-indented (empty) cell. Eye and name
+## share one cell instead (CELL_MODE_CHECK draws the glyph inline before the
+## text), which is also how Fusion lays its browser out. Both names are kept
+## so callers/tests can keep saying which part of the row they mean.
 const COL_EYE := 0
-const COL_NAME := 1
+const COL_NAME := 0
 
 var app: AppRoot = null
 
@@ -30,9 +36,7 @@ var _menu_target := ""     # sketch feature id the open menu acts on
 
 func _ready() -> void:
 	name = "BrowserTree"
-	columns = 2
-	set_column_expand(COL_EYE, false)
-	set_column_custom_minimum_width(COL_EYE, 28)
+	columns = 1
 	set_column_expand(COL_NAME, true)
 	hide_root = true
 	custom_minimum_size = Vector2(190, 0)
@@ -55,23 +59,21 @@ func refresh() -> void:
 	var tree_root := create_item()
 	# The document is the root COMPONENT (Fusion's top browser row): every
 	# folder below belongs to it and it is always the active component. It
-	# carries the file name and a filled activation dot; the eye column is
-	# unused on it. Multi-component documents are backlog (MILESTONES2 M36+).
+	# carries the file name in the accent colour as the activation mark (an
+	# icon would shove the name out of line with the folders beneath it).
+	# Multi-component documents are backlog (MILESTONES2 M36+).
 	var root := create_item(tree_root)
 	var doc_name := app.document_title() if app.has_method("document_title") \
 			else "Untitled"
 	root.set_text(COL_NAME, doc_name)
-	root.set_icon(COL_NAME, ThemeService.active_dot_icon())
 	root.set_tooltip_text(COL_NAME, "Root component (active)")
-	root.set_selectable(COL_EYE, false)
 	root.set_selectable(COL_NAME, false)
-	root.set_custom_color(COL_NAME, ThemeService.col("text_strong"))
+	root.set_custom_color(COL_NAME, ThemeService.col("accent_text"))
 	root.collapsed = not expanded.get(doc_name, true)
 	_rows[root] = {"kind": "component", "id": ""}
 
 	var origin := create_item(root)
 	origin.set_text(COL_NAME, "Origin")
-	origin.set_selectable(COL_EYE, false)
 	origin.set_selectable(COL_NAME, false)
 	origin.collapsed = not expanded.get("Origin", true)
 	_add_row(origin, "origin", "", "Axes", app.world.origin_shown())
@@ -90,7 +92,6 @@ func refresh() -> void:
 	if not live_planes.is_empty():
 		var cons := create_item(root)
 		cons.set_text(COL_NAME, "Construction")
-		cons.set_selectable(COL_EYE, false)
 		cons.set_selectable(COL_NAME, false)
 		cons.collapsed = not expanded.get("Construction", true)
 		for pf: PlaneFeature in live_planes:
@@ -104,7 +105,6 @@ func refresh() -> void:
 	# hidden whichever mode you are in.
 	var sketches := create_item(root)
 	sketches.set_text(COL_NAME, "Sketches")
-	sketches.set_selectable(COL_EYE, false)
 	sketches.set_selectable(COL_NAME, false)
 	sketches.collapsed = not expanded.get("Sketches", true)
 	for f in app.doc.live_features():
@@ -124,7 +124,6 @@ func refresh() -> void:
 	if not live_canvases.is_empty():
 		var canv := create_item(root)
 		canv.set_text(COL_NAME, "Canvases")
-		canv.set_selectable(COL_EYE, false)
 		canv.set_selectable(COL_NAME, false)
 		canv.collapsed = not expanded.get("Canvases", true)
 		for cf: CanvasFeature in live_canvases:
@@ -135,7 +134,6 @@ func refresh() -> void:
 
 	var bodies := create_item(root)
 	bodies.set_text(COL_NAME, "Bodies")
-	bodies.set_selectable(COL_EYE, false)
 	bodies.set_selectable(COL_NAME, false)
 	bodies.collapsed = not expanded.get("Bodies", true)
 	var selected := app.world.selected_body()
@@ -155,13 +153,51 @@ func refresh() -> void:
 			row.select(COL_NAME)
 
 
+## Godot flips a CELL_MODE_CHECK anywhere in the cell, which with eye and
+## name sharing one cell would hide a body every time its row is clicked.
+## Gate it: a left click that lands in a check cell but right of the eye
+## glyph is turned into a plain row selection here and swallowed before the
+## Tree sees it. (The setter that does this natively is editor-only.)
+func _gui_input(event: InputEvent) -> void:
+	var mb := event as InputEventMouseButton
+	if mb == null or not mb.pressed or mb.button_index != MOUSE_BUTTON_LEFT:
+		return
+	var row := get_item_at_position(mb.position)
+	if row == null or row.get_cell_mode(COL_EYE) != TreeItem.CELL_MODE_CHECK:
+		return
+	if mb.position.x <= _eye_right_edge(row):
+		return
+	accept_event()
+	if mb.double_click:
+		if row.is_selectable(COL_NAME):
+			item_activated.emit()
+		return
+	if row.is_selectable(COL_NAME):
+		row.select(COL_NAME)
+	else:
+		deselect_all()
+
+
+## Screen-x (tree local) where the eye glyph of a row ends. Tree indents
+## column 0 by item_margin per visible depth plus one for the fold arrow;
+## get_item_area_rect() does not include that indent.
+func _eye_right_edge(row: TreeItem) -> float:
+	var depth := 0
+	var p := row.get_parent()
+	while p != null and p != get_root():
+		depth += 1
+		p = p.get_parent()
+	var margin := get_theme_constant("item_margin")
+	var x := get_item_area_rect(row, COL_EYE).position.x 		+ margin * (depth + 1) + get_theme_constant("inner_item_margin_left")
+	return x + get_theme_icon("checked").get_width() + 4
+
+
 func _add_row(parent: TreeItem, kind: String, id: String, label: String,
 		shown: bool) -> TreeItem:
 	var row := create_item(parent)
 	row.set_cell_mode(COL_EYE, TreeItem.CELL_MODE_CHECK)
 	row.set_checked(COL_EYE, shown)
 	row.set_editable(COL_EYE, true)
-	row.set_selectable(COL_EYE, false)
 	row.set_text(COL_NAME, label)
 	row.set_selectable(COL_NAME,
 		kind == "body" or kind == "sketch" or kind == "cplane")

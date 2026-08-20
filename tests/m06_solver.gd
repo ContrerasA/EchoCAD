@@ -192,6 +192,29 @@ func _run() -> bool:
 	if not (res["points"] as Dictionary).is_empty():
 		return _fail("driven dimension moved geometry")
 
+	# --- ANGLE measures the visible corner, not p0->p1 directions. A 60°
+	# corner where one line is drawn "backwards" through the apex must read 60
+	# (the old direction-based measure said 120), and must solve to the typed
+	# value in the same sector the arc is drawn in.
+	sk = Sketch.new()
+	var ka := _pt(sk, Vector2(10, 0))
+	var kb := _pt(sk, Vector2(0, 0))
+	var kc := _pt(sk, Vector2(5, 8.660254))
+	var kl1 := _line(sk, ka, kb)      # points INTO the apex (kb)
+	var kl2 := _line(sk, kb, kc)      # points OUT of the apex
+	var kang := _con(sk, T.ANGLE, [kl1.id, kl2.id], 0.0)
+	var kmeas := ConstraintRules.measured_value(sk, T.ANGLE, kang.operands)
+	if absf(kmeas - 60.0) > 0.01:
+		return _fail("angle should measure the 60° corner, got %f" % kmeas)
+	kang.value = 45.0
+	res = ConstraintSolver.solve(sk, [ka.id, kb.id])
+	_apply(sk, res)
+	kmeas = ConstraintRules.measured_value(sk, T.ANGLE, kang.operands)
+	if absf(kmeas - 45.0) > 0.05:
+		return _fail("angle should solve to 45° corner, got %f" % kmeas)
+	if kc.pos.y < 0.0 or kc.pos.x < 0.0:
+		return _fail("angle solve left its sector: %s" % kc.pos)
+
 	print("M06_SOLVER OK: distance/H/coincident/tangent/equal/arc/radius/"
 		+ "perpendicular/angle/symmetry/conflict/driven")
 	return true

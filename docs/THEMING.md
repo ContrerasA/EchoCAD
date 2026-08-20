@@ -55,7 +55,7 @@ until it is on).
     "weight_regular": 500, "weight_bold": 600, "weight_heading": 700
   },
   "font_sizes": { "body": 12, "small": 11, "label": 10, "caption": 9, "title": 14 },
-  "metrics":    { "radius": 3, "ribbon_height": 92, "browser_width": 238 }
+  "metrics":    { "radius": 3, "ribbon_height": 84, "browser_width": 238 }
 }
 ```
 

@@ -11,8 +11,18 @@ extends RefCounted
 ## Static + pure; used by the status readout, constraint UI, and RPC
 ## query.dof.
 
-const EPS := 1e-4              # differentiation step (mm)
-const RANK_TOL := 1e-7
+## Differentiation step: RELATIVE to the coordinate's magnitude (floored at
+## EPS_MIN mm). Positions are float32 Vector2s, so a fixed 1e-4 mm step on a
+## 30 mm coordinate left ~1e-3 of pure rounding noise in every non-linear
+## row — dependent rows then passed a 1e-7 rank test as "independent", and
+## redundancy got blamed on whichever row happened to be exactly linear (a
+## dimension to a pinned origin axis) instead of the real duplicate.
+const EPS_REL := 1e-3
+const EPS_MIN := 1e-3
+## Rows are unit vectors; a truly dependent row leaves only differentiation
+## noise (~1e-5..1e-4 with the relative step). Near-singular but independent
+## configurations land below this too — the jitter pass below un-flags them.
+const RANK_TOL := 1e-3
 const VIOLATION_TOL := 0.001   # mm
 const MAX_CONSTRAINTS := 400   # bail-out for pathological documents
 
@@ -20,6 +30,19 @@ const MAX_CONSTRAINTS := 400   # bail-out for pathological documents
 ## -> { vars: int, rank: int, dof: int, fully_constrained: bool,
 ##      redundant: Array[int]  (indices into sketch.constraints),
 ##      conflicts: Array[int], analyzed: bool }
+## Which constraint a residual row is blamed on: its own index, or -1 for an
+## IMPLICIT coupling that must never be reported as a user redundancy. A gap
+## dimension (LINE_DIST) carries a second "stay parallel" residual so the
+## distance is well-defined; dimensioning between lines the user already made
+## parallel (two VERTICALs, or a line and a pinned origin axis) is the normal
+## case, not an over-constraint — it still counts toward rank, like an arc's
+## implicit radius coupling, but is not a source of redundancy/conflict.
+static func _row_source(c: SketchConstraint, ri: int, ci: int) -> int:
+	if c.type == SketchConstraint.Type.LINE_DIST and ri == 1:
+		return -1
+	return ci
+
+
 static func analyze(sk: Sketch) -> Dictionary:
 	if sk.constraints.size() > MAX_CONSTRAINTS:
 		return {"analyzed": false, "vars": 0, "rank": 0, "dof": 0,
@@ -79,7 +102,7 @@ static func analyze(sk: Sketch) -> Dictionary:
 		violations[ci] = violated
 		for ri in base.size():
 			rows.append(_jacobian_row(sk, c, ri, columns, live))
-			row_sources.append(ci)
+			row_sources.append(_row_source(c, ri, ci))
 		ci += 1
 	for e in sk.entities():
 		if e.kind() == "arc":
@@ -140,7 +163,7 @@ static func analyze(sk: Sketch) -> Dictionary:
 			var jbase := ConstraintSolver.residuals(sk, c, jpos, jrad)
 			for ri in jbase.size():
 				jrows.append(_jacobian_row(sk, c, ri, columns, jit))
-				jsources.append(cj)
+				jsources.append(_row_source(c, ri, cj))
 			cj += 1
 		for e in sk.entities():
 			if e.kind() == "arc":
@@ -244,12 +267,13 @@ static func _jacobian_row(sk: Sketch, c: SketchConstraint, ri: int,
 	row.resize(columns.size())
 	for col in columns.size():
 		var spec: Dictionary = columns[col]
-		var plus := _perturbed(live, spec, EPS)
-		var minus := _perturbed(live, spec, -EPS)
+		var eps := _step(live, spec)
+		var plus := _perturbed(live, spec, eps)
+		var minus := _perturbed(live, spec, -eps)
 		var rp := ConstraintSolver.residuals(sk, c, plus["pos"], plus["rad"])
 		var rm := ConstraintSolver.residuals(sk, c, minus["pos"], minus["rad"])
 		if ri < rp.size() and ri < rm.size():
-			row[col] = (float(rp[ri]) - float(rm[ri])) / (2.0 * EPS)
+			row[col] = (float(rp[ri]) - float(rm[ri])) / (2.0 * eps)
 	return _normalize(row)
 
 
@@ -259,10 +283,11 @@ static func _arc_row(sk: Sketch, arc: SketchArc, columns: Array,
 	row.resize(columns.size())
 	for col in columns.size():
 		var spec: Dictionary = columns[col]
-		var plus := _perturbed(live, spec, EPS)
-		var minus := _perturbed(live, spec, -EPS)
+		var eps := _step(live, spec)
+		var plus := _perturbed(live, spec, eps)
+		var minus := _perturbed(live, spec, -eps)
 		row[col] = (_arc_residual(arc, plus["pos"])
-			- _arc_residual(arc, minus["pos"])) / (2.0 * EPS)
+			- _arc_residual(arc, minus["pos"])) / (2.0 * eps)
 	return _normalize(row)
 
 
@@ -270,6 +295,21 @@ static func _arc_residual(arc: SketchArc, pos: Dictionary) -> float:
 	var cc: Vector2 = pos.get(arc.center, Vector2.ZERO)
 	return (pos.get(arc.start, Vector2.ZERO) as Vector2).distance_to(cc) \
 		- (pos.get(arc.end, Vector2.ZERO) as Vector2).distance_to(cc)
+
+
+## Finite-difference step for one variable, scaled to its magnitude so float32
+## rounding stays a fixed fraction of the step whatever the sketch's extent.
+static func _step(live: Dictionary, spec: Dictionary) -> float:
+	var id: String = spec["id"]
+	var mag := 0.0
+	match String(spec["kind"]):
+		"px":
+			mag = absf(((live["pos"] as Dictionary)[id] as Vector2).x)
+		"py":
+			mag = absf(((live["pos"] as Dictionary)[id] as Vector2).y)
+		"r":
+			mag = absf(float((live["rad"] as Dictionary)[id]))
+	return maxf(EPS_MIN, mag * EPS_REL)
 
 
 static func _perturbed(live: Dictionary, spec: Dictionary, by: float) -> Dictionary:
