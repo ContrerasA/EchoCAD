@@ -113,7 +113,7 @@ changes them through the tokens above, code opts in with
 `ToolButton` (every ribbon button; `BigToolButton` / `SmallToolButton`
 are aliases of it), `FlyoutButton` (rows in a stack's flyout), `HudButton`, `PrimaryButton`,
 `TimelineChip`, `MenuBarButton`, `CaptionLabel`, `HeaderLabel`,
-`StatusLabel`, `StatusKeyLabel`, `DimLabel`, `BrandLabel`, `Ribbon`,
+`StatusLabel`, `StatusKeyLabel`, `StatusIdLabel`, `DimLabel`, `BrandLabel`, `Ribbon`,
 `MenuBarPanel`, `SidePanel`, `PanelHeader`, `HudPanel`, `TimelinePanel`,
 `StatusPanel`, `Divider`. `Window` additionally carries
 `embedded_border` / `embedded_unfocused_border` (title bar in `titlebar` /

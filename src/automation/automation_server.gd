@@ -708,6 +708,12 @@ func _cmd_query_control(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant
 	var out := {"rect": [r.position.x, r.position.y, r.size.x, r.size.y],
 		"visible": node.is_visible_in_tree(),
 		"disabled": node.disabled if node is BaseButton else false}
+	# What the control SAYS, so a client can assert the status bar / a button
+	# face without screenshotting and reading pixels.
+	if node is Label:
+		out["text"] = (node as Label).text
+	elif node is BaseButton and node is Button:
+		out["text"] = (node as Button).text
 	# Buttons inside a ribbon flyout (M36 stacks) are only visible while the
 	# flyout is open — name the stack button that opens it so a client can
 	# right-click it first and then click the real control.

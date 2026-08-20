@@ -1118,3 +1118,20 @@ Run windowed at ≥1280×800. Default theme is Modernist Dark.
   `test_ui_shelf` updated for the hidden Save/Open buttons.
 
 ### Additional
+
+- [X] **Status bar identity readout (dev)**: open `tests/Part01.ecad`, edit
+      Sketch1. With nothing selected, hovering a line reads
+      `⌖ e4 line #3  [e2→e3]` left of the measurement slot; clicking it drops
+      the `⌖`. A point reads its stored mm coordinates, construction
+      geometry says `constr`, the sketch origin says `origin`. Selecting
+      4+ entities reads `7 sel: … +4 more`; clicking a dimension label
+      reads `c#2 LINE_DIST  [e8, e4]`. Finishing the sketch empties the slot.
+
+- [ ] **Point tool commits its snap**: with the Point tool (P), hover an
+      edge — the edge pre-highlights and an amber dot shows on the curve;
+      the line's middle shows a green dot instead. Click on the curve and
+      the new point gains `POINT_ON`; click the middle and it gains
+      `MIDPOINT` (constraint badges appear, DOF drops). Drag the edge
+      afterwards: the point rides it instead of being left behind. Clicking
+      an EXISTING point creates nothing — it selects that point and says so
+      in the hint. A click in open space still makes a free point.

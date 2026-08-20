@@ -72,7 +72,8 @@ fixture sketch quickly).
 - `query.theme` — active theme id, appearance, catalog of available themes,
   user theme dir (M36)
 - `query.control {name}` — rect (main-window pixels, even inside embedded
-  popups), visible, disabled; `flyout_owner` names the ribbon stack button
+  popups), visible, disabled, `text` for Labels/Buttons (assert the status
+  bar without reading pixels); `flyout_owner` names the ribbon stack button
   whose flyout holds the control (`client.click_control` right-clicks it
   first). `action.set_pref` also takes `tool_names` (ribbon titles).
 

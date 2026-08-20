@@ -1,0 +1,9 @@
+- [ ] Don't let shelfs wrap in the ribon, instead only display as many tools as can fit (keep othershelfs in mind). expand / shrink them.
+- [ ] In light mode, when using open / save menu, icons aren't visible, and hovering over items makes them blend in with bg. we need contrasting colors
+- [ ] In 2D sketch, it should automatically be same view as it was in 3d. if we start orbiting, keep it same view. so most of the time we'll be in ortho view for example
+- [ ] When saving / loaiding, save and load the transform / zoom of the camera
+- [ ] view cube needs widgets surrounding it for rotation, and a home position (std 3/4 view)
+- [ ] most tools require me to first select the entities im trying to modify, then select the tool from the shelf. other applications allow me to do this, but also arm the tool, and then allow me to select the entities. this is the workflow i want. For instance applying constraints, mirror, bevel, etc. this needs to be a hard requirement as well for any new features / tools we add in in the future as well
+- [ ] in light mode, vertecis should be another color. right now they blend in with grid bg
+- [ ] if we move geometry during an edit sketch operation, there's a ghost of the old geometry until we exit sketch mode
+- [ ] 

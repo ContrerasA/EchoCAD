@@ -183,6 +183,8 @@ var _status_hint: Label
 var _hint_hold_until_ms := 0
 var _status_dof: Label
 var _status_zoom: Label
+## Identity readout: id / kind / index of the selection (or the hover).
+var _status_ids: Label = null
 
 
 func _ready() -> void:
@@ -244,6 +246,7 @@ func _exit_tree() -> void:
 func _process(_dt: float) -> void:
 	if mode == Mode.SKETCH:
 		tools.handle_tick()
+		_update_ids_label()
 	_poll_threaded_solver()
 
 
@@ -1538,6 +1541,9 @@ func _build_status_bar(parent: Control) -> void:
 	_status_hint.theme_type_variation = "StatusLabel"
 	_status_hint.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_status_hint.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	_status_ids = _label(status, "")
+	_status_ids.name = "StatusIds"
+	_status_ids.theme_type_variation = "StatusIdLabel"
 	_status_measure = _label(status, "")
 	_status_measure.name = "StatusMeasure"
 	_status_measure.theme_type_variation = "StatusLabel"
@@ -1547,7 +1553,8 @@ func _build_status_bar(parent: Control) -> void:
 	_status_zoom = _label(status, "")
 	_status_zoom.name = "StatusZoom"
 	_status_zoom.theme_type_variation = "StatusKeyLabel"
-	for l in [_status_mode, _status_hint, _status_measure, _status_dof, _status_zoom]:
+	for l in [_status_mode, _status_hint, _status_ids, _status_measure,
+			_status_dof, _status_zoom]:
 		(l as Label).vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 
 
@@ -2164,6 +2171,28 @@ func _update_measure_label() -> void:
 		return
 	_status_measure.text = "" if mode != Mode.SKETCH \
 		else Measure.describe(active_sketch(), selection, doc.display_unit)
+	_update_ids_label()
+
+
+## Identity slot: id / kind / index of what is selected — or, with nothing
+## selected, of what the cursor is over. `_process` re-runs this every frame
+## in sketch mode, because a hover change is reported by no signal; the
+## string is rebuilt but `Label.set_text` early-outs when it is unchanged, so
+## an idle cursor costs one compare and no relayout.
+func _update_ids_label() -> void:
+	if _status_ids == null:
+		return
+	var sk := active_sketch() if mode == Mode.SKETCH else null
+	if sk == null:
+		_status_ids.text = ""
+		return
+	var hov := ""
+	if selection.is_empty():
+		var t := tools.get_tool(tools.active_id())
+		if t != null:
+			hov = t.hover_id
+	_status_ids.text = SelectionReadout.describe(sk, selection, hov,
+			selected_constraint)
 
 
 ## --- reference images / canvases (M30) ---------------------------------------
@@ -5567,6 +5596,8 @@ func _refresh_ui() -> void:
 		_btn_ortho.set_pressed_no_signal(rig.is_orthographic())
 	if _status_measure != null and not in_sketch:
 		_status_measure.text = ""
+	if _status_ids != null and not in_sketch:
+		_status_ids.text = ""
 	if picking_look_at:
 		_status_hint.text = ("Look At: select a plane or a flat body face "
 			+ "(Esc to cancel)")

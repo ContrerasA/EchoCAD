@@ -616,6 +616,10 @@ static func build_theme() -> Theme:
 	t.set_type_variation("StatusLabel", "Label")
 	t.set_color("font_color", "StatusLabel", col("text"))
 	t.set_font_size("font_size", "StatusLabel", font_size("label"))
+	t.add_type("StatusIdLabel")    # status bar identity readout: e4 line #3
+	t.set_type_variation("StatusIdLabel", "Label")
+	t.set_color("font_color", "StatusIdLabel", col("text_dim"))
+	t.set_font_size("font_size", "StatusIdLabel", font_size("label"))
 	t.add_type("StatusKeyLabel")   # status bar keys: CURSOR / UNITS
 	t.set_type_variation("StatusKeyLabel", "Label")
 	t.set_color("font_color", "StatusKeyLabel", col("text_faint"))
