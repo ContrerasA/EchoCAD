@@ -144,10 +144,12 @@ func _resolve(doc: CadDocument) -> Dictionary:
 	if sf == null or pf == null:
 		last_error = "the profile or path sketch no longer exists"
 		return {}
-	var prof := ProfileFinder.profile_at(sf.sketch, anchor)
-	if prof.is_empty():
+	var healed := ProfileFinder.profile_at_healed(sf.sketch, anchor)
+	if healed.is_empty():
 		last_error = "no closed profile at the picked spot"
 		return {}
+	var prof: Dictionary = healed["prof"]
+	anchor = healed["at"]
 	var poly: PackedVector2Array = (prof["polygon"] as PackedVector2Array).duplicate()
 	if ExtrudeFeature._signed_area(poly) < 0.0:
 		poly.reverse()
@@ -259,17 +261,31 @@ func build_mesh(doc: CadDocument) -> ArrayMesh:
 	# (QA §M34.1).
 	var s_local := profile_xf.affine_inverse() * path[0]
 	var s_uv := Vector2(s_local.x, s_local.y)
-	if not Geometry2D.is_point_in_polygon(s_uv, poly):
-		s_uv = _polygon_centroid(poly)
-	var max_ext := 0.0
 	var rings: Array = [poly]
 	rings.append_array(holes)
+	# The drawn offset only counts when the path start truly sits AT the
+	# profile: inside its outline AND on (or near) its plane. The old
+	# inside-only test PROJECTED the start onto the plane first, so a path
+	# beginning far along the plane normal still "hit" the profile and the
+	# huge phantom arm made every gentle bend read as too tight (QA §M34.1
+	# round 2). Anywhere else the profile travels centered on the path.
+	var centroid := _polygon_centroid(poly)
+	var span := 0.0
+	for ring: PackedVector2Array in rings:
+		for p in ring:
+			span = maxf(span, (p - centroid).length())
+	if not Geometry2D.is_point_in_polygon(s_uv, poly) \
+			or absf(s_local.z) > maxf(span, 1.0):
+		s_uv = centroid
+	var max_ext := 0.0
 	for ring: PackedVector2Array in rings:
 		for p in ring:
 			max_ext = maxf(max_ext, (p - s_uv).length())
-	if min_bend_radius(path) < max_ext:
-		last_error = "a path bend is tighter than the profile " \
-			+ "(the swept walls would self-intersect)"
+	var bend := min_bend_radius(path)
+	if bend < max_ext:
+		last_error = ("a path bend (radius %.1f mm) is tighter than the "
+			+ "profile's %.1f mm extent (the swept walls would "
+			+ "self-intersect)") % [bend, max_ext]
 		return null
 
 	# Per-SEGMENT transported frames + exact miter joints: the ring at an

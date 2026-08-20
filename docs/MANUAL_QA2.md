@@ -708,6 +708,11 @@ UI elements in the Body Color window are too large, they take up too much room. 
 
 ### §M32 fix log
 
+- Additional (2026-08-19): the stock ColorPicker's sampler row, RGB/HSV mode
+  switcher and preset shelf pushed Apply below the window. The picker is now
+  compact (sampler/modes/presets hidden — wheel + sliders + hex stay) and
+  sits inside a scroll container, so Apply is always reachable at 300x420.
+
 - Item 5 (2026-08-19): as requested — a fresh copy INHERITS its source's
   color (recolor the source and every uncolored copy follows), and Color…
   on the copy now works instead of refusing: it stores an own color on the
@@ -720,11 +725,12 @@ UI elements in the Body Color window are too large, they take up too much room. 
 
 Status: PENDING sign-off
 
-- [ ] 1. Select a body, **Mirror Body**, click the YZ plane. **Expect:**
+- [X] 1. Select a body, **Mirror Body**, click the YZ plane. **Expect:**
    a reflected body appears on the other side, correctly lit and outward-
    facing (not inside-out dark); its own browser row + eye; ONE Ctrl+Z.
-- [ ] 2. Edit the source sketch. **Expect:** mirror and any patterns
+- [!] 2. Edit the source sketch. **Expect:** mirror and any patterns
    replay to match.
+  Editing source sketch causes body to disapear
 - [ ] 3. **Pattern** (Linear): counts 3 × 2, offsets. **Expect:** ghost…
    dialog commits the grid; every instance a body row; double-click the
    chip and change counts — instances re-place.
@@ -738,6 +744,18 @@ Status: PENDING sign-off
 - [ ] 8. Known limitation: pattern/mirror instances are bodies derived
    AFTER booleans — a later Cut placed over an instance does not carve it
    (booleans target pre-instance bodies). Documented.
+
+### §M33 fix log
+
+- Item 2 + the bottom "big bug" (2026-08-19), from `tests/M33.ecad`: every
+  profile-based feature (extrude/revolve/sweep/loft/fillet) remembered its
+  region by a fixed ANCHOR POINT — editing the sketch and moving the whole
+  shape left the anchor outside every region, so the body (and any mirror/
+  pattern derived from it) silently vanished on replay. Anchors now
+  SELF-HEAL: when the stored point no longer hits a region, the nearest
+  region (by interior point) is used and a fresh in-region anchor is stored,
+  so later edits keep working. M33.ecad rebuilds its 3x2.5x2in box again.
+  Covered by `tests/m36_qa_fixes.gd` (A).
 
 ## §M34 — Sweep + loft
 
@@ -780,6 +798,18 @@ Status: PENDING sign-off
   actually failed now (no profile / closed-loop path / bend tighter than
   the profile / hairpin) instead of one catch-all. Covered by
   `tests/m35_qa_fixes.gd` (E).
+  Round 2 (2026-08-19), "Still fails M32-2.ecad": that file is NOT in the
+  repo (tests/ has no M32-2.ecad — please commit it if the case still
+  fails). Two blind-spot fixes went in anyway: (a) the "keep the drawn
+  offset" test PROJECTED the path start onto the profile plane, so a start
+  far along the plane NORMAL still counted as "inside" and the phantom arm
+  tripped the too-tight check — the offset is now kept only when the start
+  is inside the outline AND within the profile's extent of its plane;
+  (b) stale profile anchors self-heal (§M33 fix), which also revives sweeps
+  whose profile sketch was edited after the pick; and the too-tight refusal
+  now prints the actual numbers ("bend radius X mm vs profile extent Y mm")
+  so the next report can say which case fired. Covered by
+  `tests/m36_qa_fixes.gd` (B).
 
 ## §M35 — 3D fillet + chamfer (prismatic)
 
@@ -823,6 +853,19 @@ Status: PENDING sign-off
   except that "Side corners only" etc. is now expressed by which edges you
   click. Covered by `tests/m35_qa_fixes.gd` (F) and the unchanged
   `tests/m35_fillet_chamfer.gd`.
+  Round 2 (2026-08-19), "unable to individually select front edges": rim
+  segments were one all-or-nothing loop ("top"/"bottom" keys). Every rim
+  SEGMENT is now its own pickable edge — click just the front top edge and
+  only it gets treated. Whole rims (all segments picked, or legacy
+  documents/RPC) keep the exact offset-ring path; partial rims build
+  segment-wise: shortened wall + quarter-round/chamfer band under each
+  picked edge, mitered where two picked edges meet, band ends sliding onto
+  the neighbor wall's plane (the neighbor wall is clipped to match, so the
+  mesh stays watertight — a single-edge chamfer removes exactly its wedge).
+  Picked segments serialize (`top_segs`/`bottom_segs`) and replay. Known
+  prismatic-tier limits: a rim treatment stops flat at an untreated
+  neighbor (no Fusion-style corner ball), and rims across lateral corner
+  ARCS stay sharp. Covered by `tests/m36_qa_fixes.gd` (C).
 
 ### Additional
 commit changes
@@ -839,3 +882,19 @@ commit changes
   in other tools. i don't want to explicitely state this anymore, and there are many more
   tools that are similar that are broken like this. i want it to be a hard rule that when
   we're adding some tool like this
+
+### Additional fix log (2026-08-19)
+
+- "Big bug" (body disappears after moving all sketch points): fixed by the
+  anchor self-heal — see the §M33 fix log. `tests/M33.ecad` rebuilds again.
+- Hover hard rule: now a locked rule in CLAUDE.md ("Hover feedback is
+  mandatory on every pick stage" — every new/updated tool pick must
+  pre-highlight the candidate under the cursor; a pick stage without hover
+  is a bug). The one current offender, the sweep PATH pick, now highlights
+  the curve under the cursor (lines, arcs and splines alike) as the same
+  amber band the revolve-axis pick uses. Audit of the other pick stages:
+  sketch-plane / look-at / mirror-plane picks (plane + face hover),
+  extrude / revolve / sweep-profile / loft (region hover), revolve axis
+  (axis band), fillet/chamfer edges (edge tube) all already highlight.
+  Covered by `tests/m36_qa_fixes.gd` (D).
+- "commit changes": committed with this round.

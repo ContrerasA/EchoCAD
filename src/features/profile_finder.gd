@@ -389,6 +389,62 @@ static func _splice_hole(outer: PackedVector2Array,
 	return out
 
 
+## A point guaranteed inside the region: the outer polygon's centroid when
+## that lands inside (and outside every hole), else the centroid of the
+## first triangle of the holed triangulation.
+static func interior_point(prof: Dictionary) -> Vector2:
+	var poly: PackedVector2Array = prof["polygon"]
+	var a2 := 0.0
+	var c := Vector2.ZERO
+	for i in poly.size():
+		var p := poly[i]
+		var q := poly[(i + 1) % poly.size()]
+		var cr := p.cross(q)
+		a2 += cr
+		c += (p + q) * cr
+	if absf(a2) > 1e-9:
+		c /= 3.0 * a2
+		var ok := Geometry2D.is_point_in_polygon(c, poly)
+		if ok:
+			for h: PackedVector2Array in (prof.get("holes", []) as Array):
+				if Geometry2D.is_point_in_polygon(c, h):
+					ok = false
+					break
+		if ok:
+			return c
+	var tri := triangulate_with_holes(poly, prof.get("holes", []))
+	var idx: PackedInt32Array = tri["indices"]
+	var pts: PackedVector2Array = tri["points"]
+	if idx.size() >= 3:
+		return (pts[idx[0]] + pts[idx[1]] + pts[idx[2]]) / 3.0
+	return poly[0]
+
+
+## profile_at with a SELF-HEALING fallback (QA §M33 round: editing a sketch
+## and moving the whole shape left the stored anchor outside every region,
+## so the body silently vanished). On a miss the nearest region by interior
+## point wins and a fresh in-region anchor is returned for the feature to
+## store. -> {prof: Dictionary, at: Vector2} or {} when the sketch has no
+## regions at all.
+static func profile_at_healed(sk: Sketch, at: Vector2) -> Dictionary:
+	var hit := profile_at(sk, at)
+	if not hit.is_empty():
+		return {"prof": hit, "at": at}
+	var best := {}
+	var best_at := at
+	var best_d := INF
+	for prof: Dictionary in profiles(sk):
+		var ip := interior_point(prof)
+		var d := ip.distance_to(at)
+		if d < best_d:
+			best_d = d
+			best = prof
+			best_at = ip
+	if best.is_empty():
+		return {}
+	return {"prof": best, "at": best_at}
+
+
 ## The REGION containing `at` (smallest containing outer wins). {} if none.
 ## A point inside one of a face's holes is not in that region — it falls
 ## through to the inner face, so clicking inside a drilled circle picks the

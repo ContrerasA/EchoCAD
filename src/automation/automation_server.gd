@@ -447,7 +447,9 @@ func _edge_treat(a: Dictionary, p: StreamPeerTCP, id: Variant,
 	var fid := app.edge_treat(String(a.get("body", "")), treat_kind,
 		float(a.get("size", 3.0)), bool(a.get("lateral", true)),
 		bool(a.get("top", true)), bool(a.get("bottom", false)),
-		a.get("corners", []) as Array)
+		a.get("corners", []) as Array,
+		a.get("top_segs", []) as Array,
+		a.get("bottom_segs", []) as Array)
 	if fid == "":
 		_reply_err(p, id, "bad_args", "edge treatment refused (see status)")
 		return null

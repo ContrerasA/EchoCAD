@@ -52,9 +52,11 @@ func build_mesh(doc: CadDocument) -> ArrayMesh:
 	var sf := doc.sketch_feature(sketch_id)
 	if sf == null:
 		return null
-	var prof := ProfileFinder.profile_at(sf.sketch, anchor)
-	if prof.is_empty():
+	var healed := ProfileFinder.profile_at_healed(sf.sketch, anchor)
+	if healed.is_empty():
 		return null
+	var prof: Dictionary = healed["prof"]
+	anchor = healed["at"]
 	var poly: PackedVector2Array = (prof["polygon"] as PackedVector2Array).duplicate()
 	# Normalize to CCW: cap and wall windings below assume it, and a CW
 	# profile turned every face INWARD — front faces culled, so the solid
@@ -162,9 +164,11 @@ func solid_part(doc: CadDocument) -> Dictionary:
 	var sf := doc.sketch_feature(sketch_id)
 	if sf == null:
 		return {}
-	var prof := ProfileFinder.profile_at(sf.sketch, anchor)
-	if prof.is_empty():
+	var healed := ProfileFinder.profile_at_healed(sf.sketch, anchor)
+	if healed.is_empty():
 		return {}
+	var prof: Dictionary = healed["prof"]
+	anchor = healed["at"]
 	var xf := sf.plane_transform()
 	var outer := (prof["polygon"] as PackedVector2Array).duplicate()
 	var aabb := AABB()

@@ -186,9 +186,9 @@ func _run() -> bool:
 		var key := String(e["key"])
 		if key.begins_with("corner:"):
 			corner_keys.append(key)
-		elif key == "top":
+		elif key.begins_with("top:"):
 			top_segs += 1
-		elif key == "bottom":
+		elif key.begins_with("bottom:"):
 			bottom_segs += 1
 	if corner_keys.size() != 4 or top_segs != 4 or bottom_segs != 4:
 		return _fail("F: pickable_edges census wrong (%d corners, %d top, "

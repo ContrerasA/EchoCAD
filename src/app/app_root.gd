@@ -2485,9 +2485,13 @@ static func _describe_treat_edges(et: EdgeTreatFeature) -> String:
 			else "%d side corner%s" % [et.corners.size(),
 				"" if et.corners.size() == 1 else "s"])
 	if et.top:
-		bits.append("top rim")
+		bits.append("top rim" if et.top_segs.is_empty()
+			else "%d top edge%s" % [et.top_segs.size(),
+				"" if et.top_segs.size() == 1 else "s"])
 	if et.bottom:
-		bits.append("bottom rim")
+		bits.append("bottom rim" if et.bottom_segs.is_empty()
+			else "%d bottom edge%s" % [et.bottom_segs.size(),
+				"" if et.bottom_segs.size() == 1 else "s"])
 	return "Edges: " + ", ".join(bits)
 
 
@@ -2580,7 +2584,7 @@ func _update_treat_pick_count() -> void:
 	if _treat_pick_count == null:
 		return
 	var n := _treat_selected.size()
-	_treat_pick_count.text = "%d edge set%s selected — click edges in the view" \
+	_treat_pick_count.text = "%d edge%s selected — click edges in the view" \
 		% [n, "" if n == 1 else "s"]
 
 
@@ -2595,13 +2599,22 @@ func _commit_edge_treat_pick() -> void:
 		set_status_hint("Fillet/Chamfer: click at least one edge in the view")
 		return
 	var corner_list: Array = []
+	var top_list: Array = []
+	var bottom_list: Array = []
 	for key in _treat_selected:
-		if String(key).begins_with("corner:"):
-			corner_list.append(int(String(key).substr(7)))
+		var ks := String(key)
+		if ks.begins_with("corner:"):
+			corner_list.append(int(ks.substr(7)))
+		elif ks.begins_with("top:"):
+			top_list.append(int(ks.substr(4)))
+		elif ks.begins_with("bottom:"):
+			bottom_list.append(int(ks.substr(7)))
 	corner_list.sort()
+	top_list.sort()
+	bottom_list.sort()
 	var fid := edge_treat(_treat_body, _treat_kind, float(r["mm"]),
-		not corner_list.is_empty(), _treat_selected.has("top"),
-		_treat_selected.has("bottom"), corner_list)
+		not corner_list.is_empty(), not top_list.is_empty(),
+		not bottom_list.is_empty(), corner_list, top_list, bottom_list)
 	if fid == "":
 		return   # hint already set; stay in the pick so the user can adjust
 	_end_edge_treat_pick()
@@ -2664,10 +2677,12 @@ func _edge_treat_root(body_id: String) -> ExtrudeFeature:
 
 ## Create the treatment (shared with RPC). `corner_list` limits the lateral
 ## pass to those profile-polygon corner indices (empty = every eligible
-## corner). Returns feature id or "".
+## corner); `top_list` / `bot_list` limit the rims to those polygon edge
+## indices (empty = the whole rim). Returns feature id or "".
 func edge_treat(body_id: String, p_kind: String, size: float,
 		lat := true, top := true, bot := false,
-		corner_list: Array = []) -> String:
+		corner_list: Array = [], top_list: Array = [],
+		bot_list: Array = []) -> String:
 	var root := _edge_treat_root(body_id)
 	if root == null:
 		return ""
@@ -2686,6 +2701,10 @@ func edge_treat(body_id: String, p_kind: String, size: float,
 	et.bottom = bot
 	for c in corner_list:
 		et.corners.append(int(c))
+	for s in top_list:
+		et.top_segs.append(int(s))
+	for s in bot_list:
+		et.bottom_segs.append(int(s))
 	if et.build_treated_mesh(doc, root) == null:
 		set_status_hint("Fillet/Chamfer failed: size too large for the "
 			+ "body, or the profile has holes")
@@ -3341,7 +3360,17 @@ func pick_body_color(body_id: String) -> void:
 		_color_picker = ColorPicker.new()
 		_color_picker.name = "BodyColorPicker"
 		_color_picker.edit_alpha = false
-		box.add_child(_color_picker)
+		# Compact (QA §M32 additional): the stock picker's sampler/mode/
+		# preset rows pushed Apply below the window with no way to scroll.
+		_color_picker.sampler_visible = false
+		_color_picker.color_modes_visible = false
+		_color_picker.presets_visible = false
+		_color_picker.can_add_swatches = false
+		var scroll := ScrollContainer.new()
+		scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+		box.add_child(scroll)
+		scroll.add_child(_color_picker)
 		var okb := Button.new()
 		okb.name = "BodyColorOkBtn"
 		okb.text = "Apply"
@@ -3902,6 +3931,7 @@ func _on_viewport_input(event: InputEvent) -> void:
 				picking_sweep_path = false
 				_pending_sweep["path_sketch"] = cand["sketch_id"]
 				_pending_sweep["path_entity"] = cand["entity_id"]
+				world.clear_axis_hover()
 				_open_sweep_dialog()
 				_refresh_ui()
 		elif mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT and picking_loft:
@@ -4005,8 +4035,21 @@ func _on_viewport_input(event: InputEvent) -> void:
 					doc.sketch_feature(String(_pending_revolve["sketch_id"])),
 					String(cand["axis"]), cand["a"] as Vector2,
 					cand["b"] as Vector2, _axis_hover_width_mm())
+		elif picking_sweep_path:
+			# Pre-highlight the path curve the click would take (hover
+			# feedback is mandatory on every pick stage — see CLAUDE.md).
+			var rayc := rig.pixel_ray(mm.position)
+			var candc := _sweep_path_under_ray(rayc[0], rayc[1])
+			if candc.is_empty():
+				world.clear_axis_hover()
+			else:
+				var sfc := doc.sketch_feature(String(candc["sketch_id"]))
+				world.set_curve_hover(sfc, String(candc["entity_id"]),
+					SketchGeometry.entity_polyline(sfc.sketch,
+						sfc.sketch.entity(String(candc["entity_id"]))),
+					_axis_hover_width_mm())
 		elif picking_treat_edges:
-			# Pre-highlight the edge (or whole rim) the click would toggle.
+			# Pre-highlight the edge the click would toggle.
 			var raye := rig.pixel_ray(mm.position)
 			world.set_treat_edge_hover(_treat_edge_under_ray(raye[0], raye[1]),
 				_treat_pick_edges, _axis_hover_width_mm())

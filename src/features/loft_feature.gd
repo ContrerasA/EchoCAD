@@ -81,8 +81,13 @@ func world_rings(doc: CadDocument) -> Array:
 		var sf := doc.sketch_feature(String(sec["sketch"]))
 		if sf == null:
 			return []
-		var prof := ProfileFinder.profile_at(sf.sketch, sec["at"] as Vector2)
-		if prof.is_empty() or not (prof.get("holes", []) as Array).is_empty():
+		var healed := ProfileFinder.profile_at_healed(sf.sketch,
+			sec["at"] as Vector2)
+		if healed.is_empty():
+			return []
+		var prof: Dictionary = healed["prof"]
+		sec["at"] = healed["at"]
+		if not (prof.get("holes", []) as Array).is_empty():
 			return []
 		var poly: PackedVector2Array = (prof["polygon"] as PackedVector2Array).duplicate()
 		if ExtrudeFeature._signed_area(poly) < 0.0:

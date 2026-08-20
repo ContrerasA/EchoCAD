@@ -1169,6 +1169,48 @@ func clear_axis_hover() -> void:
 	_axis_hover_key = ""
 
 
+## Highlight an arbitrary sketch CURVE (line/arc/spline polyline in uv) as a
+## thick amber band — the sweep path pick's hover (same look as
+## set_axis_hover, which covers straight candidates only). Shares the axis
+## hover slot, so clear_axis_hover clears it too.
+func set_curve_hover(sf: SketchFeature, key: String,
+		poly: PackedVector2Array, width_mm: float) -> void:
+	if sf == null or key == "" or poly.size() < 2:
+		clear_axis_hover()
+		return
+	var k := sf.id + "|curve:" + key + "|%.3f" % width_mm
+	if k == _axis_hover_key and _axis_hover_mi != null:
+		return
+	clear_axis_hover()
+	var xf := sf.plane_transform()
+	var tris := PackedVector3Array()
+	for i in poly.size() - 1:
+		var a := poly[i]
+		var b := poly[i + 1]
+		var d := b - a
+		if d.length() < 1e-9:
+			continue
+		var perp := Vector2(-d.y, d.x).normalized() * (width_mm * 0.5)
+		var quad := [a + perp, b + perp, b - perp, a - perp]
+		for qi in [0, 1, 2, 0, 2, 3]:
+			var p: Vector2 = quad[qi]
+			tris.append(xf * Vector3(p.x, p.y, 0.0))
+	if tris.is_empty():
+		return
+	var mesh := ArrayMesh.new()
+	var arrays := []
+	arrays.resize(Mesh.ARRAY_MAX)
+	arrays[Mesh.ARRAY_VERTEX] = tris
+	mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+	_axis_hover_mi = MeshInstance3D.new()
+	_axis_hover_mi.name = "CurveHover"
+	_axis_hover_mi.mesh = mesh
+	_axis_hover_mi.material_override = _fill_material(
+		Color(1.0, 0.72, 0.25, 0.85), true)
+	add_child(_axis_hover_mi)
+	_axis_hover_key = k
+
+
 ## --- edge-treat picking (M35) --------------------------------------------
 
 const COLOR_TREAT_EDGE := Color(0.55, 0.75, 1.0)

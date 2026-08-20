@@ -35,6 +35,11 @@ macOS/web still require binaries built in the sibling repos first.
   gestures merge via CmdMergeBatch into one undo step (including their
   constraint re-solve).
 - Only `src/render/render_bridge.gd` may touch `TVGCanvas`.
+- **Hover feedback is mandatory on every pick stage.** Any tool step that
+  waits for the user to click something (profile, path, axis, plane, face,
+  edge, body...) MUST pre-highlight the candidate under the cursor on mouse
+  motion before the click — in every NEW tool and every UPDATED tool, no
+  exceptions. A pick stage without hover feedback is a bug.
 - Tests: `extends SceneTree`, `quit(0 if ok else 1)`, failures via
   `push_error`. Success prints `"<NAME> OK: <desc>"`.
 - Milestone work happens on its `mNN-*` branch; merge to `main` only with

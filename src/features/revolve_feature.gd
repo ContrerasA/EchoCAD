@@ -95,9 +95,11 @@ func _resolve(doc: CadDocument) -> Dictionary:
 	var sf := doc.sketch_feature(sketch_id)
 	if sf == null:
 		return {}
-	var prof := ProfileFinder.profile_at(sf.sketch, anchor)
-	if prof.is_empty():
+	var healed := ProfileFinder.profile_at_healed(sf.sketch, anchor)
+	if healed.is_empty():
 		return {}
+	var prof: Dictionary = healed["prof"]
+	anchor = healed["at"]
 	var ax := axis_in_sketch(sf.sketch)
 	if ax.is_empty():
 		return {}
