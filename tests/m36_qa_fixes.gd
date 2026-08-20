@@ -68,17 +68,23 @@ func _run() -> bool:
 		FileAccess.get_file_as_string("res://tests/M33.ecad"))
 	var doc33 := CadDocument.from_dict(d33 as Dictionary)
 	var bodies33: Array = await BodyBuilder.build(doc33, _root)
-	if bodies33.size() != 1:
-		return _fail("A1: M33.ecad should rebuild 1 body, got %d"
-			% bodies33.size())
-	var want33 := 76.2 * 63.5 * 50.8
-	var got33 := BodyBuilder.mesh_volume(bodies33[0]["mesh"])
+	# The saved repro's extrude (f2) used to vanish: its anchor sat outside
+	# the moved rectangle. It must rebuild (the file may carry extra
+	# features from later QA sessions — only f2's presence matters).
+	var got33 := -1.0
+	for b: Dictionary in bodies33:
+		if String(b["id"]) == "f2":
+			got33 = BodyBuilder.mesh_volume(b["mesh"])
+	if got33 <= 0.0:
+		return _fail("A1: M33.ecad extrude body f2 did not rebuild")
+	var ef33 := doc33.feature_by_id("f2") as ExtrudeFeature
+	var prof33 := ProfileFinder.profile_at(
+		doc33.sketch_feature("f1").sketch, ef33.anchor)
+	if prof33.is_empty():
+		return _fail("A1: anchor was not healed into the region")
+	var want33: float = float(prof33["area"]) * absf(ef33.distance)
 	if absf(got33 - want33) > want33 * 0.01:
 		return _fail("A1: healed body volume %f vs %f" % [got33, want33])
-	var ef33 := doc33.feature_by_id("f2") as ExtrudeFeature
-	if ProfileFinder.profile_at(
-			doc33.sketch_feature("f1").sketch, ef33.anchor).is_empty():
-		return _fail("A1: anchor was not healed into the region")
 
 	# --- A2. live edit: move every point, body must survive ----------------
 	var fbox := _root.create_sketch("XY")
@@ -207,6 +213,19 @@ func _run() -> bool:
 	if ggot <= 0.0 or ggot >= cwant or ggot < 11700.0:
 		return _fail("C: two-edge chamfer volume %f out of range" % ggot)
 	_root.stack.undo()
+
+	# --- B2. M34.ecad: tight-bend sweep now builds with a warning ----------
+	var d34: Variant = JSON.parse_string(
+		FileAccess.get_file_as_string("res://tests/M34.ecad"))
+	var doc34 := CadDocument.from_dict(d34 as Dictionary)
+	var sw2 := SweepFeature.make("f1", Vector2(38.1, 50.8), "f2", "e12")
+	var mesh34 := sw2.build_mesh(doc34)
+	if mesh34 == null:
+		return _fail("B2: M34.ecad sweep still refused (%s)" % sw2.last_error)
+	if sw2.last_warning == "":
+		return _fail("B2: tight-bend sweep built without the warning")
+	if BodyBuilder.mesh_volume(mesh34) <= 0.0:
+		return _fail("B2: tight-bend sweep produced no volume")
 
 	# --- D. sweep-path hover band draws and clears --------------------------
 	var fcurve := _root.create_sketch("XY")

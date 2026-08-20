@@ -2832,6 +2832,8 @@ func sweep(profile_sketch: String, at: Vector2, path_sk: String,
 		set_status_hint("Sweep failed: " + (f.last_error if f.last_error != ""
 			else "no profile/path"))
 		return ""
+	if f.last_warning != "":
+		set_status_hint("Sweep: " + f.last_warning)
 	stack.push_no_merge(CmdAddFeature.new(f))
 	return f.id
 

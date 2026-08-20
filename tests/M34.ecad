@@ -1,0 +1,126 @@
+{
+	"app": "EchoCAD",
+	"display_unit": "in",
+	"feature_counter": 4,
+	"features": [
+		{
+			"id": "f1",
+			"kind": "sketch",
+			"name": "Sketch1",
+			"plane": "XZ",
+			"sketch": {
+				"constraints": [],
+				"entities": [
+					{
+						"id": "e1",
+						"kind": "point",
+						"pos": [
+							0.0,
+							0.0
+						]
+					},
+					{
+						"id": "e2",
+						"kind": "point",
+						"pos": [
+							38.0999984741211,
+							50.7999992370605
+						]
+					},
+					{
+						"center": "e2",
+						"id": "e3",
+						"kind": "circle",
+						"radius": 12.7000007629395
+					}
+				],
+				"id_counter": 3,
+				"origin": "e1"
+			}
+		},
+		{
+			"id": "f2",
+			"kind": "sketch",
+			"name": "Sketch2",
+			"plane": "XY",
+			"sketch": {
+				"constraints": [],
+				"entities": [
+					{
+						"id": "e1",
+						"kind": "point",
+						"pos": [
+							0.0,
+							0.0
+						]
+					},
+					{
+						"id": "e7",
+						"kind": "point",
+						"pos": [
+							25.3999996185303,
+							0.0
+						]
+					},
+					{
+						"id": "e8",
+						"kind": "point",
+						"pos": [
+							25.3999996185303,
+							50.7999992370605
+						]
+					},
+					{
+						"id": "e9",
+						"kind": "point",
+						"pos": [
+							101.599998474121,
+							38.0999984741211
+						]
+					},
+					{
+						"id": "e10",
+						"kind": "point",
+						"pos": [
+							152.399993896484,
+							88.9000015258789
+						]
+					},
+					{
+						"id": "e11",
+						"kind": "point",
+						"pos": [
+							50.7999992370605,
+							101.599998474121
+						]
+					},
+					{
+						"closed": false,
+						"handles": [
+							null,
+							null,
+							null,
+							null,
+							null
+						],
+						"id": "e12",
+						"kind": "spline",
+						"points": [
+							"e7",
+							"e8",
+							"e9",
+							"e10",
+							"e11"
+						]
+					}
+				],
+				"id_counter": 12,
+				"origin": "e1"
+			}
+		}
+	],
+	"named_views": [],
+	"parameters": [],
+	"timeline_marker": 2,
+	"version": 1
+}

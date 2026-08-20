@@ -728,20 +728,20 @@ Status: PENDING sign-off
 - [X] 1. Select a body, **Mirror Body**, click the YZ plane. **Expect:**
    a reflected body appears on the other side, correctly lit and outward-
    facing (not inside-out dark); its own browser row + eye; ONE Ctrl+Z.
-- [!] 2. Edit the source sketch. **Expect:** mirror and any patterns
+- [X] 2. Edit the source sketch. **Expect:** mirror and any patterns
    replay to match.
   Editing source sketch causes body to disapear
-- [ ] 3. **Pattern** (Linear): counts 3 × 2, offsets. **Expect:** ghost…
+- [X] 3. **Pattern** (Linear): counts 3 × 2, offsets. **Expect:** ghost…
    dialog commits the grid; every instance a body row; double-click the
    chip and change counts — instances re-place.
-- [ ] 4. **Pattern** (Circular): N=6 about Z, Total 360. **Expect:** a ring
+- [X] 4. **Pattern** (Circular): N=6 about Z, Total 360. **Expect:** a ring
    of instances evenly spaced. Total 180, N=3: instances at 90° and 180°.
-- [ ] 5. Suppress the pattern chip. **Expect:** instances vanish; the
+- [X] 5. Suppress the pattern chip. **Expect:** instances vanish; the
    source stays.
-- [ ] 6. Export STL (all visible). **Expect:** every instance exports;
+- [X] 6. Export STL (all visible). **Expect:** every instance exports;
    volumes match the source in a slicer.
-- [ ] 7. Save/reopen. **Expect:** mirror + patterns rebuild identically.
-- [ ] 8. Known limitation: pattern/mirror instances are bodies derived
+- [X] 7. Save/reopen. **Expect:** mirror + patterns rebuild identically.
+- [~] 8. Known limitation: pattern/mirror instances are bodies derived
    AFTER booleans — a later Cut placed over an instance does not carve it
    (booleans target pre-instance bodies). Documented.
 
@@ -769,6 +769,10 @@ Status: PENDING sign-off
    	Fails with message about tight paths and intersections. See @tests/M24.ecad
    	Update:
    		Still fails M32-2.ecad
+    Update:
+      Still get error see M34.ecad 
+      Model Sweep failed: a path bend radius is tighter than the profile's 12.7mm extent
+      In other programs, don't they just let the part intersect with itself?
 - [ ] 2. Sweep along a spline path. **Expect:** a smooth tube-like solid
    following the curve; no twisting.
 - [ ] 3. Try a path with a hairpin tighter than the profile. **Expect:**
@@ -810,6 +814,16 @@ Status: PENDING sign-off
   now prints the actual numbers ("bend radius X mm vs profile extent Y mm")
   so the next report can say which case fired. Covered by
   `tests/m36_qa_fixes.gd` (B).
+  Round 3 (2026-08-19), from `tests/M34.ecad` (now in the repo): the bend
+  really IS tighter than the 1in-dia profile — and per the note ("don't
+  they just let the part intersect with itself?") that is no longer a
+  refusal: the sweep BUILDS (the mesh stays closed; the walls fold locally
+  at the tight bend) and the status bar carries a warning instead
+  ("...the solid self-intersects there"). Only true hairpins — a path
+  joint turning more than ~120°, where the miter joint degenerates —
+  still refuse, which keeps QA item 3 meaningful. Covered by
+  `tests/m36_qa_fixes.gd` (B2) and the reworded hairpin case in
+  `tests/m34_sweep_loft.gd`.
 
 ## §M35 — 3D fillet + chamfer (prismatic)
 

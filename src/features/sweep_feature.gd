@@ -17,6 +17,11 @@ var path_entity := ""        # any entity on the path chain
 ## so the UI can say what actually went wrong instead of guessing.
 var last_error := ""
 
+## Non-fatal build note (display state): set when the solid was built but
+## self-intersects at a tight bend (QA §M34.1 round 3 — Fusion-style CAD
+## refuses these; here the mesh is built anyway and the user is warned).
+var last_warning := ""
+
 ## Sampling step for path polylines, mm-ish (curves already tessellate).
 const MIN_SEG_MM := 0.01
 
@@ -211,7 +216,10 @@ static func _joint_rings(path: PackedVector3Array, profile_xf: Transform3D,
 		var n_m := t_in
 		if j > 0 and j < path.size() - 1:
 			n_m = (t_in + (segs[j]["t"] as Vector3)).normalized()
-			if n_m.length() < 1e-6 or absf(t_in.dot(n_m)) < 1e-3:
+			# Turns past ~120° are hairpins: the miter slide factor blows
+			# past 2x and the joint ring explodes. Gentler bends are allowed
+			# even when self-intersecting (build_mesh warns instead).
+			if n_m.length() < 1e-6 or absf(t_in.dot(n_m)) < 0.5:
 				return []   # hairpin: projection degenerate
 		var per_ring: Array = []
 		for ring: PackedVector2Array in rings:
@@ -244,6 +252,7 @@ static func min_bend_radius(path: PackedVector3Array) -> float:
 
 func build_mesh(doc: CadDocument) -> ArrayMesh:
 	last_error = ""
+	last_warning = ""
 	var res := _resolve(doc)
 	if res.is_empty():
 		return null
@@ -281,12 +290,16 @@ func build_mesh(doc: CadDocument) -> ArrayMesh:
 	for ring: PackedVector2Array in rings:
 		for p in ring:
 			max_ext = maxf(max_ext, (p - s_uv).length())
+	# A bend tighter than the profile means the inner walls fold through
+	# themselves at that corner. That used to REFUSE the sweep; it now
+	# builds anyway (the mesh stays closed — the fold is local) and warns,
+	# since a hard stop made gentle-looking spline paths unusable
+	# (QA §M34.1 round 3). Only a true hairpin still refuses below.
 	var bend := min_bend_radius(path)
 	if bend < max_ext:
-		last_error = ("a path bend (radius %.1f mm) is tighter than the "
-			+ "profile's %.1f mm extent (the swept walls would "
-			+ "self-intersect)") % [bend, max_ext]
-		return null
+		last_warning = ("a path bend (radius %.1f mm) is tighter than the "
+			+ "profile's %.1f mm extent — the solid self-intersects "
+			+ "there") % [bend, max_ext]
 
 	# Per-SEGMENT transported frames + exact miter joints: the ring at an
 	# interior joint is the previous leg's prism sliced by the miter plane
@@ -294,7 +307,8 @@ func build_mesh(doc: CadDocument) -> ArrayMesh:
 	# pinch corners — an L sweep lost ~15% of its corner volume that way.
 	var joints := _joint_rings(path, profile_xf, s_uv, rings)
 	if joints.is_empty():
-		last_error = "the path doubles back on itself (hairpin joint)"
+		last_error = "the path doubles back on itself (hairpin joint — " \
+			+ "the sweep would self-intersect)"
 		return null
 
 	var verts := PackedVector3Array()

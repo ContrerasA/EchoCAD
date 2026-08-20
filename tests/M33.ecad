@@ -1,7 +1,7 @@
 {
 	"app": "EchoCAD",
 	"display_unit": "in",
-	"feature_counter": 3,
+	"feature_counter": 4,
 	"features": [
 		{
 			"id": "f1",
@@ -107,8 +107,8 @@
 		},
 		{
 			"anchor": [
-				-23.0332946777344,
-				19.7754974365234
+				-116.129768371582,
+				1.69149827957153
 			],
 			"color": [
 				0.74609375,
@@ -121,10 +121,40 @@
 			"name": "Extrude1",
 			"operation": "new_body",
 			"sketch_id": "f1"
+		},
+		{
+			"axis_dir": [
+				0.0,
+				0.0,
+				1.0
+			],
+			"axis_origin": [
+				0.0,
+				0.0,
+				0.0
+			],
+			"count1": 6,
+			"count2": 1,
+			"id": "f4",
+			"kind": "pattern_body",
+			"mode": "circular",
+			"name": "Pattern1",
+			"offset1": [
+				86.2076034545898,
+				0.0,
+				0.0
+			],
+			"offset2": [
+				0.0,
+				0.0,
+				0.0
+			],
+			"source": "f2",
+			"total_deg": 360.0
 		}
 	],
 	"named_views": [],
 	"parameters": [],
-	"timeline_marker": 2,
+	"timeline_marker": 3,
 	"version": 1
 }

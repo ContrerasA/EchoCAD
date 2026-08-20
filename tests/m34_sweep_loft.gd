@@ -1,7 +1,7 @@
 extends SceneTree
 
 # M34: sweep + loft. Straight sweep matches extrude volume; L-path sweep
-# approximates area×length; splines sweep; too-tight bends refuse; loft of
+# approximates area×length; splines sweep; hairpin paths refuse; loft of
 # concentric circles matches the cone-frustum volume; watertightness via
 # positive signed volume + boolean cut works through BodyBuilder.
 
@@ -111,7 +111,7 @@ func _run() -> bool:
 	if absf(lvol - 8.0 * 6.0 * 80.0) > 8.0 * 6.0 * 80.0 * 0.03:
 		return _fail("L sweep volume %f vs ~%f" % [lvol, 8 * 6 * 80.0])
 
-	# --- too-tight bend refused -------------------------------------------
+	# --- hairpin (reversal) refused; gentle tight bends only warn ---------
 	var ftight := _root.create_sketch("XY")
 	_root.tools.set_active("line")
 	_click(Vector2(100, 0))
