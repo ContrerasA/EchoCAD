@@ -99,7 +99,7 @@ func refresh() -> void:
 		var srow := _add_row(sketches, "sketch", sf.id, sf.name,
 			app.world.sketch_shown(sf.id))
 		if sf.id == app.active_sketch_id:
-			srow.set_custom_color(COL_NAME, Color(1.0, 0.85, 0.3))
+			srow.set_custom_color(COL_NAME, ThemeService.col("accent_text"))
 
 	# Reference images (M30), Fusion's "Canvases" folder.
 	var live_canvases: Array = []

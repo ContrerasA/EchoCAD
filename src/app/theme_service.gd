@@ -500,6 +500,35 @@ static func build_theme() -> Theme:
 	_style_button(t, "TimelineChip", Vector2(2, 3), radius)
 	t.set_constant("icon_max_width", "TimelineChip", 19)
 	t.set_font_size("font_size", "TimelineChip", font_size("caption"))
+	t.set_constant("h_separation", "TimelineChip", 2)
+	# The sketch being edited: same footprint, accent fill.
+	t.add_type("TimelineChipActive")
+	t.set_type_variation("TimelineChipActive", "TimelineChip")
+	t.set_stylebox("normal", "TimelineChipActive", _flat(col("accent"),
+		col("accent_hover"), radius, Vector2(2, 3)))
+	t.set_stylebox("hover", "TimelineChipActive", _flat(col("accent_hover"),
+		col("accent_hover"), radius, Vector2(2, 3)))
+	t.set_stylebox("pressed", "TimelineChipActive", _flat(col("accent"),
+		col("accent_hover"), radius, Vector2(2, 3)))
+	for cn in ["font_color", "font_hover_color", "font_pressed_color",
+			"icon_normal_color", "icon_hover_color", "icon_pressed_color"]:
+		t.set_color(cn, "TimelineChipActive", col("on_accent"))
+	# Rollback marker: a thin accent bar.
+	t.add_type("TimelineMarker")
+	t.set_type_variation("TimelineMarker", "Button")
+	var mk := _fill(col("accent"))
+	mk.set_corner_radius_all(int(radius_sm))
+	mk.set_content_margin_all(0)
+	mk.expand_margin_left = -2
+	mk.expand_margin_right = -2
+	t.set_stylebox("normal", "TimelineMarker", mk)
+	var mkh := _fill(col("accent_hover"))
+	mkh.set_corner_radius_all(int(radius_sm))
+	mkh.set_content_margin_all(0)
+	t.set_stylebox("hover", "TimelineMarker", mkh)
+	t.set_stylebox("pressed", "TimelineMarker", mkh)
+	t.set_stylebox("hover_pressed", "TimelineMarker", mkh)
+	t.set_stylebox("focus", "TimelineMarker", _empty())
 	# Menu bar entries: flat text.
 	t.add_type("MenuBarButton")
 	t.set_type_variation("MenuBarButton", "MenuButton")
@@ -717,29 +746,32 @@ static func _check_icon(on: bool) -> Texture2D:
 	return ImageTexture.create_from_image(img)
 
 
-## Browser eye glyph: a small open eye when visible, a faint slash-through
-## when hidden.
+## Browser eye glyph: an open eye with a pupil when visible; a faint eye
+## with a slash through it when hidden. Drawn 2x and downsampled so the
+## curves read cleanly at 16px.
 static func _eye_icon(on: bool) -> Texture2D:
-	var s := 14
+	var s := 32
 	var img := Image.create(s, s, false, Image.FORMAT_RGBA8)
 	img.fill(Color.TRANSPARENT)
 	var ink := col("icon") if on else col("text_faint")
-	var cx := 6.5
-	var cy := 6.5
+	var cx := 15.5
+	var cy := 15.5
+	var rx := 13.0
+	var ry := 8.0
 	for y in s:
 		for x in s:
-			var dx := (x - cx) / 6.2
-			var dy := (y - cy) / 3.6
+			var dx := (x - cx) / rx
+			var dy := (y - cy) / ry
 			var d := dx * dx + dy * dy
-			if d <= 1.0 and d >= 0.55:
+			if d <= 1.0 and d >= 0.70:
 				img.set_pixel(x, y, ink)
-	if on:
-		for y in range(5, 9):
-			for x in range(5, 9):
+			elif on and (x - cx) * (x - cx) + (y - cy) * (y - cy) <= 4.2 * 4.2:
 				img.set_pixel(x, y, ink)
-	else:
-		for i in range(2, 12):
-			_dot(img, i, 13 - i, ink)
+	if not on:
+		for i in range(4, 28):
+			for t in range(-1, 2):
+				_dot(img, i + t, 31 - i, ink)
+	img.resize(16, 16, Image.INTERPOLATE_LANCZOS)
 	return ImageTexture.create_from_image(img)
 
 

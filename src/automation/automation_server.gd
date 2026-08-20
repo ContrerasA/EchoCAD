@@ -957,6 +957,22 @@ func _cmd_action_save(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
 	return {"path": String(a["path"])}
 
 
+## Switch the UI theme by id (M36). args: {theme}. Replies with the id that
+## actually loaded (unknown ids fall back to the default) and the catalog.
+func _cmd_action_set_theme(a: Dictionary, _p: StreamPeerTCP, _id: Variant) -> Dictionary:
+	var loaded := app.set_theme_id(String(a.get("theme", "")))
+	return {"theme": loaded, "dark": ThemeService.dark}
+
+
+func _cmd_query_theme(_a: Dictionary, _p: StreamPeerTCP, _id: Variant) -> Dictionary:
+	var ids: Array = []
+	for t: Dictionary in ThemeService.available_themes():
+		ids.append({"id": t["id"], "name": t["name"], "builtin": t["builtin"],
+			"appearance": t["appearance"]})
+	return {"theme": ThemeService.theme_id, "dark": ThemeService.dark,
+		"available": ids, "user_dir": ThemeService.user_theme_dir()}
+
+
 func _cmd_action_open(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
 	var doc := Serializer.load_file(String(a.get("path", "")))
 	if doc == null:

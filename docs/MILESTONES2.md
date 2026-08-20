@@ -319,6 +319,40 @@ because cap fillets are built from loft rings.
 - Keyboard shortcut editor; edge-line overlay for CSG-baked bodies
   (carried); rigid whole-chain offset constraint (carried).
 
+## M36 — Design overhaul + theme files  (branch: `m36-design-overhaul`)
+
+The shell is rebuilt to the Claude Design "EchoCAD" canvas (Modernist
+system: near-black neutrals, one red accent, Archivo, 0–3px radii) and the
+look becomes **data**: one JSON theme file drives UI chrome, viewport,
+grids, sketch ink and badges. Ships:
+
+- **Theme files** — `themes/*.json` (built-in) and `user://themes/*.json`
+  (user; shadow built-ins by id). `extends` inheritance, `@palette` /
+  `@role` references with `*alpha`, fonts (path + variable weights),
+  `font_sizes`, `metrics` (ribbon/button/panel sizes). `ThemeService`
+  resolves one token table; `build_theme()` derives the Godot Theme and
+  named type variations from it. Unknown ids / bad values fall back, never
+  blank the UI. Format reference: `docs/THEMING.md`.
+- **Shipped themes** — `modernist-dark` (default), `modernist-light`,
+  `classic-dark` (the M26 palette as a re-tint example).
+- **Shell** — menu bar (brand mark, File/Edit/View/Help mirroring the
+  ribbon, View ▸ Theme radio list, unit badge); 92px ribbon of captioned
+  groups with big icon-over-label buttons and small icon grids (model:
+  Create / Modify / Construct / Make / File; sketch: Select / Create /
+  Modify / Constrain / Options / Finish), Parameters + undo/redo tail; Browser
+  side panel with header; viewing controls as HUD pills over the canvas;
+  timeline chips with feature icons, accent rollback marker and active-
+  sketch chip; status bar (MODE · hint · DOF badge · zoom). Every RPC-facing
+  control name survives.
+- **Preferences** — theme picker lists every discovered theme, *Open themes
+  folder*, *Reload*. RPC: `action.set_theme {theme}`, `query.theme`.
+
+- **Automated**: `tests/m26_ui_shell.gd` extended — extends chain, palette
+  refs, metric inheritance, user-dir theme + shadowing, unknown-id
+  fallback, shell pieces present; all RPC suites re-run against the new
+  layout.
+- **Manual**: §M36 in `docs/MANUAL_QA2.md`.
+
 ## As-built deviations (implementation 2026-08-18/19)
 
 - **M27**: perspective stays the model-mode default (the doc proposed ortho
@@ -343,3 +377,8 @@ because cap fillets are built from loft rings.
   rather than per-edge hover picking; one treatment per body; plain
   single-extrude bodies only (booleans refused by the same AABB-touch rule
   the builder targets with).
+- **M36**: the design's custom title bar (min/max/close) is not replicated —
+  the OS title bar stays; the document name + unsaved mark live in the menu
+  bar instead. The Sketch Palette overlay became the ribbon's Options group
+  (same toggles, same control names). The print-estimate footer is not built
+  (no volume/overhang analysis exists yet).

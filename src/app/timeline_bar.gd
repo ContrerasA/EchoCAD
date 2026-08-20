@@ -41,25 +41,67 @@ func refresh() -> void:
 func _add_marker() -> void:
 	_marker_btn = Button.new()
 	_marker_btn.name = "TimelineMarker"
-	_marker_btn.text = "‖"
+	_marker_btn.theme_type_variation = "TimelineMarker"
 	_marker_btn.focus_mode = Control.FOCUS_NONE
 	_marker_btn.tooltip_text = "Rollback marker — drag"
 	_marker_btn.mouse_default_cursor_shape = Control.CURSOR_HSIZE
+	_marker_btn.custom_minimum_size = Vector2(8, 36)
+	_marker_btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	_marker_btn.button_down.connect(func() -> void: _dragging_marker = true)
 	_marker_btn.button_up.connect(_end_marker_drag)
 	add_child(_marker_btn)
 
 
+## Icon name for a feature's timeline chip (M36 design: icon over label).
+static func icon_for(f: Feature) -> String:
+	if f is SketchFeature:
+		return "create_sketch"
+	if f is ExtrudeFeature:
+		return "extrude"
+	if f is RevolveFeature:
+		return "revolve"
+	if f is SweepFeature:
+		return "sweep"
+	if f is LoftFeature:
+		return "loft"
+	if f is EdgeTreatFeature:
+		return "fillet_3d" if (f as EdgeTreatFeature).treat \
+			== EdgeTreatFeature.KIND_FILLET else "chamfer_3d"
+	if f is PlaneFeature:
+		return "offset_plane"
+	if f is CanvasFeature:
+		return "canvas"
+	if f is CopyBodyFeature:
+		return "copy_body"
+	if f is TransformFeature:
+		return "move_body"
+	if f is MirrorBodyFeature:
+		return "mirror_body"
+	if f is PatternBodyFeature:
+		return "pattern_body"
+	return ""
+
+
 func _add_chip(f: Feature, index: int) -> void:
 	var b := Button.new()
 	b.name = "Chip_" + f.id
+	b.theme_type_variation = "TimelineChip"
 	b.text = f.name
+	b.icon = ThemeService.icon(icon_for(f))
+	b.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	b.vertical_icon_alignment = VERTICAL_ALIGNMENT_TOP
+	b.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	b.clip_text = true
+	b.custom_minimum_size = Vector2(ThemeService.metric("timeline_chip_w"), 40)
 	b.focus_mode = Control.FOCUS_NONE
+	b.tooltip_text = f.name
 	var rolled: bool = index >= app.doc.timeline_marker
 	if f.suppressed or rolled:
 		b.modulate = Color(1, 1, 1, 0.45)
 	if rolled:
 		b.text = "(" + f.name + ")"
+	if app.mode == AppRoot.Mode.SKETCH and f.id == app.active_sketch_id:
+		b.theme_type_variation = "TimelineChipActive"
 	b.gui_input.connect(func(ev: InputEvent) -> void: _on_chip_input(f.id, ev))
 	add_child(b)
 

@@ -997,3 +997,45 @@ commit changes
   (axis band), fillet/chamfer edges (edge tube) all already highlight.
   Covered by `tests/m36_qa_fixes.gd` (D).
 - "commit changes": committed with this round.
+
+## §M36 — Design overhaul + theme files
+
+Run windowed at ≥1280×800. Default theme is Modernist Dark.
+
+- [ ] **Shell matches the design**: menu bar (red brand mark, EchoCAD —
+      file name, File/Edit/View/Help, unit badge right), 92px ribbon with
+      CREATE › / MODIFY › / CONSTRUCT › / MAKE › / FILE › captions, big
+      icon-over-label buttons + small icon grids, Parameters + undo/redo at
+      the right edge (both modes); BROWSER header over the tree; HUD pills (Orbit pivot, Look At,
+      Fit | ORTHO | Views | ⚙) top-left of the canvas; view cube top-right;
+      timeline chips with icons + a red rollback marker; status bar.
+- [ ] **Sketch ribbon**: New Sketch → ribbon swaps to SELECT / CREATE /
+      MODIFY / CONSTRAIN / OPTIONS / SKETCH (red Finish Sketch). No caption
+      is clipped; the active tool's big/small button is accent-tinted; the
+      active sketch's timeline chip is solid accent; status shows SKETCH ·
+      "SketchN on XY" · DOF badge (green when fully constrained) · zoom.
+- [ ] **Hover**: every ribbon/HUD button lights on hover (subtle fill +
+      hairline), pressed state is the accent tint.
+- [ ] **Menus**: File ▸ Save/Open/Import/Export/Preferences, Edit ▸
+      Undo/Redo/Parameters, View ▸ Fit/Look At/Orthographic (check mark
+      tracks the HUD toggle) + Theme radio list, Help ▸ About all work.
+- [ ] **Theme switch**: Preferences ▸ Theme → Modernist Light: chrome,
+      browser, viewport background, grids, sketch ink, axes, planes, bodies,
+      badges, view cube, popups and dialogs all flip — no dark remnants.
+      Classic Dark (blue) retints the accent everywhere (pressed buttons,
+      marker, selection, brand mark). View ▸ Theme shows the same list with
+      the active one checked. Setting survives restart.
+- [ ] **User theme**: Preferences ▸ Open themes folder → copy
+      `themes/modernist-dark.json` there as `mine.json`, change `"id"` to
+      `mine`, `"name"`, and `"red-500"` in the palette to `#1e90ff` → Reload
+      → "mine (user)" appears and selecting it turns the accent blue. Break
+      the JSON (delete a comma) → Reload → warning in the console, UI keeps
+      the last good theme. Delete the file → Reload → entry gone.
+- [ ] **Theme persistence across modes**: switch theme while in sketch mode,
+      finish sketch, re-enter — ribbon, timeline and canvas all consistent.
+- [ ] **Narrow window** (1024 wide): ribbon groups wrap to a second row
+      rather than pushing buttons off-screen; nothing overlaps the HUD.
+- [ ] **Dialogs** (Extrude, Parameters, Preferences, file dialogs, About):
+      themed panel, accent primary button, readable in both appearances.
+- [ ] **RPC**: `query.theme` lists built-ins + user themes;
+      `action.set_theme {theme: "modernist-light"}` switches live.

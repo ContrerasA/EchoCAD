@@ -70,21 +70,26 @@ func _run() -> bool:
 			return _fail("%s has no icon" % n)
 
 	# --- groups flip with the mode ----------------------------------------
-	if not (_root._shelf_groups["Solids"] as Control).visible:
-		return _fail("Solids group hidden in model mode")
-	if (_root._shelf_groups["Sketch"] as Control).visible:
+	if not (_root._shelf_groups["Create"] as Control).is_visible_in_tree():
+		return _fail("Create group hidden in model mode")
+	if (_root._shelf_groups["Sketch"] as Control).is_visible_in_tree():
 		return _fail("Sketch group visible in model mode")
 	if _root._tool_bar.visible:
 		return _fail("tool bar visible in model mode")
+	# Menu bar + HUD + browser header + status bar exist (M36 shell).
+	for n: String in ["MenuBar", "Ribbon", "Hud", "BrowserHeader",
+			"TimelinePanel", "StatusPanel", "UnitBadge", "DocLabel"]:
+		if _root.find_child(n, true, false) == null:
+			return _fail("M36 shell piece %s missing" % n)
 	var fid := _root.create_sketch("XY")
 	await _idle()
-	if (_root._shelf_groups["Solids"] as Control).visible:
-		return _fail("Solids group still visible in sketch mode")
-	if (_root._shelf_groups["Construct"] as Control).visible:
+	if (_root._shelf_groups["Create"] as Control).is_visible_in_tree():
+		return _fail("Create group still visible in sketch mode")
+	if (_root._shelf_groups["Construct"] as Control).is_visible_in_tree():
 		return _fail("Construct group still visible in sketch mode")
-	if not (_root._shelf_groups["Sketch"] as Control).visible:
+	if not (_root._shelf_groups["Sketch"] as Control).is_visible_in_tree():
 		return _fail("Sketch group hidden in sketch mode")
-	if not _root._tool_bar.visible or not _root._constraint_bar.visible:
+	if not _root._tool_bar.visible or not _root._constraint_bar.is_visible_in_tree():
 		return _fail("tool/constraint shelves hidden in sketch mode")
 	# The shelf must leave the canvas a real working area.
 	var vr := _root.viewport_rect()

@@ -68,7 +68,9 @@ fixture sketch quickly).
   `action.finish_sketch`, `action.new_document`, `action.open {path}`,
   `action.save {path}`, `action.undo`, `action.redo`,
   `action.set_pref {key, value}`, `action.build_fixture {name}` /
-  `action.load_fixture {path}`
+  `action.load_fixture {path}`, `action.set_theme {theme}` (M36)
+- `query.theme` — active theme id, appearance, catalog of available themes,
+  user theme dir (M36)
 
 **app.**
 - `app.screenshot {path?}` — writes PNG, or returns base64 when no path

@@ -94,7 +94,7 @@ var browser: BrowserTree
 
 var _viewport_container: SubViewportContainer
 var _viewport: SubViewport
-var _tool_bar: HFlowContainer
+var _tool_bar: Control
 ## Snap/inference toggles — kept so RPC-driven pref changes can refresh them.
 var _snap_check: CheckBox = null
 var _infer_check: CheckBox = null
@@ -102,7 +102,7 @@ var _construction_check: CheckBox = null
 ## While true, drawing tools mint CONSTRUCTION curves (Fusion's sticky
 ## construction toggle). See stamp_construction in the tool base.
 var construction_mode := false
-var _constraint_bar: HFlowContainer
+var _constraint_bar: Control
 var _tool_buttons := {}
 var _btn_create: Button
 var _btn_extrude: Button
@@ -135,6 +135,18 @@ var _timeline_panel: PanelContainer = null
 var _status_panel: PanelContainer = null
 var _big_buttons: Array = []
 var _small_buttons: Array = []
+var _model_ribbon: Control = null
+var _ribbon_rows: Control = null
+var _ribbon_tail: HBoxContainer = null
+var _hud: HBoxContainer = null
+var _menu_bar: MenuBar = null
+var _view_menu: PopupMenu = null
+var _view_menu_ortho_idx := -1
+var _theme_menu_first := 0
+var _brand_mark: ColorRect = null
+var _doc_label: Label = null
+var _unit_badge: Label = null
+var _timeline_count: Label = null
 var _prefs_dialog: Window = null
 var _theme_pick: OptionButton = null
 ## M27 viewing: Look At pick state, projection toggle, named views, units.
@@ -734,8 +746,8 @@ func _build_ui() -> void:
 	ThemeService.load_settings()
 	theme = ThemeService.build_theme()
 	# Themed backdrop behind everything: the space around the shelf groups is
-	# otherwise the engine's dark clear color, which stayed dark under the
-	# light theme (QA §M26.5). A Panel re-reads its stylebox on theme change.
+	# otherwise the engine's dark clear color (QA §M26.5). A Panel re-reads
+	# its stylebox on theme change.
 	var backdrop := Panel.new()
 	backdrop.name = "Backdrop"
 	backdrop.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -750,225 +762,8 @@ func _build_ui() -> void:
 	vbox.add_theme_constant_override("separation", 0)
 	add_child(vbox)
 
-	# --- top shelf: grouped Fusion-style (M26). HFlow so narrow windows wrap
-	# instead of pushing tail buttons off-screen (users AND automation clicks).
-	var top := HFlowContainer.new()
-	top.name = "TopBar"
-	vbox.add_child(top)
-	var g_solids := _shelf_group(top, "Solids")
-	_btn_create = _button(g_solids, "Create Sketch", _on_create_sketch,
-		"create_sketch")
-	_btn_create.name = "CreateSketchBtn"
-	_btn_extrude = _button(g_solids, "Extrude", _on_extrude_pressed, "extrude")
-	_btn_extrude.name = "ExtrudeBtn"
-	_btn_revolve = _button(g_solids, "Revolve", _on_revolve_pressed, "revolve")
-	_btn_revolve.name = "RevolveBtn"
-	var sweepb := _button(g_solids, "Sweep", _on_sweep_pressed, "sweep")
-	sweepb.name = "SweepBtn"
-	sweepb.tooltip_text = "Sweep a profile along a sketch path"
-	var loftb := _button(g_solids, "Loft", _on_loft_pressed, "loft")
-	loftb.name = "LoftBtn"
-	loftb.tooltip_text = "Loft between two or more profiles"
-	var filb := _button(g_solids, "Fillet Edges", func() -> void:
-		open_edge_treat_dialog("", EdgeTreatFeature.KIND_FILLET), "fillet_3d")
-	filb.name = "FilletEdgesBtn"
-	filb.tooltip_text = ("Round edges of a plain extrude: select the body, "
-		+ "then click the edges to round")
-	var chab := _button(g_solids, "Chamfer Edges", func() -> void:
-		open_edge_treat_dialog("", EdgeTreatFeature.KIND_CHAMFER), "chamfer_3d")
-	chab.name = "ChamferEdgesBtn"
-	chab.tooltip_text = ("Chamfer edges of a plain extrude: select the body, "
-		+ "then click the edges to cut")
-	var moveb := _button(g_solids, "Move Body",
-		func() -> void: open_move_dialog(""), "move_body")
-	moveb.name = "MoveBodyBtn"
-	moveb.tooltip_text = "Move/rotate the selected body (a timeline feature)"
-	var copyb := _button(g_solids, "Copy Body",
-		func() -> void: open_copy_dialog(""), "copy_body")
-	copyb.name = "CopyBodyBtn"
-	copyb.tooltip_text = "Parametric copy of the selected body at an offset"
-	var mirrb := _button(g_solids, "Mirror Body", _on_mirror_body_pressed,
-		"mirror_body")
-	mirrb.name = "MirrorBodyBtn"
-	mirrb.tooltip_text = "Mirror the selected body across a plane"
-	var pattb := _button(g_solids, "Pattern",
-		func() -> void: open_pattern_dialog(""), "pattern_body")
-	pattb.name = "PatternBodyBtn"
-	pattb.tooltip_text = "Linear/circular pattern of the selected body"
-	var g_construct := _shelf_group(top, "Construct")
-	_btn_offset_plane = _button(g_construct, "Offset Plane",
-		_on_offset_plane_pressed, "offset_plane")
-	_btn_offset_plane.name = "OffsetPlaneBtn"
-	var g_sketch := _shelf_group(top, "Sketch")
-	_btn_finish = _button(g_sketch, "Finish Sketch", _on_finish_sketch,
-		"finish_sketch")
-	_btn_finish.name = "FinishSketchBtn"
-	var g_inspect := _shelf_group(top, "Inspect")
-	var pbtn := _button(g_inspect, "Parameters", _open_params_dialog,
-		"parameters")
-	pbtn.name = "ParametersBtn"
-	var g_hist := _shelf_group(top, "History")
-	_btn_undo = _button(g_hist, "Undo", func() -> void: stack.undo(), "undo")
-	_btn_undo.name = "UndoBtn"
-	_btn_undo.tooltip_text = "Undo (Ctrl+Z)"
-	_btn_redo = _button(g_hist, "Redo", func() -> void: stack.redo(), "redo")
-	_btn_redo.name = "RedoBtn"
-	_btn_redo.tooltip_text = "Redo (Ctrl+Shift+Z)"
-	var g_file := _shelf_group(top, "File")
-	_btn_save = _button(g_file, "Save",
-		func() -> void: save_interactive(false), "save")
-	_btn_save.name = "SaveBtn"
-	_btn_save.tooltip_text = "Save (Ctrl+S)"
-	_btn_open = _button(g_file, "Open", open_interactive, "open")
-	_btn_open.name = "OpenBtn"
-	_btn_open.tooltip_text = "Open (Ctrl+O)"
-	var g_io := _shelf_group(top, "Interchange")
-	var dxfi := _button(g_io, "Import DXF", import_dxf_interactive,
-		"import_dxf")
-	dxfi.name = "ImportDxfBtn"
-	var canvb := _button(g_io, "Canvas", import_canvas_interactive, "canvas")
-	canvb.name = "ImportCanvasBtn"
-	canvb.tooltip_text = "Insert a reference image (PNG/JPEG) on a plane"
-	var svgi := _button(g_io, "Import SVG", import_svg_interactive,
-		"import_svg")
-	svgi.name = "ImportSvgBtn"
-	var dxfb := _button(g_io, "Export DXF", export_dxf_interactive,
-		"export_dxf")
-	dxfb.name = "ExportDxfBtn"
-	var stlb := _button(g_io, "Export STL",
-		func() -> void: export_stl_interactive(), "export_stl")
-	stlb.name = "ExportStlBtn"
-	var g_view := _shelf_group(top, "View")
-	# Orbit pivot: Fusion's body-center is the default, Blender-style
-	# under-cursor and plain view-center are the alternatives.
-	_pivot_pick = OptionButton.new()
-	_pivot_pick.name = "PivotModeBtn"
-	_pivot_pick.focus_mode = Control.FOCUS_NONE
-	_pivot_pick.add_item("Orbit: Body Center", OrbitCamera.PivotMode.BODY_CENTER)
-	_pivot_pick.add_item("Orbit: Under Cursor", OrbitCamera.PivotMode.ORBIT_POINT)
-	_pivot_pick.add_item("Orbit: View Center", OrbitCamera.PivotMode.VIEW_CENTER)
-	_pivot_pick.item_selected.connect(func(i: int) -> void:
-		set_pivot_mode(_pivot_pick.get_item_id(i) as OrbitCamera.PivotMode))
-	g_view.add_child(_pivot_pick)
-	_btn_ortho = _button(g_view, "Ortho", func() -> void:
-		set_model_projection(_btn_ortho.button_pressed), "camera_ortho")
-	_btn_ortho.name = "OrthoBtn"
-	_btn_ortho.toggle_mode = true
-	_btn_ortho.tooltip_text = "Orthographic projection (P)"
-	var lookb := _button(g_view, "Look At", _on_look_at_pressed, "look_at")
-	lookb.name = "LookAtBtn"
-	lookb.tooltip_text = "Look At: square the view to a plane or flat face"
-	var fitb := _button(g_view, "Fit", fit_view, "fit_view")
-	fitb.name = "FitBtn"
-	fitb.tooltip_text = "Fit the model in view (F)"
-	_views_pick = OptionButton.new()
-	_views_pick.name = "ViewsPick"
-	_views_pick.focus_mode = Control.FOCUS_NONE
-	_views_pick.fit_to_longest_item = false
-	_views_pick.item_selected.connect(_on_views_pick)
-	g_view.add_child(_views_pick)
-	_refresh_views_pick()
-	var prefb := _button(g_view, "Preferences", _open_prefs_dialog,
-		"preferences")
-	prefb.name = "PreferencesBtn"
-
-	# Tools get their own row — one row would overflow the window and make
-	# the tail buttons unreachable (for users AND automation clicks).
-	_tool_bar = HFlowContainer.new()
-	_tool_bar.name = "ToolBar"
-	vbox.add_child(_tool_bar)
-	var g_select := _shelf_group(_tool_bar, "Select")
-	var g_create := _shelf_group(_tool_bar, "Create")
-	var g_modify := _shelf_group(_tool_bar, "Modify")
-	var g_dim := _shelf_group(_tool_bar, "Dimension")
-	var group := ButtonGroup.new()
-	for tid: String in tools.tool_ids():
-		var t := tools.get_tool(tid)
-		var b := Button.new()
-		var parts := tid.split("_")
-		var pascal := ""
-		for part in parts:
-			pascal += part.substr(0, 1).to_upper() + part.substr(1)
-		b.name = pascal + "ToolBtn"
-		# Icon-only: with titles the sketch shelf overflowed a 1280px window
-		# and the tail tools fell off-screen (unreachable for users AND
-		# automation clicks). The title lives in the tooltip; a text fallback
-		# keeps the button usable if its icon asset ever goes missing.
-		b.icon = ThemeService.icon(tid)
-		if b.icon == null:
-			b.text = t.title
-		b.tooltip_text = t.title if t.shortcut == KEY_NONE \
-			else "%s (%s)" % [t.title, OS.get_keycode_string(t.shortcut)]
-		b.custom_minimum_size = Vector2(34, 30)
-		b.focus_mode = Control.FOCUS_NONE
-		b.toggle_mode = true
-		b.button_group = group
-		b.pressed.connect(func() -> void: tools.set_active(tid))
-		_tool_group_for(tid, g_select, g_create, g_modify, g_dim).add_child(b)
-		_tool_buttons[tid] = b
-
-	# Snap + inference toggles. These already existed as `prefs` entries that
-	# only `action.set_pref` could reach, which made them unusable by hand and
-	# unverifiable in manual QA. Both paths now drive the same state.
-	var g_opts := _shelf_group(_tool_bar, "Options")
-	var snap_box := CheckBox.new()
-	snap_box.name = "GridSnapChk"
-	snap_box.text = "Snap"
-	snap_box.focus_mode = Control.FOCUS_NONE
-	snap_box.button_pressed = snap.grid_enabled
-	snap_box.toggled.connect(func(on: bool) -> void: snap.grid_enabled = on)
-	g_opts.add_child(snap_box)
-	_snap_check = snap_box
-
-	var infer_box := CheckBox.new()
-	infer_box.name = "InferenceChk"
-	infer_box.text = "Infer"
-	infer_box.focus_mode = Control.FOCUS_NONE
-	infer_box.button_pressed = bool(prefs.get("inference", true))
-	infer_box.toggled.connect(func(on: bool) -> void: prefs["inference"] = on)
-	g_opts.add_child(infer_box)
-	_infer_check = infer_box
-
-	# Construction MODE: newly drawn curves come out as construction geometry
-	# while this is on (M21 QA fix). X with nothing selected toggles it too,
-	# so X mid-line-chain flips the segments still to come.
-	var cons_box := CheckBox.new()
-	cons_box.name = "ConstructionChk"
-	cons_box.text = "Construction"
-	cons_box.focus_mode = Control.FOCUS_NONE
-	cons_box.button_pressed = construction_mode
-	cons_box.toggled.connect(func(on: bool) -> void: construction_mode = on)
-	g_opts.add_child(cons_box)
-	_construction_check = cons_box
-
-	_constraint_bar = HFlowContainer.new()
-	_constraint_bar.name = "ConstraintBar"
-	vbox.add_child(_constraint_bar)
-	var g_cons := _shelf_group(_constraint_bar, "Constraints")
-	var cons_defs := [
-		["Coincident", SketchConstraint.Type.COINCIDENT, "const_coincident"],
-		["Horizontal", SketchConstraint.Type.HORIZONTAL, "const_horizontal"],
-		["Vertical", SketchConstraint.Type.VERTICAL, "const_vertical"],
-		["Parallel", SketchConstraint.Type.PARALLEL, "const_parallel"],
-		["Perpendicular", SketchConstraint.Type.PERPENDICULAR,
-			"const_perpendicular"],
-		["Collinear", SketchConstraint.Type.COLLINEAR, "const_collinear"],
-		["Equal", SketchConstraint.Type.EQUAL, "const_equal"],
-		["Midpoint", SketchConstraint.Type.MIDPOINT, "const_midpoint"],
-		["Concentric", SketchConstraint.Type.CONCENTRIC, "const_concentric"],
-		["Tangent", SketchConstraint.Type.TANGENT, "const_tangent"],
-		["PointOn", SketchConstraint.Type.POINT_ON, "const_point_on"],
-		["Fix", SketchConstraint.Type.FIX, "const_fix"],
-		["Symmetry", SketchConstraint.Type.SYMMETRY, "const_symmetry"],
-	]
-	for def in cons_defs:
-		var cb := _button(g_cons, def[0],
-			func() -> void: apply_constraint(def[1]), String(def[2]))
-		cb.name = String(def[0]) + "ConBtn"
-		# Icon-only, same reason as the tool strip (title in the tooltip).
-		if cb.icon != null:
-			cb.text = ""
-		cb.custom_minimum_size = Vector2(34, 30)
+	_build_menu_bar(vbox)
+	_build_ribbon(vbox)
 
 	# Browser on the left, canvas on the right — the browser is a sibling of
 	# the canvas, not an overlay on it, so it never eats viewport clicks.
@@ -978,10 +773,7 @@ func _build_ui() -> void:
 	body_row.add_theme_constant_override("separation", 0)
 	vbox.add_child(body_row)
 
-	browser = BrowserTree.new()
-	browser.app = self
-	browser.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	body_row.add_child(browser)
+	_build_browser_panel(body_row)
 
 	var stack_area := Control.new()
 	stack_area.name = "CanvasStack"
@@ -1057,10 +849,15 @@ func _build_ui() -> void:
 	overlay.draw.connect(_on_overlay_draw)
 	stack_area.add_child(overlay)
 
+	# Viewing controls float over the canvas as HUD pills (M36 design) —
+	# the canvas keeps every pixel the ribbon does not need.
+	_build_hud(stack_area)
+
 	view_cube = ViewCube.new()
 	view_cube.name = "ViewCube"
 	view_cube.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	view_cube.position = Vector2(-ViewCube.SIZE_PX - 8, 8)
+	view_cube.position = Vector2(-ViewCube.SIZE_PX - 12,
+		ThemeService.metric("hud_height") + 14)
 	view_cube.face_picked.connect(_on_cube_face)
 	# The rig already emitted `moved` from its own _ready, before this widget
 	# existed — hand it the current orientation so it starts in agreement with
@@ -1068,9 +865,7 @@ func _build_ui() -> void:
 	view_cube.rotation_hint = rig.rotation
 	stack_area.add_child(view_cube)
 
-	timeline = TimelineBar.new()
-	timeline.app = self
-	vbox.add_child(timeline)
+	_build_timeline_panel(vbox)
 	timeline.refresh()
 	browser.refresh()
 	# Boolean bakes land a frame after the model change — re-list bodies when
@@ -1082,19 +877,615 @@ func _build_ui() -> void:
 	world.set_grid_unit(doc.display_unit)
 	world.update_grid(rig.view_height_mm(), rig.target)
 
+	_build_status_bar(vbox)
+	_apply_theme_metrics()
+
+
+## Menu bar (M36): brand mark, File / Edit / View / Help menus that mirror
+## the ribbon's actions, and the document unit at the right edge.
+func _build_menu_bar(parent: Control) -> void:
+	_menu_panel = PanelContainer.new()
+	_menu_panel.name = "MenuBarPanel"
+	_menu_panel.theme_type_variation = "MenuBarPanel"
+	parent.add_child(_menu_panel)
+	var row := HBoxContainer.new()
+	row.name = "MenuRow"
+	row.add_theme_constant_override("separation", 6)
+	_menu_panel.add_child(row)
+	var pad := Control.new()
+	pad.custom_minimum_size.x = 4
+	row.add_child(pad)
+	var mark := ColorRect.new()
+	mark.name = "BrandMark"
+	mark.custom_minimum_size = Vector2(14, 14)
+	mark.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	mark.color = ThemeService.col("accent")
+	mark.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(mark)
+	_brand_mark = mark
+	var brand := Label.new()
+	brand.name = "BrandLabel"
+	brand.text = "EchoCAD"
+	brand.theme_type_variation = "BrandLabel"
+	row.add_child(brand)
+	_doc_label = Label.new()
+	_doc_label.name = "DocLabel"
+	_doc_label.theme_type_variation = "DimLabel"
+	row.add_child(_doc_label)
+
+	_menu_bar = MenuBar.new()
+	_menu_bar.name = "MenuBar"
+	_menu_bar.flat = true
+	_menu_bar.focus_mode = Control.FOCUS_NONE
+	row.add_child(_menu_bar)
+
+	var file := PopupMenu.new()
+	file.name = "File"
+	_menu_add(file, "Open…", open_interactive, "Ctrl+O")
+	_menu_add(file, "Save", func() -> void: save_interactive(false), "Ctrl+S")
+	_menu_add(file, "Save As…", func() -> void: save_interactive(true),
+		"Ctrl+Shift+S")
+	file.add_separator()
+	_menu_add(file, "Import DXF…", import_dxf_interactive)
+	_menu_add(file, "Import SVG…", import_svg_interactive)
+	_menu_add(file, "Insert Canvas…", import_canvas_interactive)
+	file.add_separator()
+	_menu_add(file, "Export DXF…", export_dxf_interactive)
+	_menu_add(file, "Export STL…", func() -> void: export_stl_interactive())
+	file.add_separator()
+	_menu_add(file, "Preferences…", _open_prefs_dialog)
+	_menu_bar.add_child(file)
+
+	var edit := PopupMenu.new()
+	edit.name = "Edit"
+	_menu_add(edit, "Undo", func() -> void: stack.undo(), "Ctrl+Z")
+	_menu_add(edit, "Redo", func() -> void: stack.redo(), "Ctrl+Shift+Z")
+	edit.add_separator()
+	_menu_add(edit, "Parameters…", _open_params_dialog)
+	_menu_bar.add_child(edit)
+
+	var view := PopupMenu.new()
+	view.name = "View"
+	_menu_add(view, "Fit to View", fit_view, "F")
+	_menu_add(view, "Look At…", _on_look_at_pressed)
+	_menu_add(view, "Orthographic", func() -> void:
+		set_model_projection(not ThemeService.model_ortho), "P")
+	view.set_item_as_checkable(view.item_count - 1, true)
+	_view_menu_ortho_idx = view.item_count - 1
+	view.add_separator("Theme")
+	_theme_menu_first = view.item_count
+	_menu_bar.add_child(view)
+	_view_menu = view
+	_rebuild_theme_menu()
+
+	var help := PopupMenu.new()
+	help.name = "Help"
+	_menu_add(help, "Theming guide (docs/THEMING.md)", func() -> void:
+		OS.shell_open(ProjectSettings.globalize_path("res://docs/THEMING.md")))
+	_menu_add(help, "About EchoCAD", _show_about)
+	_menu_bar.add_child(help)
+
+	var spacer := Control.new()
+	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(spacer)
+	_unit_badge = Label.new()
+	_unit_badge.name = "UnitBadge"
+	_unit_badge.theme_type_variation = "DimLabel"
+	row.add_child(_unit_badge)
+	var pad2 := Control.new()
+	pad2.custom_minimum_size.x = 6
+	row.add_child(pad2)
+
+
+## Add a menu entry whose handler lives in the item metadata. The shortcut
+## text is a hint only — the canvas owns key routing (handle_app_key).
+func _menu_add(menu: PopupMenu, label: String, handler: Callable,
+		shortcut := "") -> void:
+	var idx := menu.item_count
+	menu.add_item(label if shortcut == "" else "%s\t%s" % [label, shortcut], idx)
+	menu.set_item_metadata(idx, handler)
+	if not menu.id_pressed.is_connected(_on_menu_id):
+		menu.id_pressed.connect(_on_menu_id.bind(menu))
+
+
+func _on_menu_id(id: int, menu: PopupMenu) -> void:
+	var idx := menu.get_item_index(id)
+	if idx < 0:
+		return
+	var h = menu.get_item_metadata(idx)
+	if h is Callable:
+		(h as Callable).call()
+
+
+## View ▸ Theme: one radio entry per discovered theme, so a user can flip
+## themes without opening Preferences.
+func _rebuild_theme_menu() -> void:
+	if _view_menu == null:
+		return
+	while _view_menu.item_count > _theme_menu_first:
+		_view_menu.remove_item(_view_menu.item_count - 1)
+	for t: Dictionary in ThemeService.available_themes():
+		var idx := _view_menu.item_count
+		var label := String(t["name"]) + ("" if bool(t["builtin"]) else "  (user)")
+		_view_menu.add_radio_check_item(label, idx)
+		_view_menu.set_item_checked(idx, t["id"] == ThemeService.theme_id)
+		var id := String(t["id"])
+		_view_menu.set_item_metadata(idx, func() -> void: set_theme_id(id))
+	if _view_menu_ortho_idx >= 0:
+		_view_menu.set_item_checked(_view_menu_ortho_idx, ThemeService.model_ortho)
+
+
+func _show_about() -> void:
+	var d := AcceptDialog.new()
+	d.name = "AboutDialog"
+	d.title = "About EchoCAD"
+	d.dialog_text = ("EchoCAD — parametric CAD in Godot %s\n\nTheme: %s\n"
+		+ "UI font: Archivo (SIL OFL)") % [Engine.get_version_info()["string"],
+		ThemeService.theme_id]
+	d.confirmed.connect(d.queue_free)
+	d.canceled.connect(d.queue_free)
+	add_child(d)
+	d.popup_centered()
+
+
+## Sketch tools that earn a big labelled button; the rest sit in the small
+## grids.
+const BIG_TOOLS := ["select", "line", "rect", "circle", "trim", "offset",
+	"dimension"]
+
+
+## The ribbon (M36): a 92px strip of captioned groups. Model and sketch mode
+## each own a row of groups; _refresh_ui swaps them. Groups hold BIG buttons
+## (icon over label) for the primary verbs and a grid of SMALL icon buttons
+## for the rest, like the design's Create / Modify / Construct strips.
+func _build_ribbon(parent: Control) -> void:
+	_ribbon = PanelContainer.new()
+	_ribbon.name = "Ribbon"
+	_ribbon.theme_type_variation = "Ribbon"
+	parent.add_child(_ribbon)
+	# [ mode rows (expand) | undo/redo tail ]
+	var ribbon_row := HBoxContainer.new()
+	ribbon_row.name = "RibbonRow"
+	ribbon_row.add_theme_constant_override("separation", 0)
+	_ribbon.add_child(ribbon_row)
+	var rows := Control.new()
+	rows.name = "RibbonRows"
+	rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	rows.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	ribbon_row.add_child(rows)
+	_ribbon_rows = rows
+	# The mode flows overlay each other inside a plain Control, which hides
+	# their wrapped height — track it so a narrow window grows the ribbon
+	# instead of clipping the second row of groups.
+	rows.resized.connect(_fit_ribbon_height)
+
+	# --- model mode ----------------------------------------------------------
+	var model := HFlowContainer.new()
+	model.name = "TopBar"
+	model.set_anchors_preset(Control.PRESET_FULL_RECT)
+	model.add_theme_constant_override("h_separation", 0)
+	model.add_theme_constant_override("v_separation", 0)
+	rows.add_child(model)
+	_model_ribbon = model
+	model.minimum_size_changed.connect(_fit_ribbon_height)
+
+	var g_create := _shelf_group(model, "Create")
+	_btn_create = _big_button(g_create, "New Sketch", _on_create_sketch,
+		"create_sketch")
+	_btn_create.name = "CreateSketchBtn"
+	_btn_create.tooltip_text = "Create Sketch: pick a plane or flat face"
+	_btn_extrude = _big_button(g_create, "Extrude", _on_extrude_pressed, "extrude")
+	_btn_extrude.name = "ExtrudeBtn"
+	_btn_revolve = _big_button(g_create, "Revolve", _on_revolve_pressed, "revolve")
+	_btn_revolve.name = "RevolveBtn"
+	var create_grid := _small_grid(g_create, 2)
+	var sweepb := _small_button(create_grid, "Sweep", _on_sweep_pressed, "sweep")
+	sweepb.name = "SweepBtn"
+	sweepb.tooltip_text = "Sweep a profile along a sketch path"
+	var loftb := _small_button(create_grid, "Loft", _on_loft_pressed, "loft")
+	loftb.name = "LoftBtn"
+	loftb.tooltip_text = "Loft between two or more profiles"
+	var mirrb := _small_button(create_grid, "Mirror Body", _on_mirror_body_pressed,
+		"mirror_body")
+	mirrb.name = "MirrorBodyBtn"
+	mirrb.tooltip_text = "Mirror the selected body across a plane"
+	var pattb := _small_button(create_grid, "Pattern",
+		func() -> void: open_pattern_dialog(""), "pattern_body")
+	pattb.name = "PatternBodyBtn"
+	pattb.tooltip_text = "Linear/circular pattern of the selected body"
+
+	_divider(model)
+	var g_modify := _shelf_group(model, "Modify")
+	var filb := _big_button(g_modify, "Fillet", func() -> void:
+		open_edge_treat_dialog("", EdgeTreatFeature.KIND_FILLET), "fillet_3d")
+	filb.name = "FilletEdgesBtn"
+	filb.tooltip_text = ("Round edges of a plain extrude: select the body, "
+		+ "then click the edges to round")
+	var chab := _big_button(g_modify, "Chamfer", func() -> void:
+		open_edge_treat_dialog("", EdgeTreatFeature.KIND_CHAMFER), "chamfer_3d")
+	chab.name = "ChamferEdgesBtn"
+	chab.tooltip_text = ("Chamfer edges of a plain extrude: select the body, "
+		+ "then click the edges to cut")
+	var modify_grid := _small_grid(g_modify, 1)
+	var moveb := _small_button(modify_grid, "Move Body",
+		func() -> void: open_move_dialog(""), "move_body")
+	moveb.name = "MoveBodyBtn"
+	moveb.tooltip_text = "Move/rotate the selected body (a timeline feature)"
+	var copyb := _small_button(modify_grid, "Copy Body",
+		func() -> void: open_copy_dialog(""), "copy_body")
+	copyb.name = "CopyBodyBtn"
+	copyb.tooltip_text = "Parametric copy of the selected body at an offset"
+
+	_divider(model)
+	var g_construct := _shelf_group(model, "Construct")
+	_btn_offset_plane = _big_button(g_construct, "Offset Plane",
+		_on_offset_plane_pressed, "offset_plane")
+	_btn_offset_plane.name = "OffsetPlaneBtn"
+
+	_divider(model)
+	var g_make := _shelf_group(model, "Make")
+	var stlb := _big_button(g_make, "Export STL",
+		func() -> void: export_stl_interactive(), "export_stl")
+	stlb.name = "ExportStlBtn"
+	var dxfb := _big_button(g_make, "Export DXF", export_dxf_interactive,
+		"export_dxf")
+	dxfb.name = "ExportDxfBtn"
+	var make_grid := _small_grid(g_make, 1)
+	var dxfi := _small_button(make_grid, "Import DXF", import_dxf_interactive,
+		"import_dxf")
+	dxfi.name = "ImportDxfBtn"
+	var svgi := _small_button(make_grid, "Import SVG", import_svg_interactive,
+		"import_svg")
+	svgi.name = "ImportSvgBtn"
+	var canvb := _small_button(_small_grid(g_make, 1), "Canvas",
+		import_canvas_interactive, "canvas")
+	canvb.name = "ImportCanvasBtn"
+	canvb.tooltip_text = "Insert a reference image (PNG/JPEG) on a plane"
+
+	_divider(model)
+	var g_file := _shelf_group(model, "File")
+	_btn_save = _big_button(g_file, "Save",
+		func() -> void: save_interactive(false), "save")
+	_btn_save.name = "SaveBtn"
+	_btn_save.tooltip_text = "Save (Ctrl+S)"
+	_btn_open = _big_button(g_file, "Open", open_interactive, "open")
+	_btn_open.name = "OpenBtn"
+	_btn_open.tooltip_text = "Open (Ctrl+O)"
+
+	# --- sketch mode --------------------------------------------------------
+	var sketch := HFlowContainer.new()
+	sketch.name = "ToolBar"
+	sketch.set_anchors_preset(Control.PRESET_FULL_RECT)
+	sketch.add_theme_constant_override("h_separation", 0)
+	sketch.add_theme_constant_override("v_separation", 0)
+	rows.add_child(sketch)
+	_tool_bar = sketch
+	sketch.minimum_size_changed.connect(_fit_ribbon_height)
+
+	var g_select := _shelf_group(sketch, "Select")
+	_divider(sketch)
+	var g_sk_create := _shelf_group(sketch, "SketchCreate", "Create")
+	_divider(sketch)
+	var g_sk_modify := _shelf_group(sketch, "SketchModify", "Modify")
+	_divider(sketch)
+	var g_constrain := _shelf_group(sketch, "Constrain")
+	_constraint_bar = _shelf_groups["Constrain"]
+	var group := ButtonGroup.new()
+	var create_small := _small_grid(g_sk_create, 6)
+	var modify_small := _small_grid(g_sk_modify, 4)
+	for tid: String in tools.tool_ids():
+		var t := tools.get_tool(tid)
+		var parts := tid.split("_")
+		var pascal := ""
+		for part in parts:
+			pascal += part.substr(0, 1).to_upper() + part.substr(1)
+		var home := _tool_group_for(tid, g_select, g_sk_create, g_sk_modify,
+			g_constrain)
+		var b: Button
+		if tid in BIG_TOOLS:
+			b = _big_button(home, t.title, Callable(), tid)
+		else:
+			b = _small_button(modify_small if home == g_sk_modify else create_small,
+				t.title, Callable(), tid)
+		b.name = pascal + "ToolBtn"
+		# A text fallback keeps the button usable if its icon asset ever goes
+		# missing; the title always lives in the tooltip (with the shortcut).
+		if b.icon == null and b.text == "":
+			b.text = t.title
+		b.tooltip_text = t.title if t.shortcut == KEY_NONE \
+			else "%s (%s)" % [t.title, OS.get_keycode_string(t.shortcut)]
+		b.toggle_mode = true
+		b.button_group = group
+		b.pressed.connect(func() -> void: tools.set_active(tid))
+		_tool_buttons[tid] = b
+
+	var cons_grid := _small_grid(g_constrain, 7)
+	var cons_defs := [
+		["Coincident", SketchConstraint.Type.COINCIDENT, "const_coincident"],
+		["Horizontal", SketchConstraint.Type.HORIZONTAL, "const_horizontal"],
+		["Vertical", SketchConstraint.Type.VERTICAL, "const_vertical"],
+		["Parallel", SketchConstraint.Type.PARALLEL, "const_parallel"],
+		["Perpendicular", SketchConstraint.Type.PERPENDICULAR,
+			"const_perpendicular"],
+		["Collinear", SketchConstraint.Type.COLLINEAR, "const_collinear"],
+		["Equal", SketchConstraint.Type.EQUAL, "const_equal"],
+		["Midpoint", SketchConstraint.Type.MIDPOINT, "const_midpoint"],
+		["Concentric", SketchConstraint.Type.CONCENTRIC, "const_concentric"],
+		["Tangent", SketchConstraint.Type.TANGENT, "const_tangent"],
+		["PointOn", SketchConstraint.Type.POINT_ON, "const_point_on"],
+		["Fix", SketchConstraint.Type.FIX, "const_fix"],
+		["Symmetry", SketchConstraint.Type.SYMMETRY, "const_symmetry"],
+	]
+	for def in cons_defs:
+		var cb := _small_button(cons_grid, def[0],
+			func() -> void: apply_constraint(def[1]), String(def[2]))
+		cb.name = String(def[0]) + "ConBtn"
+
+	# Snap + inference toggles. These already existed as `prefs` entries that
+	# only `action.set_pref` could reach, which made them unusable by hand and
+	# unverifiable in manual QA. Both paths now drive the same state.
+	_divider(sketch)
+	var g_opts := _shelf_group(sketch, "Options")
+	var opts_col := VBoxContainer.new()
+	opts_col.name = "OptionsColumn"
+	opts_col.add_theme_constant_override("separation", 0)
+	g_opts.add_child(opts_col)
+	var snap_box := CheckBox.new()
+	snap_box.name = "GridSnapChk"
+	snap_box.text = "Snap to grid"
+	snap_box.focus_mode = Control.FOCUS_NONE
+	snap_box.button_pressed = snap.grid_enabled
+	snap_box.toggled.connect(func(on: bool) -> void: snap.grid_enabled = on)
+	opts_col.add_child(snap_box)
+	_snap_check = snap_box
+
+	var infer_box := CheckBox.new()
+	infer_box.name = "InferenceChk"
+	infer_box.text = "Infer constraints"
+	infer_box.focus_mode = Control.FOCUS_NONE
+	infer_box.button_pressed = bool(prefs.get("inference", true))
+	infer_box.toggled.connect(func(on: bool) -> void: prefs["inference"] = on)
+	opts_col.add_child(infer_box)
+	_infer_check = infer_box
+
+	# Construction MODE: newly drawn curves come out as construction geometry
+	# while this is on (M21 QA fix). X with nothing selected toggles it too,
+	# so X mid-line-chain flips the segments still to come.
+	var cons_box := CheckBox.new()
+	cons_box.name = "ConstructionChk"
+	cons_box.text = "Construction mode"
+	cons_box.focus_mode = Control.FOCUS_NONE
+	cons_box.button_pressed = construction_mode
+	cons_box.toggled.connect(func(on: bool) -> void: construction_mode = on)
+	opts_col.add_child(cons_box)
+	_construction_check = cons_box
+
+	_divider(sketch)
+	var g_finish := _shelf_group(sketch, "Sketch")
+	_btn_finish = _big_button(g_finish, "Finish Sketch", _on_finish_sketch,
+		"finish_sketch")
+	_btn_finish.name = "FinishSketchBtn"
+	_btn_finish.theme_type_variation = "PrimaryButton"
+	_btn_finish.clip_text = false   # the label sets the width
+	_btn_finish.custom_minimum_size.x = ThemeService.metric("big_button_w") + 10
+
+	# --- shared tail: undo / redo at the right edge of either row --------------
+	var tail_wrap := MarginContainer.new()
+	tail_wrap.name = "RibbonTailWrap"
+	tail_wrap.add_theme_constant_override("margin_left", 10)
+	tail_wrap.add_theme_constant_override("margin_right", 10)
+	tail_wrap.add_theme_constant_override("margin_top", 6)
+	ribbon_row.add_child(tail_wrap)
+	_ribbon_tail = HBoxContainer.new()
+	_ribbon_tail.name = "RibbonTail"
+	_ribbon_tail.add_theme_constant_override("separation", 2)
+	_ribbon_tail.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	tail_wrap.add_child(_ribbon_tail)
+	_btn_undo = _small_button(_ribbon_tail, "Undo",
+		func() -> void: stack.undo(), "undo")
+	_btn_undo.name = "UndoBtn"
+	_btn_undo.tooltip_text = "Undo (Ctrl+Z)"
+	_btn_undo.custom_minimum_size = Vector2(30, 30)
+	_btn_redo = _small_button(_ribbon_tail, "Redo",
+		func() -> void: stack.redo(), "redo")
+	_btn_redo.name = "RedoBtn"
+	_btn_redo.tooltip_text = "Redo (Ctrl+Shift+Z)"
+	_btn_redo.custom_minimum_size = Vector2(30, 30)
+	# Parameters matter in both modes (dimensions drive them), so the single
+	# button lives in the shared tail rather than in a per-mode group.
+	var pbtn := _small_button(_ribbon_tail, "Parameters", _open_params_dialog,
+		"parameters")
+	pbtn.name = "ParametersBtn"
+	pbtn.tooltip_text = "Parameters: named values for dimensions"
+	pbtn.custom_minimum_size = Vector2(30, 30)
+
+
+## Ribbon height = theme metric, or the visible flow's wrapped height when
+## groups spilled onto a second row (narrow windows).
+func _fit_ribbon_height() -> void:
+	if _ribbon_rows == null or _ribbon == null:
+		return
+	var flow: Control = _tool_bar if mode == Mode.SKETCH else _model_ribbon
+	var want := ThemeService.metric("ribbon_height")
+	if flow != null:
+		# +5 top content margin of the Ribbon panel, +1 bottom border.
+		want = maxf(want, flow.get_combined_minimum_size().y + 6.0)
+	if not is_equal_approx(_ribbon.custom_minimum_size.y, want):
+		_ribbon.custom_minimum_size.y = want
+
+
+## Browser side panel (M36): a captioned header over the BrowserTree.
+func _build_browser_panel(parent: Control) -> void:
+	_browser_panel = PanelContainer.new()
+	_browser_panel.name = "BrowserPanel"
+	_browser_panel.theme_type_variation = "SidePanel"
+	_browser_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	parent.add_child(_browser_panel)
+	var col := VBoxContainer.new()
+	col.name = "BrowserColumn"
+	col.add_theme_constant_override("separation", 0)
+	_browser_panel.add_child(col)
+	var header := PanelContainer.new()
+	header.name = "BrowserHeader"
+	header.theme_type_variation = "PanelHeader"
+	header.custom_minimum_size.y = 26
+	col.add_child(header)
+	var hl := Label.new()
+	hl.name = "BrowserHeaderLabel"
+	hl.text = "BROWSER"
+	hl.theme_type_variation = "HeaderLabel"
+	hl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	header.add_child(hl)
+	browser = BrowserTree.new()
+	browser.app = self
+	browser.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	col.add_child(browser)
+
+
+## Viewport HUD (M36): the viewing controls as translucent pills in the
+## canvas's top-left corner — orbit pivot, Look At, Fit | projection |
+## named views | preferences. Same control names as the old View shelf group.
+func _build_hud(parent: Control) -> void:
+	var hud := HBoxContainer.new()
+	hud.name = "Hud"
+	hud.position = Vector2(10, 10)
+	hud.add_theme_constant_override("separation", 6)
+	parent.add_child(hud)
+	_hud = hud
+
+	var nav := _hud_pill(hud, "NavPill")
+	# Orbit pivot: Fusion's body-center is the default, Blender-style
+	# under-cursor and plain view-center are the alternatives.
+	_pivot_pick = OptionButton.new()
+	_pivot_pick.name = "PivotModeBtn"
+	_pivot_pick.focus_mode = Control.FOCUS_NONE
+	_pivot_pick.theme_type_variation = "HudButton"
+	_pivot_pick.flat = true
+	_pivot_pick.add_item("Orbit: Body Center", OrbitCamera.PivotMode.BODY_CENTER)
+	_pivot_pick.add_item("Orbit: Under Cursor", OrbitCamera.PivotMode.ORBIT_POINT)
+	_pivot_pick.add_item("Orbit: View Center", OrbitCamera.PivotMode.VIEW_CENTER)
+	_pivot_pick.item_selected.connect(func(i: int) -> void:
+		set_pivot_mode(_pivot_pick.get_item_id(i) as OrbitCamera.PivotMode))
+	nav.add_child(_pivot_pick)
+	var lookb := _hud_button(nav, "Look At", _on_look_at_pressed, "look_at")
+	lookb.name = "LookAtBtn"
+	lookb.tooltip_text = "Look At: square the view to a plane or flat face"
+	var fitb := _hud_button(nav, "Fit", fit_view, "fit_view")
+	fitb.name = "FitBtn"
+	fitb.tooltip_text = "Fit the model in view (F)"
+
+	var proj := _hud_pill(hud, "ProjectionPill")
+	_btn_ortho = _hud_button(proj, "ORTHO", func() -> void:
+		set_model_projection(_btn_ortho.button_pressed), "camera_ortho")
+	_btn_ortho.name = "OrthoBtn"
+	_btn_ortho.toggle_mode = true
+	_btn_ortho.tooltip_text = "Orthographic projection (P)"
+
+	var views := _hud_pill(hud, "ViewsPill")
+	_views_pick = OptionButton.new()
+	_views_pick.name = "ViewsPick"
+	_views_pick.focus_mode = Control.FOCUS_NONE
+	_views_pick.theme_type_variation = "HudButton"
+	_views_pick.flat = true
+	_views_pick.fit_to_longest_item = false
+	_views_pick.item_selected.connect(_on_views_pick)
+	views.add_child(_views_pick)
+	_refresh_views_pick()
+
+	var prefs_pill := _hud_pill(hud, "PrefsPill")
+	var prefb := _hud_button(prefs_pill, "", _open_prefs_dialog, "preferences")
+	prefb.name = "PreferencesBtn"
+	prefb.tooltip_text = "Preferences: theme, units"
+
+
+func _hud_pill(parent: Control, pname: String) -> HBoxContainer:
+	var pill := PanelContainer.new()
+	pill.name = pname
+	pill.theme_type_variation = "HudPanel"
+	pill.custom_minimum_size.y = ThemeService.metric("hud_height")
+	parent.add_child(pill)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 1)
+	pill.add_child(row)
+	return row
+
+
+func _hud_button(parent: Control, text: String, handler: Callable,
+		icon_name := "") -> Button:
+	var b := Button.new()
+	b.text = text
+	b.icon = ThemeService.icon(icon_name)
+	b.tooltip_text = text
+	b.theme_type_variation = "HudButton"
+	b.focus_mode = Control.FOCUS_NONE
+	if not handler.is_null():
+		b.pressed.connect(handler)
+	parent.add_child(b)
+	return b
+
+
+## Timeline strip (M36): the feature chips inside a bordered 52px panel with
+## an operation count at the right.
+func _build_timeline_panel(parent: Control) -> void:
+	_timeline_panel = PanelContainer.new()
+	_timeline_panel.name = "TimelinePanel"
+	_timeline_panel.theme_type_variation = "TimelinePanel"
+	parent.add_child(_timeline_panel)
+	var row := HBoxContainer.new()
+	row.name = "TimelineRow"
+	row.add_theme_constant_override("separation", 8)
+	_timeline_panel.add_child(row)
+	var scroll := ScrollContainer.new()
+	scroll.name = "TimelineScroll"
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_SHOW_NEVER
+	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	row.add_child(scroll)
+	timeline = TimelineBar.new()
+	timeline.app = self
+	timeline.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	scroll.add_child(timeline)
+	_timeline_count = Label.new()
+	_timeline_count.name = "TimelineCount"
+	_timeline_count.theme_type_variation = "StatusKeyLabel"
+	_timeline_count.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	row.add_child(_timeline_count)
+
+
+## Status bar (M36): MODE · hint · measure · DOF · zoom.
+func _build_status_bar(parent: Control) -> void:
+	_status_panel = PanelContainer.new()
+	_status_panel.name = "StatusPanel"
+	_status_panel.theme_type_variation = "StatusPanel"
+	parent.add_child(_status_panel)
 	var status := HBoxContainer.new()
 	status.name = "StatusBar"
-	vbox.add_child(status)
-	_status_mode = _label(status, "Model")
+	status.add_theme_constant_override("separation", 14)
+	_status_panel.add_child(status)
+	_status_mode = _label(status, "MODEL")
+	_status_mode.name = "StatusMode"
+	_status_mode.theme_type_variation = "StatusKeyLabel"
 	_status_hint = _label(status, "")
+	_status_hint.name = "StatusHint"
+	_status_hint.theme_type_variation = "StatusLabel"
 	_status_hint.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_status_hint.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	_status_measure = _label(status, "")
 	_status_measure.name = "StatusMeasure"
+	_status_measure.theme_type_variation = "StatusLabel"
 	_status_dof = _label(status, "")
 	_status_dof.name = "StatusDof"
+	_status_dof.theme_type_variation = "StatusLabel"
 	_status_zoom = _label(status, "")
+	_status_zoom.name = "StatusZoom"
+	_status_zoom.theme_type_variation = "StatusKeyLabel"
+	for l in [_status_mode, _status_hint, _status_measure, _status_dof, _status_zoom]:
+		(l as Label).vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 
 
+## A plain themed button (dialogs, misc). Ribbon buttons use _big_button /
+## _small_button so their footprint follows theme metrics.
 func _button(parent: Control, text: String, handler: Callable,
 		icon_name := "") -> Button:
 	var b := Button.new()
@@ -1102,18 +1493,112 @@ func _button(parent: Control, text: String, handler: Callable,
 	b.icon = ThemeService.icon(icon_name)
 	b.tooltip_text = text
 	b.focus_mode = Control.FOCUS_NONE   # keys belong to the canvas, not buttons
-	b.pressed.connect(handler)
+	if not handler.is_null():
+		b.pressed.connect(handler)
 	parent.add_child(b)
 	return b
 
 
-## A shelf group (M26): captioned panel of buttons inside a shelf row. The
-## returned container is what buttons get added to; the panel is registered
-## under `caption` so _refresh_ui can show/hide whole groups per mode.
-## The button row is an HBox (never wraps) so the group's minimum size is the
-## full button strip — the OUTER flow rows wrap whole groups instead. An
-## HFlow here reported one button as its minimum width and collapsed every
-## group into a one-button-wide tower that swallowed the viewport.
+## Big ribbon button: icon centred above a short label, fixed footprint from
+## the theme's big_button_w/h metrics.
+func _big_button(parent: Control, text: String, handler: Callable,
+		icon_name := "") -> Button:
+	var b := _button(parent, text, handler, icon_name)
+	b.theme_type_variation = "BigToolButton"
+	b.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	b.vertical_icon_alignment = VERTICAL_ALIGNMENT_TOP
+	b.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	b.clip_text = true
+	b.custom_minimum_size = Vector2(ThemeService.metric("big_button_w"),
+		ThemeService.metric("big_button_h"))
+	b.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	_big_buttons.append(b)
+	return b
+
+
+## Small ribbon button: icon only, title in the tooltip.
+func _small_button(parent: Control, text: String, handler: Callable,
+		icon_name := "") -> Button:
+	var b := _button(parent, text, handler, icon_name)
+	b.theme_type_variation = "SmallToolButton"
+	b.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	b.expand_icon = false
+	if b.icon != null:
+		b.text = ""
+	b.custom_minimum_size = Vector2(ThemeService.metric("small_button_w"),
+		ThemeService.metric("small_button_h"))
+	_small_buttons.append(b)
+	return b
+
+
+## A grid of small buttons inside a group's button row.
+func _small_grid(row: Control, columns: int) -> GridContainer:
+	var g := GridContainer.new()
+	g.columns = columns
+	g.add_theme_constant_override("h_separation", 1)
+	g.add_theme_constant_override("v_separation", 1)
+	g.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	row.add_child(g)
+	return g
+
+
+func _divider(parent: Control) -> void:
+	var wrap := MarginContainer.new()
+	wrap.name = "Divider"
+	wrap.add_theme_constant_override("margin_top", 8)
+	wrap.add_theme_constant_override("margin_bottom", 12)
+	wrap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var d := Panel.new()
+	d.theme_type_variation = "Divider"
+	d.custom_minimum_size = Vector2(1, 0)
+	d.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	d.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	wrap.add_child(d)
+	parent.add_child(wrap)
+
+
+## A ribbon group: the button row (big buttons and small grids side by side)
+## over an uppercase caption, like the design's CREATE › / MODIFY › labels.
+## The panel is registered under `key` so _refresh_ui and tests can reach
+## whole groups; `caption` defaults to the key.
+func _shelf_group(parent: Control, key: String, caption := "") -> HBoxContainer:
+	var panel := MarginContainer.new()
+	panel.name = key + "Group"
+	panel.add_theme_constant_override("margin_left", 10)
+	panel.add_theme_constant_override("margin_right", 10)
+	panel.add_theme_constant_override("margin_top", 0)
+	panel.add_theme_constant_override("margin_bottom", 0)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 4)
+	panel.add_child(v)
+	var row := HBoxContainer.new()
+	row.name = "Buttons"
+	row.alignment = BoxContainer.ALIGNMENT_BEGIN
+	row.add_theme_constant_override("separation", 2)
+	v.add_child(row)
+	var cap := Label.new()
+	cap.name = "Caption"
+	cap.text = (caption if caption != "" else key).to_upper() + "  ›"
+	cap.theme_type_variation = "CaptionLabel"
+	cap.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	v.add_child(cap)
+	parent.add_child(panel)
+	_shelf_groups[key] = panel
+	return row
+
+
+func _tool_group_for(tid: String, g_select: Control, g_create: Control,
+		g_modify: Control, g_dim: Control) -> Control:
+	if tid == "select":
+		return g_select
+	if tid == "dimension":
+		return g_dim
+	if tid in ["trim", "extend", "offset", "mirror", "fillet", "chamfer",
+			"rect_pattern", "circ_pattern", "project"]:
+		return g_modify
+	return g_create
+
+
 ## Raw Window dialogs clear to the engine's dark default rather than the
 ## theme (a plain Window paints no panel of its own). Slip a themed Panel
 ## under each one's content the moment it joins the tree — deferred, because
@@ -1134,38 +1619,6 @@ func _add_dialog_backdrop(win: Window) -> void:
 	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	win.add_child(p)
 	win.move_child(p, 0)
-
-
-func _shelf_group(parent: Control, caption: String) -> HBoxContainer:
-	var panel := PanelContainer.new()
-	panel.name = caption + "Group"
-	var v := VBoxContainer.new()
-	v.add_theme_constant_override("separation", 0)
-	panel.add_child(v)
-	var row := HBoxContainer.new()
-	row.name = "Buttons"
-	v.add_child(row)
-	var cap := Label.new()
-	cap.text = caption
-	cap.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	cap.add_theme_font_size_override("font_size", 10)
-	cap.modulate.a = 0.65
-	v.add_child(cap)
-	parent.add_child(panel)
-	_shelf_groups[caption] = panel
-	return row
-
-
-func _tool_group_for(tid: String, g_select: Control, g_create: Control,
-		g_modify: Control, g_dim: Control) -> Control:
-	if tid == "select":
-		return g_select
-	if tid == "dimension":
-		return g_dim
-	if tid in ["trim", "extend", "offset", "mirror", "fillet", "chamfer",
-			"rect_pattern", "circ_pattern", "project"]:
-		return g_modify
-	return g_create
 
 
 ## --- theme + preferences (M26, file-driven themes M36) -----------------------
@@ -1222,6 +1675,9 @@ func apply_theme() -> void:
 		browser.refresh()
 	_apply_theme_metrics()
 	_sync_theme_pick()
+	_rebuild_theme_menu()
+	if _brand_mark != null:
+		_brand_mark.color = ThemeService.col("accent")
 
 
 ## Controls whose footprint comes from theme metrics (ribbon button sizes,
@@ -1237,6 +1693,7 @@ func _apply_theme_metrics() -> void:
 				ThemeService.metric("small_button_w"), ThemeService.metric("small_button_h"))
 	if _ribbon != null:
 		_ribbon.custom_minimum_size.y = ThemeService.metric("ribbon_height")
+		_fit_ribbon_height.call_deferred()
 	if _browser_panel != null:
 		_browser_panel.custom_minimum_size.x = ThemeService.metric("browser_width")
 	if _menu_panel != null:
@@ -1754,6 +2211,7 @@ func edit_sketch(feature_id: String) -> void:
 	world.set_plane_hover("")
 	mode = Mode.SKETCH
 	sketch_orbit = false
+	timeline.refresh()   # the active sketch's chip lights up (M36)
 	sketch_view.grid_unit = doc.display_unit
 	sketch_view.set_view(Vector2.ZERO, 4.0)
 	sketch_view.show_sketch(feat.sketch, reference_sketches())
@@ -1804,6 +2262,7 @@ func finish_sketch() -> void:
 	active_sketch_id = ""
 	mode = Mode.MODEL
 	sketch_orbit = false
+	timeline.refresh()
 	sketch_view.clear_projection_3d()
 	rig.end_orbit()
 	# Drop the 2D canvas immediately so the 3D scene is what animates: the
@@ -4812,25 +5271,44 @@ func _on_stack_changed() -> void:
 	_refresh_ui()
 
 
+## Menu-bar chrome that tracks document state: file name + unsaved mark at
+## the left, display unit at the right, operation count in the timeline.
+func _refresh_chrome_labels() -> void:
+	if _doc_label != null:
+		var fname := _save_path.get_file() if _save_path != "" else "untitled"
+		var dirty := stack.can_undo()
+		_doc_label.text = "—  %s%s" % [fname, "   ● unsaved" if dirty else ""]
+	if _unit_badge != null:
+		_unit_badge.text = "%s · %s" % [UnitConverter.suffix(doc.display_unit),
+			"Sketch" if mode == Mode.SKETCH else "Design"]
+	if _timeline_count != null:
+		var n := doc.features.size()
+		_timeline_count.text = "%d operation%s" % [n, "" if n == 1 else "s"]
+
+
 func _refresh_ui() -> void:
 	var in_sketch := mode == Mode.SKETCH
-	# M26 shelf: whole groups flip with the mode, so no empty panels linger.
-	for cap in ["Solids", "Construct"]:
-		(_shelf_groups[cap] as Control).visible = not in_sketch
-	(_shelf_groups["Sketch"] as Control).visible = in_sketch
+	# M36 ribbon: the model row and the sketch row swap with the mode.
+	_model_ribbon.visible = not in_sketch
 	_tool_bar.visible = in_sketch
-	_constraint_bar.visible = in_sketch
+	_fit_ribbon_height.call_deferred()
 	if in_sketch and not dof.is_empty():
 		var sk := active_sketch()
 		_status_dof.text = DofAnalyzer.summary(sk) if sk != null else ""
 	else:
 		_status_dof.text = ""
+	# Fully constrained reads as a success badge, anything else as a hint.
+	if _status_dof.text.begins_with("Fully"):
+		_status_dof.add_theme_color_override("font_color", ThemeService.col("success"))
+	else:
+		_status_dof.remove_theme_color_override("font_color")
 	for tid: String in _tool_buttons:
 		(_tool_buttons[tid] as Button).set_pressed_no_signal(
 			tid == tools.active_id())
 	_btn_undo.disabled = not stack.can_undo()
 	_btn_redo.disabled = not stack.can_redo()
-	_status_mode.text = "Sketch" if in_sketch else "Model"
+	_status_mode.text = "SKETCH" if in_sketch else "MODEL"
+	_refresh_chrome_labels()
 	_btn_ortho.disabled = in_sketch
 	if not in_sketch:
 		_btn_ortho.set_pressed_no_signal(rig.is_orthographic())

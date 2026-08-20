@@ -70,7 +70,7 @@
     "error":      "#de6358",
 
     "bg3d":          "#232222",
-    "ambient":       "#8d8a88",
+    "ambient":       "#a6a3a1",
     "sketch_bg":     "@ink-5",
     "grid_minor":    "@white*0.06",
     "grid_major":    "@white*0.10",
@@ -81,7 +81,7 @@
     "axis_z":        "@blue",
     "plane":         "#8ca6d9*0.10",
     "plane_hover":   "#8cbfff*0.28",
-    "body":          "#9e9a97",
+    "body":          "#aaa6a3",
     "body_selected": "@amber",
     "body_edge":     "@ink-3",
     "hover":         "#ffe08c*0.35",
