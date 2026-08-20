@@ -318,8 +318,46 @@ static func triangulate_with_holes(outer: PackedVector2Array,
 		return _max_x_of(a) > _max_x_of(b))
 	for hp: PackedVector2Array in hs:
 		merged = _splice_hole(merged, hp)
-	return {"points": merged,
-		"indices": Geometry2D.triangulate_polygon(merged)}
+	var indices := Geometry2D.triangulate_polygon(merged)
+	if not indices.is_empty():
+		return {"points": merged, "indices": indices}
+	# The ear clipper rejects some spliced polygons outright — e.g. a hole
+	# whose bridge lands exactly ON an outer vertex (concentric circles
+	# sampled at the same angles: QA §M34.4's ring profile capped nothing).
+	# Fall back to a Delaunay of all the boundary points filtered to the
+	# region (triangle centroid inside the outer, outside every hole).
+	var pts := PackedVector2Array()
+	var seen := {}
+	var rings: Array = [outer]
+	rings.append_array(holes)
+	for ring: PackedVector2Array in rings:
+		for p in ring:
+			var key := "%.6f:%.6f" % [p.x, p.y]
+			if not seen.has(key):
+				seen[key] = true
+				pts.append(p)
+	if pts.size() < 3:
+		return {"points": merged, "indices": PackedInt32Array()}
+	var del := Geometry2D.triangulate_delaunay(pts)
+	var kept := PackedInt32Array()
+	var t := 0
+	while t + 2 < del.size():
+		var c := (pts[del[t]] + pts[del[t + 1]] + pts[del[t + 2]]) / 3.0
+		var inside := Geometry2D.is_point_in_polygon(c, outer)
+		if inside:
+			for h in holes:
+				if Geometry2D.is_point_in_polygon(c, h as PackedVector2Array):
+					inside = false
+					break
+		if inside:
+			# Match the ear clipper's convention: CCW triangles.
+			var ccw := (pts[del[t + 1]] - pts[del[t]]).cross(
+				pts[del[t + 2]] - pts[del[t]]) > 0.0
+			kept.append(del[t])
+			kept.append(del[t + (1 if ccw else 2)])
+			kept.append(del[t + (2 if ccw else 1)])
+		t += 3
+	return {"points": pts, "indices": kept}
 
 
 static func _max_x_of(poly: PackedVector2Array) -> float:

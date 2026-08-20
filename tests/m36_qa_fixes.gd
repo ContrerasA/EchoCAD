@@ -227,6 +227,33 @@ func _run() -> bool:
 	if BodyBuilder.mesh_volume(mesh34) <= 0.0:
 		return _fail("B2: tight-bend sweep produced no volume")
 
+	# --- B3. ring profiles (hole) cap correctly (M34.4, M34-1.ecad) --------
+	# Concentric circles sampled at the same angles put the hole's bridge
+	# exactly on an outer vertex — the ear clipper refused the spliced
+	# polygon, so ring sweeps had no caps and ring EXTRUDES vanished whole.
+	var d341: Variant = JSON.parse_string(
+		FileAccess.get_file_as_string("res://tests/M34-1.ecad"))
+	var doc341 := CadDocument.from_dict(d341 as Dictionary)
+	var sw341 := doc341.feature_by_id("f3") as SweepFeature
+	var mesh341 := sw341.build_mesh(doc341)
+	if mesh341 == null:
+		return _fail("B3: M34-1.ecad ring sweep refused (%s)" % sw341.last_error)
+	var prof341: Dictionary = ProfileFinder.profile_at_healed(
+		doc341.sketch_feature("f1").sketch, sw341.anchor)["prof"]
+	var tri341 := ProfileFinder.triangulate_with_holes(
+		prof341["polygon"], prof341.get("holes", []))
+	if (tri341["indices"] as PackedInt32Array).is_empty():
+		return _fail("B3: ring profile still refuses to triangulate (no caps)")
+	# Ring extrude: same triangulation path — must build at the ring volume.
+	var xf341 := ExtrudeFeature.make("f1", sw341.anchor, 10.0)
+	var xm341 := xf341.build_mesh(doc341)
+	if xm341 == null:
+		return _fail("B3: ring extrude vanished")
+	var ring_want: float = float(prof341["area"]) * 10.0
+	var ring_got := BodyBuilder.mesh_volume(xm341)
+	if absf(ring_got - ring_want) > ring_want * 0.01:
+		return _fail("B3: ring extrude volume %f vs %f" % [ring_got, ring_want])
+
 	# --- D. sweep-path hover band draws and clears --------------------------
 	var fcurve := _root.create_sketch("XY")
 	_root.sketch_view.set_view(Vector2(20, 15), 4.0)
@@ -252,6 +279,43 @@ func _run() -> bool:
 	if _root.world.get_node_or_null("CurveHover") != null:
 		return _fail("D: clear_axis_hover left the curve band behind")
 
+	# --- E. loft: QA §M34.5 flow works; picked sections draw marks ----------
+	var ls1 := _root.create_sketch("XY")
+	_root.sketch_view.set_view(Vector2(0, 0), 4.0)
+	_root.tools.set_active("circle")
+	_click(Vector2(0, 0))
+	_click(Vector2(10, 0))
+	_root.finish_sketch()
+	await _idle()
+	var lpl := _root.create_offset_plane("XY", 20.0)
+	var ls2 := _root.create_sketch(lpl)
+	_root.tools.set_active("circle")
+	_click(Vector2(0, 0))
+	_click(Vector2(5, 0))
+	_root.finish_sketch()
+	await _idle()
+	var lfid := _root.loft([{"sketch": ls1, "at": Vector2(0, 0)},
+		{"sketch": ls2, "at": Vector2(0, 0)}])
+	if lfid == "":
+		return _fail("E: circle-to-circle loft over an offset plane refused")
+	var lmesh := (_root.doc.feature_by_id(lfid) as LoftFeature).build_mesh(
+		_root.doc)
+	var lwant := 20.0 / 3.0 * PI * (100.0 + 50.0 + 25.0)
+	var lgot := BodyBuilder.mesh_volume(lmesh)
+	if absf(lgot - lwant) > lwant * 0.02:
+		return _fail("E: loft frustum volume %f vs %f" % [lgot, lwant])
+	_root.world.show_loft_sections([
+		{"sf": _root.doc.sketch_feature(ls1), "at": Vector2(0, 0)},
+		{"sf": _root.doc.sketch_feature(ls2), "at": Vector2(0, 0)}])
+	var lroot := _root.world.get_node_or_null("LoftSectionMarks")
+	if lroot == null or lroot.get_child_count() != 2:
+		return _fail("E: loft section marks not drawn (2 expected)")
+	_root.world.hide_loft_sections()
+	await _idle()
+	if _root.world.get_node_or_null("LoftSectionMarks") != null:
+		return _fail("E: loft section marks not cleared")
+
 	print("M36_QA_FIXES OK: anchors self-heal (M33), sweep drops off-plane "
-		+ "offsets (M34), per-segment rims (M35), sweep path hover")
+		+ "offsets (M34), ring caps (M34.4), per-segment rims (M35), "
+		+ "sweep path hover, loft flow + section marks")
 	return true

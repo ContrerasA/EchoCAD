@@ -142,6 +142,7 @@ var _bodies: Array = []
 ## sketch rebuilds cannot orphan it mid-gesture).
 var _profile_hover_mi: MeshInstance3D = null
 var _profile_hover_key := ""
+var _loft_sections_root: Node3D = null
 ## Revolve axis picking (M23): the sketch-axis candidate lines drawn while an
 ## axis is awaited, and the hover highlight over whichever candidate the
 ## cursor is on.
@@ -1087,6 +1088,52 @@ func clear_profile_hover() -> void:
 		_profile_hover_mi.queue_free()
 		_profile_hover_mi = null
 	_profile_hover_key = ""
+
+
+## Persistent marks on the loft pick's ALREADY-SELECTED sections (QA §M34.5
+## — with only a count label, picked profiles looked unpicked). `sections`
+## is [{sf: SketchFeature, at: Vector2}]; call again after each pick.
+func show_loft_sections(sections: Array) -> void:
+	hide_loft_sections()
+	if sections.is_empty():
+		return
+	_loft_sections_root = Node3D.new()
+	_loft_sections_root.name = "LoftSectionMarks"
+	add_child(_loft_sections_root)
+	for sec: Dictionary in sections:
+		var sf := sec["sf"] as SketchFeature
+		if sf == null:
+			continue
+		var prof := ProfileFinder.profile_at(sf.sketch, sec["at"] as Vector2)
+		if prof.is_empty():
+			continue
+		var tri := ProfileFinder.triangulate_with_holes(
+			prof["polygon"] as PackedVector2Array,
+			prof.get("holes", []) as Array)
+		var pts: PackedVector2Array = tri["points"]
+		var idx: PackedInt32Array = tri["indices"]
+		if idx.is_empty():
+			continue
+		var xf := sf.plane_transform()
+		var tris := PackedVector3Array()
+		for i: int in idx:
+			tris.append(xf * Vector3(pts[i].x, pts[i].y, 0.0))
+		var mesh := ArrayMesh.new()
+		var arrays := []
+		arrays.resize(Mesh.ARRAY_MAX)
+		arrays[Mesh.ARRAY_VERTEX] = tris
+		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
+		var mi := MeshInstance3D.new()
+		mi.mesh = mesh
+		mi.material_override = _fill_material(
+			Color(1.0, 0.72, 0.25, 0.55), true)
+		_loft_sections_root.add_child(mi)
+
+
+func hide_loft_sections() -> void:
+	if _loft_sections_root != null:
+		_loft_sections_root.queue_free()
+		_loft_sections_root = null
 
 
 ## Revolve axis picking (M23): draw the sketch's own u/v axes through its

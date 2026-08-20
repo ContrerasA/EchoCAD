@@ -2838,6 +2838,15 @@ func sweep(profile_sketch: String, at: Vector2, path_sk: String,
 	return f.id
 
 
+## Amber-fill marks on every section picked so far (QA §M34.5).
+func _show_loft_section_marks() -> void:
+	var marks: Array = []
+	for sec: Dictionary in _loft_sections:
+		marks.append({"sf": doc.sketch_feature(String(sec["sketch"])),
+			"at": sec["at"]})
+	world.show_loft_sections(marks)
+
+
 func _open_loft_dialog() -> void:
 	if _loft_dialog == null:
 		_loft_dialog = Window.new()
@@ -2849,6 +2858,7 @@ func _open_loft_dialog() -> void:
 			_loft_dialog.hide()
 			picking_loft = false
 			_loft_sections = []
+			world.hide_loft_sections()
 			_refresh_ui())
 		var box := VBoxContainer.new()
 		box.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -2871,15 +2881,23 @@ func _open_loft_dialog() -> void:
 		box.add_child(okb)
 		add_child(_loft_dialog)
 	_loft_count.text = "Sections: %d (click profiles)" % _loft_sections.size()
-	_loft_dialog.popup_centered()
+	# Top-right corner, not centered: the user is about to click profiles in
+	# the viewport and a centered window sits right on top of them (same
+	# placement as the fillet/chamfer edge pick).
+	_loft_dialog.position = Vector2i(
+		int(get_viewport().get_visible_rect().size.x) - 270, 80)
+	_loft_dialog.show()
 
 
 func _commit_loft() -> void:
 	if _loft_sections.size() < 2:
-		set_status_hint("Loft: pick at least two profiles")
+		set_status_hint("Loft: pick at least two profiles (sketch regions "
+			+ "on different planes — to spin one profile about an axis, "
+			+ "use Revolve)")
 		return
 	_loft_dialog.hide()
 	picking_loft = false
+	world.hide_loft_sections()
 	var ops := [SolidFeature.OP_NEW_BODY, SolidFeature.OP_JOIN,
 		SolidFeature.OP_CUT]
 	loft(_loft_sections, ops[_loft_op.get_selected_id()])
@@ -3945,6 +3963,7 @@ func _on_viewport_input(event: InputEvent) -> void:
 				if _loft_count != null:
 					_loft_count.text = "Sections: %d (click profiles)" \
 						% _loft_sections.size()
+				_show_loft_section_marks()
 		elif mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT and picking_revolve:
 			var rayr := rig.pixel_ray(mb.position)
 			var rhit := _profile_under_ray(rayr[0], rayr[1])
@@ -4135,6 +4154,7 @@ func handle_app_key(k: InputEventKey) -> bool:
 			if picking_loft or not _loft_sections.is_empty():
 				picking_loft = false
 				_loft_sections = []
+				world.hide_loft_sections()
 				if _loft_dialog != null:
 					_loft_dialog.hide()
 			_pending_revolve = {}

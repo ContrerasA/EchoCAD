@@ -761,7 +761,7 @@ Status: PENDING sign-off
 
 Status: PENDING sign-off
 
-- [!] 1. Draw a small profile on XZ; a path (lines/arcs chained) on XY
+- [X] 1. Draw a small profile on XZ; a path (lines/arcs chained) on XY
    starting at/near the profile. **Sweep** → click the profile (region
    highlights) → click the path → op dialog OK. **Expect:** a solid runs
    the whole path, square corners at line joints (no pinched corners),
@@ -773,16 +773,19 @@ Status: PENDING sign-off
       Still get error see M34.ecad 
       Model Sweep failed: a path bend radius is tighter than the profile's 12.7mm extent
       In other programs, don't they just let the part intersect with itself?
-- [ ] 2. Sweep along a spline path. **Expect:** a smooth tube-like solid
+- [X] 2. Sweep along a spline path. **Expect:** a smooth tube-like solid
    following the curve; no twisting.
-- [ ] 3. Try a path with a hairpin tighter than the profile. **Expect:**
+- [~] 3. Try a path with a hairpin tighter than the profile. **Expect:**
    refused with the status message about self-intersection.
-- [ ] 4. Profile with a HOLE (circle inside a rect): sweep. **Expect:** the
+- [!] 4. Profile with a HOLE (circle inside a rect): sweep. **Expect:** the
    hole runs the length (check by orbiting/looking down the bore).
-- [ ] 5. **Loft**: circle on XY, bigger/smaller circle on an offset plane;
+  Caps aren't drawn when we do this
+  See M34-1
+- [!] 5. **Loft**: circle on XY, bigger/smaller circle on an offset plane;
    click both, OK. **Expect:** a smooth frustum; caps closed. Try a
    square→circle loft: walls stay sane (no bowtie twist).
-- [ ] 6. Loft/sweep with Cut against an existing body. **Expect:** carves
+    Loft should allow me to select an axis to loft around. right now it wants two bodies instead
+- [~] 6. Loft/sweep with Cut against an existing body. **Expect:** carves
    like extrude/revolve cuts do.
 - [ ] 7. Chips: suppress/rollback/delete both features; edit the profile
    sketch afterward. **Expect:** replay updates the solids.
@@ -824,6 +827,27 @@ Status: PENDING sign-off
   still refuse, which keeps QA item 3 meaningful. Covered by
   `tests/m36_qa_fixes.gd` (B2) and the reworded hairpin case in
   `tests/m34_sweep_loft.gd`.
+- Item 4 (2026-08-19), from `tests/M34-1.ecad` (now in the repo): the ring
+  profile (two concentric circles) capped NOTHING because both circles
+  tessellate at the same angles — the hole's splice bridge landed exactly
+  ON an outer vertex and the engine's ear clipper refused the merged
+  polygon (`triangulate_with_holes` returned no triangles). The same
+  failure made a ring EXTRUDE vanish entirely. The triangulator now falls
+  back to a Delaunay of the boundary points filtered to the region
+  (centroid inside the outer, outside every hole), which caps any splice
+  the ear clipper rejects — sweeps, extrudes, revolves and the 2D/3D
+  region fills all share it. Covered by `tests/m36_qa_fixes.gd` (B3).
+- Item 5 (2026-08-19): the documented flow (circle on XY, circle on an
+  offset plane, click both, OK) does work end-to-end — verified by
+  `tests/m36_qa_fixes.gd` (E), frustum volume and all — but the UX fought
+  it: the Loft dialog popped up CENTERED, right on top of the profiles you
+  are supposed to click, and picked sections showed nothing but a count.
+  The dialog now opens in the top-right corner (same placement as the
+  fillet/chamfer pick) and every picked section stays marked with an amber
+  fill until commit/cancel. On "select an axis to loft around": lofting
+  about an axis IS Revolve (§M23) — Loft is profile-to-profile by
+  definition; the not-enough-sections hint now says so. Fusion-style
+  centerline/guide-rail lofts are a future-milestone item.
 
 ## §M35 — 3D fillet + chamfer (prismatic)
 

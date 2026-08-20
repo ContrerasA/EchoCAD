@@ -1,0 +1,163 @@
+{
+	"app": "EchoCAD",
+	"display_unit": "in",
+	"feature_counter": 3,
+	"features": [
+		{
+			"id": "f1",
+			"kind": "sketch",
+			"name": "Sketch1",
+			"plane": "XZ",
+			"sketch": {
+				"constraints": [],
+				"entities": [
+					{
+						"id": "e1",
+						"kind": "point",
+						"pos": [
+							0.0,
+							0.0
+						]
+					},
+					{
+						"id": "e2",
+						"kind": "point",
+						"pos": [
+							50.7999992370605,
+							50.7999992370605
+						]
+					},
+					{
+						"center": "e2",
+						"id": "e3",
+						"kind": "circle",
+						"radius": 17.9605140686035
+					},
+					{
+						"id": "e12",
+						"kind": "point",
+						"pos": [
+							50.7999992370605,
+							50.7999992370605
+						]
+					},
+					{
+						"center": "e12",
+						"id": "e13",
+						"kind": "circle",
+						"radius": 12.7000007629395
+					}
+				],
+				"id_counter": 13,
+				"origin": "e1"
+			}
+		},
+		{
+			"id": "f2",
+			"kind": "sketch",
+			"name": "Sketch2",
+			"plane": "XY",
+			"sketch": {
+				"constraints": [],
+				"entities": [
+					{
+						"id": "e1",
+						"kind": "point",
+						"pos": [
+							0.0,
+							0.0
+						]
+					},
+					{
+						"id": "e2",
+						"kind": "point",
+						"pos": [
+							25.3999996185303,
+							0.0
+						]
+					},
+					{
+						"id": "e3",
+						"kind": "point",
+						"pos": [
+							25.3999996185303,
+							76.1999969482422
+						]
+					},
+					{
+						"id": "e4",
+						"kind": "point",
+						"pos": [
+							152.399993896484,
+							76.1999969482422
+						]
+					},
+					{
+						"id": "e5",
+						"kind": "point",
+						"pos": [
+							165.099990844727,
+							139.699996948242
+						]
+					},
+					{
+						"id": "e6",
+						"kind": "point",
+						"pos": [
+							25.3999996185303,
+							190.5
+						]
+					},
+					{
+						"id": "e7",
+						"kind": "point",
+						"pos": [
+							38.0999984741211,
+							127.0
+						]
+					},
+					{
+						"closed": false,
+						"handles": [
+							null,
+							null,
+							null,
+							null,
+							null,
+							null
+						],
+						"id": "e8",
+						"kind": "spline",
+						"points": [
+							"e2",
+							"e3",
+							"e4",
+							"e5",
+							"e6",
+							"e7"
+						]
+					}
+				],
+				"id_counter": 8,
+				"origin": "e1"
+			}
+		},
+		{
+			"anchor": [
+				56.0197906494141,
+				37.7271728515625
+			],
+			"id": "f3",
+			"kind": "sweep",
+			"name": "Sweep1",
+			"operation": "new_body",
+			"path_entity": "e8",
+			"path_sketch": "f2",
+			"sketch": "f1"
+		}
+	],
+	"named_views": [],
+	"parameters": [],
+	"timeline_marker": 3,
+	"version": 1
+}
