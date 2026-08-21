@@ -18,6 +18,9 @@ extends RefCounted
 ## theme by editing a handful of swatches.
 
 const SETTINGS_PATH := "user://settings.cfg"
+## Headless runs (tests, automation) persist to a scratch file so they never
+## clobber the user's real preferences.
+const SETTINGS_PATH_HEADLESS := "user://settings.test.cfg"
 const ICON_DIR := "res://assets/icons"
 const BUILTIN_DIR := "res://themes"
 const USER_DIR := "user://themes"
@@ -877,10 +880,28 @@ static func _dot(img: Image, x: int, y: int, c: Color) -> void:
 
 ## --- settings -------------------------------------------------------------------
 
+static func settings_path() -> String:
+	return SETTINGS_PATH_HEADLESS if is_scratch_run() else SETTINGS_PATH
+
+
+## True for headless runs and automation (RPC) sessions — both are driven by
+## tests that flip themes/prefs freely, so they must not write the user's
+## settings file (QA: "my theme resets whenever code is updated").
+static func is_scratch_run() -> bool:
+	if DisplayServer.get_name() == "headless":
+		return true
+	if OS.get_environment("ECHOCAD_AUTOMATION_PORT") != "":
+		return true
+	for arg in OS.get_cmdline_args() + OS.get_cmdline_user_args():
+		if String(arg).begins_with("--automation-port="):
+			return true
+	return false
+
+
 static func load_settings() -> void:
 	var cfg := ConfigFile.new()
 	var id := ""
-	if cfg.load(SETTINGS_PATH) == OK:
+	if cfg.load(settings_path()) == OK:
 		id = String(cfg.get_value("ui", "theme", ""))
 		# Pre-M36 settings only knew dark/light; honor that choice once.
 		if id == "" and cfg.has_section_key("ui", "dark"):
@@ -893,9 +914,9 @@ static func load_settings() -> void:
 
 static func save_settings() -> void:
 	var cfg := ConfigFile.new()
-	cfg.load(SETTINGS_PATH)   # keep unrelated sections if any
+	cfg.load(settings_path())   # keep unrelated sections if any
 	cfg.set_value("ui", "theme", theme_id)
 	cfg.set_value("ui", "dark", dark)
 	cfg.set_value("view", "ortho", model_ortho)
 	cfg.set_value("ui", "show_tool_names", show_tool_names)
-	cfg.save(SETTINGS_PATH)
+	cfg.save(settings_path())
