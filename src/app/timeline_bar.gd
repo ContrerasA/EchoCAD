@@ -139,10 +139,10 @@ func _on_chip_input(fid: String, ev: InputEvent) -> void:
 		var f := app.doc.feature_by_id(fid)
 		_menu.add_item("Edit Sketch" if f is SketchFeature else "Edit…", 0)
 		_menu.set_item_disabled(0, not app.can_edit_feature(fid))
+		_menu.add_item("Rename…", 3)
 		_menu.add_item("Unsuppress" if f != null and f.suppressed else "Suppress", 1)
 		_menu.add_item("Delete", 2)
-		_menu.position = Vector2i(get_viewport().get_mouse_position()) \
-			+ Vector2i(get_window().position)
+		_menu.position = Vector2i(get_viewport().get_mouse_position())
 		_menu.popup()
 
 
@@ -160,6 +160,8 @@ func _on_menu(id: int) -> void:
 			# Routed through the app so a construction plane that is still
 			# referenced refuses deletion instead of orphaning its sketches.
 			app.request_delete_feature(fid)
+		3:
+			app.open_rename_dialog(fid)
 
 
 ## Marker drag: while held, motion anywhere maps the pointer x to a slot.

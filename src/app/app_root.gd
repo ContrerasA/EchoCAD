@@ -1062,6 +1062,7 @@ func _build_menu_bar(parent: Control) -> void:
 	help.name = "Help"
 	_menu_add(help, "Theming guide (docs/THEMING.md)", func() -> void:
 		OS.shell_open(ProjectSettings.globalize_path("res://docs/THEMING.md")))
+	_menu_add(help, "Keyboard shortcuts", show_shortcuts, "F1")
 	_menu_add(help, "About EchoCAD", _show_about)
 	_menu_bar.add_child(help)
 
@@ -5458,6 +5459,152 @@ func _viewport_host() -> Control:
 	return _hud.get_parent() if _hud != null else self
 
 
+
+## --- M48 UX: body context menu, isolate, rename, shortcut sheet -----------------
+
+var _body_ctx_menu: PopupMenu = null
+var _body_ctx_target := ""
+var _rename_dialog: FeatureDialog = null
+var _rename_fid := ""
+var _shortcuts_dialog: AcceptDialog = null
+
+const _BODY_CTX := {"edit": 0, "props": 1, "color": 2, "hide": 3, "isolate": 4,
+	"show_all": 5, "fillet": 6, "shell": 7, "export": 8, "rename": 9}
+
+
+## Right-click on a body in the viewport.
+func open_body_context_menu(body_id: String, at: Vector2) -> void:
+	_body_ctx_target = body_id
+	if _body_ctx_menu == null:
+		_body_ctx_menu = PopupMenu.new()
+		_body_ctx_menu.name = "BodyViewportMenu"
+		_body_ctx_menu.id_pressed.connect(_on_body_ctx)
+		add_child(_body_ctx_menu)
+	var m := _body_ctx_menu
+	m.clear()
+	var root := doc.feature_by_id(body_id)
+	m.add_item("Edit %s…" % (root.name if root != null else "feature"), _BODY_CTX["edit"])
+	m.set_item_disabled(m.item_count - 1, not can_edit_feature(body_id))
+	m.add_item("Rename…", _BODY_CTX["rename"])
+	m.add_separator()
+	m.add_item("Fillet / Chamfer edges…", _BODY_CTX["fillet"])
+	m.add_item("Shell…", _BODY_CTX["shell"])
+	m.add_separator()
+	m.add_item("Properties…", _BODY_CTX["props"])
+	m.add_item("Appearance…", _BODY_CTX["color"])
+	m.add_separator()
+	m.add_item("Hide", _BODY_CTX["hide"])
+	m.add_item("Isolate", _BODY_CTX["isolate"])
+	m.add_item("Show all bodies", _BODY_CTX["show_all"])
+	m.set_item_disabled(m.item_count - 1, not world.any_body_hidden())
+	m.add_separator()
+	m.add_item("Export 3MF…", _BODY_CTX["export"])
+	# Popups are embedded subwindows: positions are main-window pixels.
+	m.position = Vector2i(at)
+	m.popup()
+
+
+func _on_body_ctx(id: int) -> void:
+	var b := _body_ctx_target
+	match id:
+		_BODY_CTX["edit"]:
+			edit_feature(b)
+		_BODY_CTX["rename"]:
+			open_rename_dialog(b)
+		_BODY_CTX["fillet"]:
+			select_body(b)
+			open_fillet_dialog("", EdgeFilletFeature.KIND_FILLET)
+		_BODY_CTX["shell"]:
+			select_body(b)
+			open_shell_dialog("")
+		_BODY_CTX["props"]:
+			open_properties_dialog(b)
+		_BODY_CTX["color"]:
+			pick_body_color(b)
+		_BODY_CTX["hide"]:
+			world.set_body_shown(b, false)
+			if world.selected_body() == b:
+				select_body("")
+			browser.refresh()
+			set_status_hint("%s hidden — right-click any body ▸ Show all bodies, or the browser eye" % body_display_name(b))
+		_BODY_CTX["isolate"]:
+			world.isolate_body(b)
+			browser.refresh()
+			set_status_hint("Isolated %s — right-click ▸ Show all bodies to return" % body_display_name(b))
+		_BODY_CTX["show_all"]:
+			world.show_all_bodies()
+			browser.refresh()
+		_BODY_CTX["export"]:
+			export_mesh_interactive("3mf", b)
+
+
+## Rename any feature (chip menu / body menu). One undo step.
+func open_rename_dialog(fid: String) -> void:
+	var f := doc.feature_by_id(fid)
+	if f == null:
+		return
+	_rename_fid = fid
+	if _rename_dialog == null:
+		_rename_dialog = FeatureDialog.create(self, "RenameDialog", "Rename")
+		_rename_dialog.set_ok_name("RenameOkBtn")
+		_rename_dialog.add_field("name", "Name", "RenameEdit", "feature name")
+		_rename_dialog.confirmed.connect(func() -> void:
+			var nm := _rename_dialog.text_of("name")
+			if nm == "":
+				_rename_dialog.set_error("Enter a name")
+				return
+			_rename_dialog.close()
+			if nm != doc.feature_by_id(_rename_fid).name:
+				stack.push_no_merge(CmdSetFeatureFlag.new(_rename_fid, "name", nm))
+				timeline.refresh()
+				browser.refresh())
+		add_child(_rename_dialog)
+	_rename_dialog.title = "Rename %s" % f.name
+	(_rename_dialog.field("name") as LineEdit).text = f.name
+	_rename_dialog.open()
+
+
+## Help ▸ Keyboard shortcuts (also `?` / F1).
+func show_shortcuts() -> void:
+	if _shortcuts_dialog == null:
+		_shortcuts_dialog = AcceptDialog.new()
+		_shortcuts_dialog.name = "ShortcutsDialog"
+		_shortcuts_dialog.title = "Keyboard shortcuts"
+		_shortcuts_dialog.dialog_text = "\n".join(PackedStringArray([
+			"GENERAL",
+			"  Ctrl+N / Ctrl+O / Ctrl+S / Ctrl+Shift+S   new / open / save / save as",
+			"  Ctrl+Z / Ctrl+Shift+Z                      undo / redo",
+			"  ?  or  F1                                  this sheet",
+			"",
+			"VIEW (model and sketch)",
+			"  Middle drag                                pan        Shift + middle drag   orbit",
+			"  Wheel                                      zoom       F                     fit",
+			"  P                                          orthographic / perspective",
+			"  View cube faces / house                    snap views / home",
+			"",
+			"MODEL",
+			"  N                                          new sketch (pick a plane or face)",
+			"  Right-click a body                         edit / rename / fillet / shell / properties / hide / isolate / export",
+			"  Double-click a body                        edit the feature that made that face",
+			"  Double-click a timeline chip               edit that feature",
+			"  Esc                                        cancel the current pick",
+			"  Enter / right-click                        finish a multi-pick (targets, edges, hole positions)",
+			"",
+			"SKETCH",
+			"  L  line      R  rect      C  circle      A  arc      S  slot      D  dimension",
+			"  T  trim      X  extend    O  offset      M  mirror",
+			"  Tab                                        next type-in field while drawing",
+			"  Enter                                      commit the value / finish a chain",
+			"  Esc                                        back to Select;  Esc again leaves the tool",
+			"  Delete                                     delete selection",
+			"  Ctrl+drag                                  window / crossing selection",
+		]))
+		_shortcuts_dialog.confirmed.connect(_shortcuts_dialog.hide)
+		_shortcuts_dialog.canceled.connect(_shortcuts_dialog.hide)
+		add_child(_shortcuts_dialog)
+	_shortcuts_dialog.popup_centered()
+
+
 ## --- save / open ---------------------------------------------------------------
 
 ## Write the document to `path` (.ecad). Returns true on success.
@@ -7741,10 +7888,28 @@ func _on_viewport_input(event: InputEvent) -> void:
 				if then.is_valid():
 					then.call()
 				_refresh_ui()
+		elif mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT and mb.double_click:
+			# Double-click a body: edit the feature that made the face under
+			# the cursor (M48) — the pocket's cut, the plate's extrude, …
+			var rayd := rig.pixel_ray(mb.position)
+			var faced := world.pick_face(rayd[0], rayd[1])
+			if not faced.is_empty():
+				var fidd := "f%d" % SolidKernel.feature_of_face(int(faced.get("face", -1)))
+				if doc.feature_by_id(fidd) != null and can_edit_feature(fidd):
+					edit_feature(fidd)
+				else:
+					edit_feature(String(faced["body"]))
 		elif mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT:
 			# Plain click in model mode: pick a body, or clear on a miss.
 			var ray3 := rig.pixel_ray(mb.position)
 			select_body(world.pick_body(ray3[0], ray3[1]))
+		elif mb.pressed and mb.button_index == MOUSE_BUTTON_RIGHT and not _any_pick_active():
+			# Right-click a body: its context menu (M48).
+			var rayr := rig.pixel_ray(mb.position)
+			var bidr := world.pick_body(rayr[0], rayr[1])
+			if bidr != "":
+				select_body(bidr)
+				open_body_context_menu(bidr, mb.position + _viewport_offset())
 	elif event is InputEventMouseMotion:
 		var mm := event as InputEventMouseMotion
 		if mm.button_mask & MOUSE_BUTTON_MASK_MIDDLE:
@@ -7876,6 +8041,23 @@ func _on_viewport_input(event: InputEvent) -> void:
 			world.clear_face_hover()
 
 
+## Any operand pick stage armed (a right-click then means "done", not a
+## context menu).
+func _any_pick_active() -> bool:
+	return picking_plane or picking_profile or picking_offset_base or picking_revolve \
+		or picking_revolve_axis or picking_look_at or picking_mirror_plane \
+		or picking_sweep_profile or picking_sweep_path or picking_loft or picking_body \
+		or picking_targets or picking_source != "" or picking_to_face or picking_hole_face \
+		or picking_hole_points or picking_fillet_edges or picking_shell_faces \
+		or picking_split_face or picking_pp_face or picking_measure or picking_treat_edges
+
+
+## Window pixel offset of the 3D viewport (popup positions are in window
+## coordinates, viewport events in viewport coordinates).
+func _viewport_offset() -> Vector2:
+	return viewport_rect().position
+
+
 ## True when some earlier pick stage may have left a face highlight that
 ## no active stage owns any more.
 func _face_hover_stale() -> bool:
@@ -7903,6 +8085,9 @@ func handle_app_key(k: InputEventKey) -> bool:
 		return true
 	if k.keycode == KEY_S and k.ctrl_pressed:
 		save_interactive(k.shift_pressed)
+		return true
+	if k.keycode == KEY_F1 or (k.keycode == KEY_SLASH and k.shift_pressed) or k.keycode == KEY_QUESTION:
+		show_shortcuts()
 		return true
 	if k.keycode == KEY_N and k.ctrl_pressed and mode == Mode.MODEL:
 		new_document_interactive()

@@ -329,7 +329,7 @@ func _on_item_mouse_selected(pos: Vector2, mouse_button_index: int) -> void:
 			_body_menu.add_item("Color...", BODY_MENU_COLOR)
 			_body_menu.id_pressed.connect(_on_body_menu_pressed)
 			add_child(_body_menu)
-		_body_menu.position = Vector2i(get_screen_position() + pos)
+		_body_menu.position = Vector2i(get_global_position() + pos)
 		_body_menu.popup()
 		return
 	if String(meta["kind"]) == "cplane":
@@ -344,7 +344,7 @@ func _on_item_mouse_selected(pos: Vector2, mouse_button_index: int) -> void:
 			_cplane_menu.add_item("Delete", CPLANE_MENU_DELETE)
 			_cplane_menu.id_pressed.connect(_on_cplane_menu_pressed)
 			add_child(_cplane_menu)
-		_cplane_menu.position = Vector2i(get_screen_position() + pos)
+		_cplane_menu.position = Vector2i(get_global_position() + pos)
 		_cplane_menu.popup()
 		return
 	if String(meta["kind"]) == "canvas":
@@ -357,7 +357,7 @@ func _on_item_mouse_selected(pos: Vector2, mouse_button_index: int) -> void:
 			_canvas_menu.add_item("Delete", CANVAS_MENU_DELETE)
 			_canvas_menu.id_pressed.connect(_on_canvas_menu_pressed)
 			add_child(_canvas_menu)
-		_canvas_menu.position = Vector2i(get_screen_position() + pos)
+		_canvas_menu.position = Vector2i(get_global_position() + pos)
 		_canvas_menu.popup()
 		return
 	if String(meta["kind"]) != "sketch":
@@ -370,7 +370,7 @@ func _on_item_mouse_selected(pos: Vector2, mouse_button_index: int) -> void:
 		_menu.add_item("Export DXF...", MENU_EXPORT_DXF)
 		_menu.id_pressed.connect(_on_menu_pressed)
 		add_child(_menu)
-	_menu.position = Vector2i(get_screen_position() + pos)
+	_menu.position = Vector2i(get_global_position() + pos)
 	_menu.popup()
 
 

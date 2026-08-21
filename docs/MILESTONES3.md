@@ -527,6 +527,15 @@ leftovers; release engineering (M49) last, alpha gate (M50).
   built (the kernel path is synchronous and fast enough for alpha-size
   parts). `tests/m47_perf_fuzz.gd` = correctness under edits + seeded fuzz.
 
+- **M48** (2026-08-20, partial): viewport body context menu (edit /
+  rename / fillet / shell / properties / appearance / hide / isolate /
+  show all / export), double-click a face to edit the feature that made
+  it, Rename… on chips and bodies, Help ▸ Keyboard shortcuts (F1 / ?),
+  popup menus positioned in window coordinates (they were offset by the
+  window's screen position). NOT built: selection filters, shortcut
+  editor, toasts/progress, first-run tour, dimension text drag, DOF
+  entity list — beta backlog.
+
 ## Deferred past alpha (beta backlog)
 
 - STEP import/export (B-rep kernel decision: OpenCascade-lite via

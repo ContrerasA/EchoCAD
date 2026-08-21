@@ -577,6 +577,24 @@ func set_body_shown(fid: String, shown: bool) -> void:
 		mi.visible = shown
 
 
+## M48: hide every body but `fid`; show_all_bodies() undoes it.
+func isolate_body(fid: String) -> void:
+	for id in body_ids():
+		set_body_shown(String(id), String(id) == fid)
+
+
+func show_all_bodies() -> void:
+	for id in body_ids():
+		set_body_shown(String(id), true)
+
+
+func any_body_hidden() -> bool:
+	for id in body_ids():
+		if not _body_shown(String(id)):
+			return true
+	return false
+
+
 func body_shown(fid: String) -> bool:
 	return _body_shown(fid)
 

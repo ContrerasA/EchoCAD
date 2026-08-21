@@ -482,3 +482,33 @@ Status: PENDING
 ### Fix log
 
 (none yet)
+
+---
+
+## §M48 — UX polish
+
+Status: PENDING
+
+- [ ] 1. **Body context menu.** Right-click a body in the viewport (no pick
+   armed). **Expect:** a menu AT the cursor: Edit <root feature>…, Rename…,
+   Fillet / Chamfer edges…, Shell…, Properties…, Appearance…, Hide,
+   Isolate, Show all bodies (disabled when nothing is hidden), Export 3MF….
+   Each does what it says; Hide/Isolate update the browser eyes; Show all
+   brings everything back. Right-click while a pick is armed still means
+   "done" for that pick.
+- [ ] 2. **Double-click a body face.** Double-click the floor of a pocket:
+   the pocket's Cut extrude opens for editing; double-click the plate's
+   top: the plate's extrude opens. A mesh body opens nothing (status hint).
+- [ ] 3. **Rename.** Chip right-click ▸ Rename… (and the body menu): the
+   dialog prefills the name, Enter renames, the chip, browser and dialogs
+   show the new name, undo restores the old one.
+- [ ] 4. **Shortcut sheet.** Help ▸ Keyboard shortcuts, F1 or `?`: a sheet
+   grouped General / View / Model / Sketch; every listed key works.
+- [ ] 5. **Menus land at the cursor** everywhere: timeline chip menu,
+   browser row menus, body menu — also with the app window moved away
+   from the screen's top-left corner.
+- [ ] 6. Both themes: the context menu, the rename dialog, the sheet.
+
+### Fix log
+
+(none yet)
