@@ -463,6 +463,54 @@ func _edge_treat(a: Dictionary, p: StreamPeerTCP, id: Variant,
 	return {"feature": fid}
 
 
+## --- M44 exchange ------------------------------------------------------------------
+
+## {path, scale?} -> {features: [ids], count}
+func _cmd_action_import_mesh(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
+	var ids := app.import_mesh(String(a.get("path", "")), float(a.get("scale", 1.0)))
+	if ids.is_empty():
+		_reply_err(p, id, "bad_args", "import failed (see status hint)")
+		return null
+	var errs := {}
+	for fid in ids:
+		var f := app.doc.feature_by_id(String(fid))
+		if f != null and f.rebuild_error != "":
+			errs[String(fid)] = f.rebuild_error
+	await BodyBuilder.build(app.doc, app)
+	errs = {}
+	for fid in ids:
+		var f := app.doc.feature_by_id(String(fid))
+		if f != null and f.rebuild_error != "":
+			errs[String(fid)] = f.rebuild_error
+	_reply(p, id, {"features": ids, "count": ids.size(), "errors": errs})
+	return null
+
+
+## {path, format: 3mf|obj, body?}
+func _cmd_action_export_mesh(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
+	var path := String(a.get("path", ""))
+	var fmt := String(a.get("format", path.get_extension().to_lower()))
+	if path == "" or not fmt in ["3mf", "obj"]:
+		_reply_err(p, id, "bad_args", "path + format (3mf|obj) required")
+		return null
+	if not app.export_mesh(path, fmt, String(a.get("body", ""))):
+		_reply_err(p, id, "io", "export failed (see status hint)")
+		return null
+	return {"path": path}
+
+
+## {path, sketch?, construction?}
+func _cmd_action_export_svg(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
+	var sid := String(a.get("sketch", ""))
+	if sid == "":
+		var sf := app._dxf_target_feature()
+		sid = sf.id if sf != null else ""
+	if not app.export_svg(String(a.get("path", "")), sid, bool(a.get("construction", false))):
+		_reply_err(p, id, "io", "export failed (see status hint)")
+		return null
+	return {"path": String(a.get("path", ""))}
+
+
 ## --- M43 inspection --------------------------------------------------------------
 
 ## {body, material?} -> volume_mm3, area_mm2, mass_g, centroid, inertia (diag), watertight

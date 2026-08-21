@@ -382,3 +382,40 @@ Interference, Print Check.
 ### Fix log
 
 (none yet)
+
+---
+
+## §M44 — Exchange: 3MF, mesh import, OBJ, SVG
+
+Status: PENDING
+
+- [ ] 1. **Export 3MF.** A document with two coloured bodies (Appearance on
+   one). MAKE ▸ Export 3MF (stack face; STL and OBJ in its flyout). Save.
+   **Expect:** the slicer (PrusaSlicer / Bambu / Cura) opens it with two
+   objects named like the bodies, right size (mm), the colour on the
+   coloured one, no repair warnings. The file has a thumbnail (the viewport).
+- [ ] 2. **Export OBJ** of the same: opens in Blender at mm scale (set the
+   importer's scale), one object per body.
+- [ ] 3. **Import Mesh.** INSERT ▸ Import Mesh, pick an STL (e.g. the
+   exported one). **Expect:** the file dialog offers File units
+   (mm/in/cm/m); the body lands as "MeshN" (or the file's object name), a
+   chip with the mesh icon, selectable, measurable, the browser lists it.
+   Extrude a Cut through it with Targets ▸ the mesh body: it is carved.
+   Fillet one of its edges. Section through it.
+- [ ] 4. **3MF with several objects** imports as several bodies; an OBJ with
+   `o` groups too.
+- [ ] 5. **Open mesh.** Import a non-watertight mesh (a single quad OBJ,
+   or a scanned part with holes). **Expect:** it shows, amber chip "mesh is
+   not a closed solid — shown for reference, excluded from booleans"; a
+   cut targeting it reports "touches no body".
+- [ ] 6. **Save/Open** a document with imported meshes: the meshes come back
+   exactly (the triangles live in the .ecad).
+- [ ] 7. **Export SVG** of a sketch (MAKE ▸ the DXF stack's flyout, or the
+   browser's sketch menu if present): opens in Inkscape at the right size
+   in mm; lines, circles and arcs are true SVG primitives; splines are
+   polylines; "Include construction geometry" adds dashed strokes.
+- [ ] 8. Both themes: the file dialogs' extra rows (units, construction).
+
+### Fix log
+
+(none yet)

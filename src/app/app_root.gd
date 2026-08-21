@@ -1261,15 +1261,26 @@ func _build_ribbon(parent: Control) -> void:
 		"canvas")
 	canvb.name = "ImportCanvasBtn"
 	canvb.tooltip_text = "Insert a reference image (PNG/JPEG) on a plane"
+	var meshi := _tool_button(g_insert, "Import Mesh", import_mesh_interactive, "import_mesh")
+	meshi.name = "ImportMeshBtn"
+	meshi.tooltip_text = "Insert an STL / OBJ / 3MF mesh as a body (a closed mesh takes booleans like any body)"
 
 	_divider(model)
 	var g_make := _tool_grid(_shelf_group(model, "Make"), 2)
-	var stlb := _tool_button(g_make, "Export STL",
-		func() -> void: export_stl_interactive(), "export_stl")
-	stlb.name = "ExportStlBtn"
-	var dxfb := _tool_button(g_make, "Export DXF", export_dxf_interactive,
-		"export_dxf")
-	dxfb.name = "ExportDxfBtn"
+	_tool_stack(g_make, [
+		{"id": "export_3mf", "name": "Export3mfBtn", "title": "Export 3MF", "icon": "export_3mf",
+			"tooltip": "Export bodies as 3MF (colours, names, mm — the slicer format)",
+			"handler": func() -> void: export_mesh_interactive("3mf")},
+		{"id": "export_stl", "name": "ExportStlBtn", "title": "Export STL", "icon": "export_stl",
+			"tooltip": "Export bodies as STL", "handler": func() -> void: export_stl_interactive()},
+		{"id": "export_obj", "name": "ExportObjBtn", "title": "Export OBJ", "icon": "export_obj",
+			"tooltip": "Export bodies as Wavefront OBJ",
+			"handler": func() -> void: export_mesh_interactive("obj")}])
+	_tool_stack(g_make, [
+		{"id": "export_dxf", "name": "ExportDxfBtn", "title": "Export DXF", "icon": "export_dxf",
+			"tooltip": "Export a sketch as DXF", "handler": func() -> void: export_dxf_interactive()},
+		{"id": "export_svg", "name": "ExportSvgBtn", "title": "Export SVG", "icon": "export_svg",
+			"tooltip": "Export a sketch as SVG (mm)", "handler": func() -> void: export_svg_interactive()}])
 	# Save / Open live in the File menu (QA §M36: no File group in the
 	# ribbon). The buttons stay as hidden, named controls so Ctrl+S/Ctrl+O
 	# tooltips and RPC lookups keep working.
@@ -6715,6 +6726,166 @@ func export_stl(path: String, body_id := "", ascii := false,
 	set_status_hint("Exported %d triangles (%s) to %s"
 		% [int(res["triangles"]),
 		"mm" if absf(scale - 1.0) < 1e-12 else "m", path])
+	return true
+
+
+
+## --- M44 mesh exchange -----------------------------------------------------------
+
+var _mesh_import_dialog: FileDialog = null
+var _mesh_import_unit: OptionButton = null
+var _mesh_export_dialog: FileDialog = null
+var _mesh_export_fmt := "3mf"
+var _svg_dialog: FileDialog = null
+var _svg_export_id := ""
+var _svg_include_cons: CheckBox = null
+
+
+func import_mesh_interactive() -> void:
+	if mode != Mode.MODEL:
+		return
+	if _mesh_import_dialog == null:
+		_mesh_import_dialog = FileDialog.new()
+		_mesh_import_dialog.name = "MeshImportDialog"
+		_mesh_import_dialog.access = FileDialog.ACCESS_FILESYSTEM
+		_mesh_import_dialog.filters = ["*.stl, *.obj, *.3mf ; Meshes (STL, OBJ, 3MF)"]
+		_mesh_import_dialog.file_mode = FileDialog.FILE_MODE_OPEN_FILE
+		_mesh_import_dialog.size = Vector2i(640, 440)
+		_mesh_import_dialog.file_selected.connect(func(path: String) -> void:
+			import_mesh(path, [1.0, 25.4, 10.0, 1000.0][_mesh_import_unit.selected]))
+		var urow := HBoxContainer.new()
+		var ulab := Label.new()
+		ulab.text = "File units:"
+		urow.add_child(ulab)
+		_mesh_import_unit = OptionButton.new()
+		_mesh_import_unit.name = "MeshImportUnitPick"
+		_mesh_import_unit.focus_mode = Control.FOCUS_NONE
+		for t in ["millimetres (slicers)", "inches", "centimetres", "metres (Blender)"]:
+			_mesh_import_unit.add_item(t)
+		urow.add_child(_mesh_import_unit)
+		_mesh_import_dialog.get_vbox().add_child(urow)
+		add_child(_mesh_import_dialog)
+	_mesh_import_dialog.popup_centered()
+
+
+## Import a mesh file as one body per object (mm after `scale`). Returns
+## the feature ids ([] on failure, with the reason hinted).
+func import_mesh(path: String, scale := 1.0) -> Array:
+	var res := MeshIo.read(path, scale)
+	if not bool(res.get("ok", false)):
+		set_status_hint("Import failed: " + String(res.get("error", "unreadable")))
+		return []
+	var ids: Array = []
+	var cmds: Array = []
+	var used := {}
+	for f0 in doc.features:
+		used[(f0 as Feature).name] = true
+	for o: Dictionary in res["objects"]:
+		var f := MeshBodyFeature.make(String(o["name"]), o["triangles"], path.get_file())
+		if f.name == "" or used.has(f.name):
+			f.name = doc.auto_name("Mesh")
+		used[f.name] = true
+		f.id = doc.next_feature_id()
+		cmds.append(CmdAddFeature.new(f))
+		ids.append(f.id)
+	if cmds.size() == 1:
+		stack.push_no_merge(cmds[0])
+	else:
+		stack.push_no_merge(CmdBatch.new("Import %s" % path.get_file(), cmds))
+	set_status_hint("Imported %d mesh bod%s from %s" % [ids.size(), "y" if ids.size() == 1 else "ies", path.get_file()])
+	fit_view()
+	return ids
+
+
+func export_mesh_interactive(fmt: String, body_id := "") -> void:
+	if _stl_bodies(body_id).is_empty():
+		set_status_hint("Export %s: no solid bodies to export" % fmt.to_upper())
+		return
+	_mesh_export_fmt = fmt
+	_stl_export_body = body_id
+	if _mesh_export_dialog == null:
+		_mesh_export_dialog = FileDialog.new()
+		_mesh_export_dialog.name = "MeshExportDialog"
+		_mesh_export_dialog.access = FileDialog.ACCESS_FILESYSTEM
+		_mesh_export_dialog.file_mode = FileDialog.FILE_MODE_SAVE_FILE
+		_mesh_export_dialog.size = Vector2i(640, 440)
+		_mesh_export_dialog.file_selected.connect(func(path: String) -> void:
+			export_mesh(path, _mesh_export_fmt, _stl_export_body))
+		add_child(_mesh_export_dialog)
+	_mesh_export_dialog.filters = ["*.%s ; %s" % [fmt, fmt.to_upper()]]
+	_mesh_export_dialog.current_file = document_title() + "." + fmt
+	_mesh_export_dialog.popup_centered()
+
+
+func export_mesh(path: String, fmt: String, body_id := "") -> bool:
+	if not path.to_lower().ends_with("." + fmt):
+		path += "." + fmt
+	var bodies := _stl_bodies(body_id)
+	var res: Dictionary
+	if fmt == "3mf":
+		res = MeshIo.write_3mf(bodies, path, _thumbnail_png(), document_title())
+	else:
+		res = MeshIo.write_obj(bodies, path)
+	if not bool(res["ok"]):
+		set_status_hint("Export %s failed: %s" % [fmt.to_upper(), String(res["error"])])
+		return false
+	set_status_hint("Exported %d bod%s to %s" % [int(res["objects"]),
+		"y" if int(res["objects"]) == 1 else "ies", path])
+	return true
+
+
+## A small PNG of the viewport for the 3MF thumbnail (empty when the
+## viewport has no readable texture, e.g. headless).
+func _thumbnail_png() -> PackedByteArray:
+	var tex := _viewport.get_texture() if _viewport != null else null
+	if tex == null:
+		return PackedByteArray()
+	var img := tex.get_image()
+	if img == null or img.is_empty():
+		return PackedByteArray()
+	img.resize(256, int(256.0 * img.get_height() / maxf(img.get_width(), 1.0)))
+	return img.save_png_to_buffer()
+
+
+func export_svg_interactive(target_id := "") -> void:
+	if target_id == "":
+		var sf := _dxf_target_feature()
+		if sf == null:
+			set_status_hint("Export SVG: select the sketch in the browser (or open it) first")
+			return
+		target_id = sf.id
+	_svg_export_id = target_id
+	if _svg_dialog == null:
+		_svg_dialog = FileDialog.new()
+		_svg_dialog.name = "SvgExportDialog"
+		_svg_dialog.access = FileDialog.ACCESS_FILESYSTEM
+		_svg_dialog.filters = ["*.svg ; SVG drawings"]
+		_svg_dialog.file_mode = FileDialog.FILE_MODE_SAVE_FILE
+		_svg_dialog.size = Vector2i(640, 440)
+		_svg_dialog.file_selected.connect(func(path: String) -> void:
+			export_svg(path, _svg_export_id, _svg_include_cons.button_pressed))
+		_svg_include_cons = CheckBox.new()
+		_svg_include_cons.name = "SvgIncludeConsChk"
+		_svg_include_cons.text = "Include construction geometry (dashed)"
+		_svg_dialog.get_vbox().add_child(_svg_include_cons)
+		add_child(_svg_dialog)
+	var sf2 := doc.sketch_feature(target_id)
+	_svg_dialog.current_file = (sf2.name if sf2 != null else "sketch") + ".svg"
+	_svg_dialog.popup_centered()
+
+
+func export_svg(path: String, sketch_id: String, include_construction := false) -> bool:
+	var sf := doc.sketch_feature(sketch_id)
+	if sf == null:
+		set_status_hint("Export SVG: no such sketch")
+		return false
+	if not path.to_lower().ends_with(".svg"):
+		path += ".svg"
+	var res := SvgExporter.save(sf.sketch, path, include_construction)
+	if not bool(res["ok"]):
+		set_status_hint("Export SVG failed: " + String(res["error"]))
+		return false
+	set_status_hint("Exported %s to %s" % [sf.name, path])
 	return true
 
 

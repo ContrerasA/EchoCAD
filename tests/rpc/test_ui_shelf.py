@@ -29,7 +29,9 @@ def main():
                  "ImportDxfBtn", "ExportDxfBtn", "ExportStlBtn",
                  "PreferencesBtn"]:
         r = app.call("query.control", {"name": name})
-        check(r["visible"], f"{name} visible in model mode")
+        # Export STL / DXF sit in stacks since M44 (3MF▸STL▸OBJ, DXF▸SVG):
+        # reachable through the flyout when not the stack's face.
+        check(r["visible"] or bool(r.get("flyout_owner")), f"{name} visible in model mode")
     # Save / Open moved to the File menu (QA §M36): named controls survive,
     # but no File group sits in the ribbon.
     for name in ["SaveBtn", "OpenBtn"]:

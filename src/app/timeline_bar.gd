@@ -70,6 +70,8 @@ static func icon_for(f: Feature) -> String:
 		return "shell"
 	if f is FaceOffsetFeature:
 		return "press_pull"
+	if f is MeshBodyFeature:
+		return "import_mesh"
 	if f is SweepFeature:
 		return "sweep"
 	if f is LoftFeature:

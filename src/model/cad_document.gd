@@ -165,6 +165,8 @@ static func feature_from_dict(d: Dictionary) -> Feature:
 			return ShellFeature.from_dict(d)
 		"face_offset":
 			return FaceOffsetFeature.from_dict(d)
+		"mesh_body":
+			return MeshBodyFeature.from_dict(d)
 		"canvas":
 			return CanvasFeature.from_dict(d)
 		"transform":

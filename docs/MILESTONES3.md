@@ -493,6 +493,17 @@ leftovers; release engineering (M49) last, alpha gate (M50).
   probe and min-wall scan were not built. RPC: `query.mass_properties`,
   `query.interference`, `action.section`, `query.print_check`.
 
+- **M44** (2026-08-20): `MeshIo` (read STL binary/ascii, OBJ with
+  groups, 3MF core with units + build transforms; write 3MF with
+  basematerials colour per body + optional thumbnail, OBJ welded),
+  `SvgExporter` (true line/circle/arc primitives, mm viewBox),
+  `MeshBodyFeature` (welded vertices/indices base64 in .ecad, a NEW BODY
+  in the kernel; open meshes show as reference-only with an amber chip and
+  take no booleans). Ribbon: Insert ▸ Import Mesh (units row), Make ▸
+  3MF▸STL▸OBJ and DXF▸SVG stacks. RPC: `action.import_mesh`,
+  `action.export_mesh`, `action.export_svg`. 3MF colours are written but
+  not read back into body appearance (read keeps names/meshes only).
+
 ## Deferred past alpha (beta backlog)
 
 - STEP import/export (B-rep kernel decision: OpenCascade-lite via

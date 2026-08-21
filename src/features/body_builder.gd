@@ -91,6 +91,17 @@ static func _build_kernel(doc: CadDocument, stop_id: String) -> Array:
 			var ps := SolidKernel.from_mesh(ef.kernel_mesh(doc, part),
 				SolidKernel.ordinal_of(ef.id))
 			if ps == null:
+				if ef is MeshBodyFeature:
+					# M44: an open mesh still shows — reference only, no
+					# booleans, amber chip.
+					ef.rebuild_error = "mesh is not a closed solid — shown for reference, excluded from booleans"
+					ef.rebuild_level = "warning"
+					var ref_entry := _new_entry(ef.id, ef.name, null, ef.color)
+					ref_entry["mesh"] = part["mesh"]
+					ref_entry["dirty"] = false
+					ref_entry["reference_only"] = true
+					bodies.append(ref_entry)
+					continue
 				ef.rebuild_error = SolidKernel.last_error
 				continue
 			part_solids[ef.id] = ps
@@ -344,6 +355,8 @@ static func _targets(bodies: Array, tf: SolidFeature, ps: RefCounted, owner: Fea
 		return out
 	var box := SolidKernel.aabb(ps).grow(0.001)
 	for b: Dictionary in bodies:
+		if b.get("solid") == null:
+			continue   # reference-only mesh bodies take no booleans
 		if SolidKernel.aabb(b["solid"]).grow(0.001).intersects(box):
 			out.append(b)
 	return out
@@ -429,7 +442,7 @@ static func _entry_by_id(bodies: Array, id: String) -> Dictionary:
 ## return the list. Entries are the same dictionaries (mutated in place).
 static func _entries(bodies: Array) -> Array:
 	for b: Dictionary in bodies:
-		if bool(b.get("dirty", true)):
+		if bool(b.get("dirty", true)) and b.get("solid") != null:
 			var tm := SolidKernel.to_mesh(b["solid"])
 			b["mesh"] = tm["mesh"]
 			b["face_ids"] = tm["face_ids"]
