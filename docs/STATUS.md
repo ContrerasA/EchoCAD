@@ -1,6 +1,14 @@
 # EchoCAD — Status
 
-Updated: 2026-08-19. Milestones M0–M25 implemented and merged to `main`.
+Updated: 2026-08-20. M0–M36 + the CHANGES round + **M38 (Manifold kernel)**
+on `main`. Volume 3 (`docs/MILESTONES3.md`, M38–M50 + polish rounds) is the
+alpha plan; manual QA for it lives in `docs/MANUAL_QA3.md`. Solids are now
+computed by Manifold (`MeshSolid` in `addons/geometry`): exact booleans
+(no more EPS-inflated cuts), synchronous rebuilds, face ids on every
+triangle, edge overlay on every body, per-feature rebuild errors shown as
+red timeline chips. 64 headless tests + 29 RPC suites green.
+
+Earlier history: M0–M25 implemented and merged to `main`.
 Volume 2 (M26–M35, `docs/MILESTONES2.md`) is IMPLEMENTED on a chain of
 branches (m26-ui-shell → … → m35-fillet-chamfer, each atop the previous)
 with 54 headless tests + 28 RPC suites green at the tip; merges to `main`
@@ -53,9 +61,9 @@ binaries still pending in the sibling repos.
 ## Known limitations / backlog
 
 - Extrude booleans pick their targets by AABB overlap (join/cut hit every
-  body whose bounds touch the prism) — no explicit target-body picker yet.
-- CSG-baked (boolean) bodies have no edge-line overlay surface; plain
-  new-body solids keep it.
+  body whose bounds touch the prism) — explicit target picker is M39.
+- (closed by M38) CSG-baked bodies have no edge-line overlay — every body
+  now draws its edges from the kernel mesh.
 - Offset constraints are Fusion-lite: parallels + one driving gap dimension,
   not a rigid whole-chain offset constraint; the copy keeps some freedom.
 - Trim drops length-type constraints (EQUAL/dimensions) on split lines by

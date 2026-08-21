@@ -154,9 +154,34 @@ func _pos(res: Dictionary, p: Vector2, theta: float) -> Vector3:
 
 
 func build_mesh(doc: CadDocument) -> ArrayMesh:
+	return _lathe_mesh(doc, 0.0)
+
+
+## M38: the kernel gets the exact lathe solid — no radial growth, so a
+## revolved cut keeps its dimensioned radius; coincident faces are resolved
+## by the kernel's tolerance (SolidKernel.TOLERANCE_MM).
+func kernel_mesh(doc: CadDocument, _part: Dictionary) -> ArrayMesh:
+	return _lathe_mesh(doc, 0.0)
+
+
+func _lathe_mesh(doc: CadDocument, grow: float) -> ArrayMesh:
 	var res := _resolve(doc)
 	if res.is_empty():
 		return null
+	if grow != 0.0:
+		res = res.duplicate()
+		var g := offset_ring(res["outer"] as PackedVector2Array, grow)
+		if g.size() >= 3:
+			res["outer"] = g
+		var kept: Array = []
+		for h in (res["holes"] as Array):
+			var hcc := (h as PackedVector2Array).duplicate()
+			hcc.reverse()
+			var hs := offset_ring(hcc, -grow)
+			if hs.size() >= 3:
+				hs.reverse()
+				kept.append(hs)
+		res["holes"] = kept
 	var full: bool = res["full"]
 	var angle: float = res["angle"]
 	var segs := maxi(8, int(ceil(FULL_TURN_SEGS * angle / TAU)))

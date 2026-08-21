@@ -569,6 +569,19 @@ static func build_theme() -> Theme:
 	for cn in ["font_color", "font_hover_color", "font_pressed_color",
 			"icon_normal_color", "icon_hover_color", "icon_pressed_color"]:
 		t.set_color(cn, "TimelineChipActive", col("on_accent"))
+	# M38: a feature that failed to compute — error-tinted border + label,
+	# same footprint, reason in the tooltip.
+	t.add_type("TimelineChipError")
+	t.set_type_variation("TimelineChipError", "TimelineChip")
+	t.set_stylebox("normal", "TimelineChipError", _flat(col("btn"),
+		col("error"), radius, Vector2(2, 3)))
+	t.set_stylebox("hover", "TimelineChipError", _flat(col("btn_hover"),
+		col("error"), radius, Vector2(2, 3)))
+	t.set_stylebox("pressed", "TimelineChipError", _flat(col("btn"),
+		col("error"), radius, Vector2(2, 3)))
+	for cn in ["font_color", "font_hover_color", "font_pressed_color",
+			"icon_normal_color", "icon_hover_color", "icon_pressed_color"]:
+		t.set_color(cn, "TimelineChipError", col("error"))
 	# Rollback marker: a thin accent bar.
 	t.add_type("TimelineMarker")
 	t.set_type_variation("TimelineMarker", "Button")

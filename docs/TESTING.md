@@ -71,6 +71,11 @@ fixture sketch quickly).
   `action.load_fixture {path}`, `action.set_theme {theme}` (M36)
 - `query.theme` — active theme id, appearance, catalog of available themes,
   user theme dir (M36)
+- `query.kernel` — `{kernel, manifold, errors}`: kernel name, whether the
+  Manifold binary loaded, and `{feature_id: reason}` for every feature
+  whose last rebuild failed (M38). `query.bodies` rows additionally carry
+  `watertight`, `genus`, `surface_area`, `face_features` (ids of the
+  features whose faces survive on the body).
 - `query.control {name}` — rect (main-window pixels, even inside embedded
   popups), visible, disabled, `text` for Labels/Buttons (assert the status
   bar without reading pixels); `flyout_owner` names the ribbon stack button

@@ -1127,7 +1127,7 @@ Run windowed at ≥1280×800. Default theme is Modernist Dark.
       4+ entities reads `7 sel: … +4 more`; clicking a dimension label
       reads `c#2 LINE_DIST  [e8, e4]`. Finishing the sketch empties the slot.
 
-- [ ] **Point tool commits its snap**: with the Point tool (P), hover an
+- [X] **Point tool commits its snap**: with the Point tool (P), hover an
       edge — the edge pre-highlights and an amber dot shows on the curve;
       the line's middle shows a green dot instead. Click on the curve and
       the new point gains `POINT_ON`; click the middle and it gains
@@ -1140,7 +1140,7 @@ Run windowed at ≥1280×800. Default theme is Modernist Dark.
 
 Run windowed at ≥1280×800, then again at ~1000×700.
 
-- [ ] **Ribbon never wraps** (#1): shrink the window — the ribbon stays one
+- [X] **Ribbon never wraps** (#1): shrink the window — the ribbon stays one
       row; the widest strips hand their trailing tools to a `»` button at
       their right end (CREATE, MODIFY, CONSTRAIN give first; SELECT,
       OPTIONS, Finish Sketch never collapse). Click `»` (or right-click):
@@ -1148,25 +1148,27 @@ Run windowed at ≥1280×800, then again at ~1000×700.
       Center Rect) still right-clicks to its flyout from inside it. Widen
       the window: tools come back. "Show tool names" keeps the same rule
       with the larger buttons.
-- [ ] **Light-mode file dialog** (#2): Modernist Light ▸ File ▸ Open: the
+- [X] **Light-mode file dialog** (#2): Modernist Light ▸ File ▸ Open: the
       folder/file/up/back/reload/hidden-files glyphs are dark and visible;
       hovering a row is a light grey band with dark text; the selected row
       is the accent band. Same in the Save and Import dialogs.
-- [ ] **Sketch opens where the model was** (#3): orbit/zoom the model so a
+- [X] **Sketch opens where the model was** (#3): orbit/zoom the model so a
       corner of a body fills the view, New Sketch on its top face: the
       canvas opens centred on that spot at the same zoom (no jump to the
       origin). With ORTHO on, Shift+MMB out of the plane keeps the view
       orthographic; with it off, perspective as before.
-- [ ] **Camera saved with the file** (#4): frame an odd view, Save, Views ▸
+- [X] **Camera saved with the file** (#4): frame an odd view, Save, Views ▸
       Home, Open the file: the odd view is back instantly. Saving while
       inside a sketch stores the MODEL view you left, not the square-on one.
       A pre-#4 file opens with the current view untouched.
-- [ ] **View cube widgets** (#5): the house glyph (top-left of the cube)
+- [!] **View cube widgets** (#5): the house glyph (top-left of the cube)
       flies to the 3/4 home view — the same pose the app starts in (FRONT,
       RIGHT, TOP visible). ◀ ▶ turn a quarter around Z; ▲ ▼ a quarter up /
       down (clamped at the poles). Each glyph lights on hover; clicking the
       cube faces still works; Views ▸ Home matches the house.
-- [ ] **Arm first, pick after** (#6): in a sketch with two lines and nothing
+    For now remove the rotation buttons, only keep the home button
+    Move the axis gizmos to bottom left of front face in view cube so it matches fusion
+- [X] **Arm first, pick after** (#6): in a sketch with two lines and nothing
       selected, click **Parallel**: the button stays pressed, the hint says
       "needs two lines — click them", lines pre-highlight under the cursor,
       and the second click applies the constraint (badge appears) with the
@@ -1179,13 +1181,13 @@ Run windowed at ≥1280×800, then again at ~1000×700.
       Pattern / Move Body / Copy Body** say "click a body", bodies tint
       under the cursor, the click selects and the command continues; Esc
       cancels.
-- [ ] **Light-mode vertices** (#7): Modernist Light: free points are blue
+- [X] **Light-mode vertices** (#7): Modernist Light: free points are blue
       squares on the paper grid, constrained ones green, selected ones
       amber; selection/hover outlines are amber too.
-- [ ] **No ghost geometry** (#8): edit a sketch with an extrude on it, drag
+- [X] **No ghost geometry** (#8): edit a sketch with an extrude on it, drag
       a corner: the 3D line mesh behind the canvas follows on release — no
       stale copy of the old outline until Finish Sketch.
-- [ ] **Settings survive code updates** (#9): pick a theme, run
+- [X] **Settings survive code updates** (#9): pick a theme, run
       `tools/run_tests.sh` and `HEADLESS=1 tools/run_rpc_tests.sh`, relaunch
       the app: the theme is unchanged (tests now write
       `user://settings.test.cfg`).

@@ -8,12 +8,13 @@ extends RefCounted
 ##   join     — unions into every body it touches (none touched: new body),
 ##   cut      — carves its shape out of every body it touches (none: no-op).
 ##
-## Single-part bodies mesh through the feature's build_mesh (synchronous,
-## exact, carries the edge-line overlay surface). Multi-part bodies bake
-## through the engine's CSG, whose brushes update deferred — the scratch
-## nodes must sit in the tree across one frame, so `build` is a COROUTINE
-## and takes a host node. Callers await it. Each feature supplies its own
-## exact mesh, CSG node and AABB (SolidFeature interface).
+## M38: bodies are computed by the Manifold kernel (SolidKernel → MeshSolid
+## in the vendored geometry addon): every part is a closed triangle mesh
+## tagged with face ids, booleans are exact and synchronous, and the result
+## carries the kernel solid + per-triangle face ids for pickers/exporters.
+## When the addon binary is missing on a platform the legacy engine-CSG
+## path runs instead (deferred brushes — one frame wait), which is why
+## `build` stays a COROUTINE taking a host node. Callers await it.
 
 
 ## The CSG coplanarity margin lives on SolidFeature now; re-exported here
@@ -22,15 +23,21 @@ const EPS_MM := SolidFeature.EPS_MM
 
 
 ## -> Array of {id: String (root feature id), name: String,
-##              mesh: ArrayMesh, feature_ids: Array[String]}
+##              mesh: ArrayMesh, feature_ids: Array[String],
+##              solid: MeshSolid|null, face_ids: PackedInt32Array}
 static func build(doc: CadDocument, host: Node) -> Array:
 	var bodies: Array = []
+	var ordinal := {}
+	for f in doc.features:
+		ordinal[(f as Feature).id] = ordinal.size() + 1
+		(f as Feature).rebuild_error = ""
 	for f in doc.live_features():
 		if not (f is SolidFeature):
 			continue
 		var ef := f as SolidFeature
 		var part := ef.solid_part(doc)
 		if part.is_empty():
+			ef.rebuild_error = "profile no longer resolves"
 			continue
 		match ef.operation:
 			SolidFeature.OP_JOIN:
@@ -51,57 +58,21 @@ static func build(doc: CadDocument, host: Node) -> Array:
 					(merged["parts"] as Array).append(part)
 					(merged["feature_ids"] as Array).append(ef.id)
 					merged["aabb"] = (merged["aabb"] as AABB).merge(part["aabb"])
-			SolidFeature.OP_CUT:
-				for bi in _touching(bodies, part["aabb"]):
+			SolidFeature.OP_CUT, SolidFeature.OP_INTERSECT:
+				var hit := _touching(bodies, part["aabb"])
+				if hit.is_empty():
+					ef.rebuild_error = "touches no body"
+				for bi in hit:
 					var b: Dictionary = bodies[bi]
 					(b["parts"] as Array).append(part)
 					(b["feature_ids"] as Array).append(ef.id)
 			_:
 				bodies.append(_new_body(part))
 
-	# Mesh every body. CSG bodies are all added to the tree first, then one
-	# frame's wait covers the whole batch.
-	var scratch: Array = []          # [{body, node}]
-	for b: Dictionary in bodies:
-		var parts: Array = b["parts"]
-		if parts.size() == 1:
-			var ef0: SolidFeature = parts[0]["feature"]
-			b["mesh"] = ef0.build_mesh(doc)
-		else:
-			var combiner := CSGCombiner3D.new()
-			# Never rendered: the combiner exists only to be baked, and a
-			# visible one paints the raw CSG brushes over the real body mesh
-			# for however many frames the bake takes (the z-fighting ghost of
-			# QA §M18.6, round two).
-			combiner.visible = false
-			for part: Dictionary in parts:
-				var ef_p: SolidFeature = part["feature"]
-				var node := ef_p.csg_node(part)
-				if ef_p.operation == SolidFeature.OP_CUT:
-					node.operation = CSGShape3D.OPERATION_SUBTRACTION
-				combiner.add_child(node)
-			host.add_child(combiner)
-			scratch.append({"body": b, "node": combiner})
-	if not scratch.is_empty():
-		await host.get_tree().process_frame
-		for s: Dictionary in scratch:
-			var combiner: CSGCombiner3D = s["node"]
-			var baked := combiner.bake_static_mesh()
-			# The CSG shape rebuilds via a deferred call after entering the
-			# tree; depending on when this build was kicked off (an undo, a
-			# coalesced rebuild, a fresh document load) one frame is not
-			# always enough and the bake comes back NULL or with no surfaces
-			# — which is how perfectly good bodies vanished after Ctrl+Z, and
-			# how an unguarded null aborted this coroutine mid-build and left
-			# `_bodies_building` stuck forever. Wait it out before believing
-			# "empty"; a null that survives the retries is treated as empty.
-			var tries := 0
-			while (baked == null or baked.get_surface_count() == 0) and tries < 8:
-				await host.get_tree().process_frame
-				baked = combiner.bake_static_mesh()
-				tries += 1
-			(s["body"] as Dictionary)["mesh"] = _finish_csg_mesh(baked)
-			combiner.queue_free()
+	if SolidKernel.available():
+		_mesh_bodies_kernel(doc, bodies, ordinal)
+	else:
+		await _mesh_bodies_csg(doc, bodies, host)
 
 	var out: Array = []
 	for b: Dictionary in bodies:
@@ -110,7 +81,8 @@ static func build(doc: CadDocument, host: Node) -> Array:
 			continue
 		var root_sf := doc.feature_by_id(String(b["id"])) as SolidFeature
 		out.append({"id": b["id"], "name": b["name"], "mesh": b["mesh"],
-			"feature_ids": b["feature_ids"],
+			"feature_ids": b["feature_ids"], "solid": b.get("solid"),
+			"face_ids": b.get("face_ids", PackedInt32Array()),
 			"color": root_sf.color if root_sf != null else Color(0, 0, 0, 0)})
 
 	# M32: moves + parametric copies, applied AFTER boolean resolution in
@@ -145,6 +117,7 @@ static func build(doc: CadDocument, host: Node) -> Array:
 				var tm := EdgeTreatFeature.build_combined(doc, root_ef, ets)
 				if tm != null:
 					bt["mesh"] = tm
+					_rekernel(bt, tm, int(ordinal.get(et.body, 0)))
 					for g in ets:
 						(bt["feature_ids"] as Array).append((g as Feature).id)
 					treated[et.body] = true
@@ -154,8 +127,9 @@ static func build(doc: CadDocument, host: Node) -> Array:
 				if String(b2["id"]) != tf.body:
 					continue
 				var center := (b2["mesh"] as ArrayMesh).get_aabb().get_center()
-				b2["mesh"] = transformed_mesh(b2["mesh"],
-					tf.transform3d(center))
+				var txf := tf.transform3d(center)
+				b2["mesh"] = transformed_mesh(b2["mesh"], txf)
+				_retransform(b2, txf)
 				(b2["feature_ids"] as Array).append(tf.id)
 		elif f is CopyBodyFeature:
 			var cf := f as CopyBodyFeature
@@ -164,22 +138,16 @@ static func build(doc: CadDocument, host: Node) -> Array:
 					continue
 				# Copies inherit the source color until they are given one of
 				# their own (QA §M32.5).
-				out.append({"id": cf.id, "name": cf.name,
-					"mesh": transformed_mesh(b3["mesh"],
-						Transform3D(Basis.IDENTITY, cf.translation)),
-					"feature_ids": [cf.id], "color": cf.color \
-						if cf.color.a > 0.0 \
-						else b3.get("color", Color(0, 0, 0, 0))})
+				var cxf := Transform3D(Basis.IDENTITY, cf.translation)
+				out.append(_derived(b3, cf.id, cf.name, cxf, cf.color \
+					if cf.color.a > 0.0 else b3.get("color", Color(0, 0, 0, 0))))
 		elif f is MirrorBodyFeature:
 			var mf := f as MirrorBodyFeature
 			for b4: Dictionary in out.duplicate():
 				if String(b4["id"]) != mf.source:
 					continue
-				out.append({"id": mf.id, "name": mf.name,
-					"mesh": transformed_mesh(b4["mesh"],
-						mf.mirror_transform()),
-					"feature_ids": [mf.id], "color": b4.get("color",
-						Color(0, 0, 0, 0))})
+				out.append(_derived(b4, mf.id, mf.name, mf.mirror_transform(),
+					b4.get("color", Color(0, 0, 0, 0))))
 		elif f is PatternBodyFeature:
 			var pf := f as PatternBodyFeature
 			for b5: Dictionary in out.duplicate():
@@ -187,12 +155,96 @@ static func build(doc: CadDocument, host: Node) -> Array:
 					continue
 				var xfs := pf.instance_transforms()
 				for k in xfs.size():
-					out.append({"id": "%s:%d" % [pf.id, k + 1],
-						"name": "%s %d" % [pf.name, k + 1],
-						"mesh": transformed_mesh(b5["mesh"], xfs[k]),
-						"feature_ids": [pf.id], "color": b5.get("color",
-							Color(0, 0, 0, 0))})
+					out.append(_derived(b5, "%s:%d" % [pf.id, k + 1],
+						"%s %d" % [pf.name, k + 1], xfs[k],
+						b5.get("color", Color(0, 0, 0, 0))))
 	return out
+
+
+## M38: Manifold path. Every part becomes a kernel solid tagged with its
+## feature's face ids; parts fold into the body in timeline order with the
+## feature's operation. A part the kernel rejects (open mesh) fails ITS OWN
+## feature — rebuild_error set, the body keeps building without it — instead
+## of poisoning the body.
+static func _mesh_bodies_kernel(doc: CadDocument, bodies: Array, ordinal: Dictionary) -> void:
+	for b: Dictionary in bodies:
+		var solid: RefCounted = null
+		for part: Dictionary in (b["parts"] as Array):
+			var ef: SolidFeature = part["feature"]
+			var km := ef.kernel_mesh(doc, part)
+			var ps := SolidKernel.from_mesh(km, int(ordinal.get(ef.id, 0)))
+			if ps == null:
+				ef.rebuild_error = SolidKernel.last_error
+				continue
+			if solid == null:
+				if ef.operation == SolidFeature.OP_CUT \
+						or ef.operation == SolidFeature.OP_INTERSECT:
+					continue
+				solid = ps
+			else:
+				var res := SolidKernel.boolean(solid, ps, ef.operation)
+				if not SolidKernel.is_valid(res):
+					# A cut that consumes the whole body legitimately leaves
+					# nothing (the body vanishes); an intersect with no
+					# overlap is the feature's error and the body is kept.
+					if ef.operation == SolidFeature.OP_INTERSECT:
+						ef.rebuild_error = "no overlap with the body"
+						continue
+					if ef.operation == SolidFeature.OP_JOIN:
+						ef.rebuild_error = "join produced nothing"
+						continue
+				solid = res
+		var tm := SolidKernel.to_mesh(solid)
+		b["mesh"] = tm["mesh"]
+		b["face_ids"] = tm["face_ids"]
+		b["solid"] = solid
+
+
+## Legacy path (no kernel binary on this platform): bake through the
+## engine's CSG, whose brushes update deferred — the scratch nodes must sit
+## in the tree across one frame, so this is a coroutine.
+static func _mesh_bodies_csg(doc: CadDocument, bodies: Array, host: Node) -> void:
+	# Mesh every body. CSG bodies are all added to the tree first, then one
+	# frame's wait covers the whole batch.
+	var scratch: Array = []          # [{body, node}]
+	for b: Dictionary in bodies:
+		var parts: Array = b["parts"]
+		if parts.size() == 1:
+			var ef0: SolidFeature = parts[0]["feature"]
+			b["mesh"] = ef0.build_mesh(doc)
+		else:
+			var combiner := CSGCombiner3D.new()
+			# Never rendered: the combiner exists only to be baked, and a
+			# visible one paints the raw CSG brushes over the real body mesh
+			# for however many frames the bake takes (the z-fighting ghost of
+			# QA §M18.6, round two).
+			combiner.visible = false
+			for part: Dictionary in parts:
+				var ef_p: SolidFeature = part["feature"]
+				var node := ef_p.csg_node(part)
+				if ef_p.operation == SolidFeature.OP_CUT:
+					node.operation = CSGShape3D.OPERATION_SUBTRACTION
+				elif ef_p.operation == SolidFeature.OP_INTERSECT:
+					node.operation = CSGShape3D.OPERATION_INTERSECTION
+				combiner.add_child(node)
+			host.add_child(combiner)
+			scratch.append({"body": b, "node": combiner})
+	if not scratch.is_empty():
+		await host.get_tree().process_frame
+		for s: Dictionary in scratch:
+			var combiner: CSGCombiner3D = s["node"]
+			var baked := combiner.bake_static_mesh()
+			# The CSG shape rebuilds via a deferred call after entering the
+			# tree; one frame is not always enough and the bake comes back
+			# NULL or with no surfaces. Wait it out before believing
+			# "empty"; a null that survives the retries is treated as empty.
+			var tries := 0
+			while (baked == null or baked.get_surface_count() == 0) and tries < 8:
+				await host.get_tree().process_frame
+				baked = combiner.bake_static_mesh()
+				tries += 1
+			(s["body"] as Dictionary)["mesh"] = _finish_csg_mesh(baked)
+			combiner.queue_free()
 
 
 ## A copy of `mesh` with `xf` baked into vertices and normals; surface
@@ -256,6 +308,40 @@ static func all_new_body(doc: CadDocument) -> bool:
 				and (f as SolidFeature).operation != SolidFeature.OP_NEW_BODY:
 			return false
 	return true
+
+
+## A body derived from `src` by `xf` (copy / mirror / pattern instance):
+## mesh and kernel solid both transformed, face ids carried over.
+static func _derived(src: Dictionary, id: String, name: String, xf: Transform3D,
+		color: Color) -> Dictionary:
+	var d := {"id": id, "name": name,
+		"mesh": transformed_mesh(src["mesh"], xf),
+		"feature_ids": [id], "color": color,
+		"solid": null, "face_ids": src.get("face_ids", PackedInt32Array())}
+	_retransform(d, xf, src.get("solid"))
+	return d
+
+
+static func _retransform(b: Dictionary, xf: Transform3D, from: Variant = null) -> void:
+	var solid: Variant = from if from != null else b.get("solid")
+	if solid == null:
+		return
+	b["solid"] = SolidKernel.transformed(solid, xf)
+
+
+## Replace a body's mesh with one regenerated through the kernel (so face
+## ids + edge overlay match the rest); falls back to `mesh` as-is when the
+## kernel rejects it.
+static func _rekernel(b: Dictionary, mesh: ArrayMesh, ordinal: int) -> void:
+	if not SolidKernel.available():
+		return
+	var solid := SolidKernel.from_mesh(mesh, ordinal)
+	if solid == null:
+		return
+	var tm := SolidKernel.to_mesh(solid)
+	b["mesh"] = tm["mesh"]
+	b["face_ids"] = tm["face_ids"]
+	b["solid"] = solid
 
 
 static func _new_body(part: Dictionary) -> Dictionary:

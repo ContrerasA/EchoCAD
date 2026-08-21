@@ -707,7 +707,9 @@ func _cmd_query_control(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant
 		r.position += Vector2(w.position)
 	var out := {"rect": [r.position.x, r.position.y, r.size.x, r.size.y],
 		"visible": node.is_visible_in_tree(),
-		"disabled": node.disabled if node is BaseButton else false}
+		"disabled": node.disabled if node is BaseButton else false,
+		"variation": String(node.theme_type_variation),
+		"tooltip": node.tooltip_text}
 	# What the control SAYS, so a client can assert the status bar / a button
 	# face without screenshotting and reading pixels.
 	if node is Label:
@@ -848,13 +850,35 @@ func _cmd_query_bodies(_a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant
 	for b: Dictionary in await BodyBuilder.build(app.doc, app):
 		var mesh: ArrayMesh = b["mesh"]
 		var box := mesh.get_aabb()
-		out.append({"id": b["id"], "name": b["name"],
+		var row := {"id": b["id"], "name": b["name"],
 			"features": b["feature_ids"],
 			"volume": BodyBuilder.mesh_volume(mesh),
 			"aabb": [box.position.x, box.position.y, box.position.z,
-				box.size.x, box.size.y, box.size.z]})
+				box.size.x, box.size.y, box.size.z]}
+		# M38: kernel facts — watertightness is the kernel's guarantee, the
+		# face census tells a test which features' faces survived.
+		var solid: Variant = b.get("solid")
+		if solid != null:
+			row["watertight"] = bool(solid.call("is_valid"))
+			row["genus"] = int(solid.call("genus"))
+			row["surface_area"] = float(solid.call("surface_area"))
+			var feats := {}
+			for f in (b.get("face_ids", PackedInt32Array()) as PackedInt32Array):
+				feats[str(f >> SolidKernel.FACE_SHIFT)] = true
+			row["face_features"] = feats.keys()
+		out.append(row)
 	_reply(p, id, {"bodies": out})
 	return null
+
+
+## M38: which kernel computes bodies, plus every feature's rebuild error.
+func _cmd_query_kernel(_a: Dictionary, _p: StreamPeerTCP, _id: Variant) -> Dictionary:
+	var errors := {}
+	for f in app.doc.features:
+		if (f as Feature).rebuild_error != "":
+			errors[(f as Feature).id] = (f as Feature).rebuild_error
+	return {"kernel": SolidKernel.kernel_name(),
+		"manifold": SolidKernel.available(), "errors": errors}
 
 
 func _cmd_action_set_marker(a: Dictionary, _p: StreamPeerTCP, _id: Variant) -> Dictionary:

@@ -10,6 +10,11 @@ var id: String = ""
 var name: String = ""
 var suppressed := false
 
+## M38: why the last rebuild could not compute this feature ("" = fine).
+## Transient — set by BodyBuilder every build, never serialized; the
+## timeline paints a chip red and shows this as its tooltip.
+var rebuild_error := ""
+
 ## Weak back-reference to the owning document (set by CadDocument.attach),
 ## so features that reference OTHER features — a sketch on a construction
 ## plane, an offset plane chained on another — can resolve them. Weak to

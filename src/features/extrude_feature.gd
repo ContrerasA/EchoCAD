@@ -49,6 +49,24 @@ static func from_dict(d: Dictionary) -> ExtrudeFeature:
 ## Build the solid mesh from the CURRENT sketch state. null when the
 ## profile no longer exists.
 func build_mesh(doc: CadDocument) -> ArrayMesh:
+	return _prism_mesh(doc, 0.0, distance, 0.0)
+
+
+## M38: the solid the kernel booleans with. Cut prisms overshoot both caps
+## by EPS_MM so a cut flush with the target's cap removes it cleanly; the
+## overshoot lies outside the body, so the cut's dimensions stay exact (no
+## sideways growth — coplanar walls are the kernel's job, see
+## SolidKernel.TOLERANCE_MM).
+func kernel_mesh(doc: CadDocument, _part: Dictionary) -> ArrayMesh:
+	if operation != OP_CUT:
+		return build_mesh(doc)
+	var s := 1.0 if distance >= 0.0 else -1.0
+	return _prism_mesh(doc, -EPS_MM * s, distance + EPS_MM * s, 0.0)
+
+
+## The prism between plane offsets `lo` and `hi` (signed, along the plane
+## normal) with the outer loop grown by `grow` mm (holes shrunk by it).
+func _prism_mesh(doc: CadDocument, lo: float, hi: float, grow: float) -> ArrayMesh:
 	var sf := doc.sketch_feature(sketch_id)
 	if sf == null:
 		return null
@@ -67,12 +85,28 @@ func build_mesh(doc: CadDocument) -> ArrayMesh:
 	# gets its own wall loop. Hole loops walk CW so the shared wall code winds
 	# their faces toward the cavity — outward for the solid.
 	var holes_cw: Array = []
-	for h in (prof.get("holes", []) as Array):
+	var holes_src: Array = prof.get("holes", [])
+	if grow != 0.0:
+		var g := offset_ring(poly, grow)
+		if g.size() >= 3:
+			poly = g
+			if _signed_area(poly) < 0.0:
+				poly.reverse()
+		var kept: Array = []
+		for h in holes_src:
+			var hc := (h as PackedVector2Array).duplicate()
+			if _signed_area(hc) < 0.0:
+				hc.reverse()
+			var hh := offset_ring(hc, -grow)
+			if hh.size() >= 3:
+				kept.append(hh)
+		holes_src = kept
+	for h in holes_src:
 		var hp := (h as PackedVector2Array).duplicate()
 		if _signed_area(hp) > 0.0:
 			hp.reverse()
 		holes_cw.append(hp)
-	var tri := ProfileFinder.triangulate_with_holes(poly, prof.get("holes", []))
+	var tri := ProfileFinder.triangulate_with_holes(poly, holes_src)
 	var cap_pts: PackedVector2Array = tri["points"]
 	var indices: PackedInt32Array = tri["indices"]
 	if indices.is_empty():
@@ -81,21 +115,22 @@ func build_mesh(doc: CadDocument) -> ArrayMesh:
 	# `n` is the OUTWARD direction of the top cap: the plane normal for a
 	# positive distance, its negation for a negative one. The top verts use
 	# the true signed offset along the plane normal either way.
-	var n: Vector3 = xf.basis.z if distance >= 0.0 else -xf.basis.z
-	var offset: Vector3 = xf.basis.z * distance
+	var n: Vector3 = xf.basis.z if hi >= lo else -xf.basis.z
+	var offset: Vector3 = xf.basis.z * hi
+	var base: Vector3 = xf.basis.z * lo
 	var verts := PackedVector3Array()
 	var normals := PackedVector3Array()
 
 	var top := func(p: Vector2) -> Vector3:
 		return xf * Vector3(p.x, p.y, 0.0) + offset
 	var bot := func(p: Vector2) -> Vector3:
-		return xf * Vector3(p.x, p.y, 0.0)
+		return xf * Vector3(p.x, p.y, 0.0) + base
 
 	# Caps (plane-level cap faces -n, offset cap faces +n; `n` is the outward
 	# direction of the OFFSET cap, so a negative distance mirrors the
 	# windings). Flat normals per face — without a normal array the lighting
 	# has nothing to shade by and the whole solid renders as one flat tone.
-	var flip := distance < 0.0
+	var flip := hi < lo
 	for t in range(0, indices.size(), 3):
 		var fwd: Array = [cap_pts[indices[t]], cap_pts[indices[t + 1]],
 			cap_pts[indices[t + 2]]]

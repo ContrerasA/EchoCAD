@@ -10,6 +10,8 @@ extends Feature
 const OP_NEW_BODY := "new_body"
 const OP_JOIN := "join"
 const OP_CUT := "cut"
+## M38/M39: keep only the overlap with the touched bodies (kernel only).
+const OP_INTERSECT := "intersect"
 
 var operation := OP_NEW_BODY
 
@@ -37,6 +39,16 @@ func _read_base(d: Dictionary) -> void:
 ## longer resolves.
 func build_mesh(_doc: CadDocument) -> ArrayMesh:
 	return null
+
+
+## M38: the closed triangle mesh the Manifold kernel booleans with (surface
+## 0 = triangles). Defaults to the exact mesh; cut features override to
+## overshoot coplanar faces by EPS_MM. `part` is this feature's solid_part.
+func kernel_mesh(doc: CadDocument, part: Dictionary) -> ArrayMesh:
+	var m: Variant = part.get("mesh")
+	if m is ArrayMesh:
+		return m
+	return build_mesh(doc)
 
 
 ## Everything BodyBuilder needs to boolean this feature: at least

@@ -116,7 +116,9 @@ changes them through the tokens above, code opts in with
 
 `ToolButton` (every ribbon button; `BigToolButton` / `SmallToolButton`
 are aliases of it), `FlyoutButton` (rows in a stack's flyout), `HudButton`, `PrimaryButton`,
-`TimelineChip`, `MenuBarButton`, `CaptionLabel`, `HeaderLabel`,
+`TimelineChip` (`TimelineChipActive` = the sketch being edited,
+`TimelineChipError` = a feature that failed to compute, reason in its
+tooltip — border + label in `error`), `MenuBarButton`, `CaptionLabel`, `HeaderLabel`,
 `StatusLabel`, `StatusKeyLabel`, `StatusIdLabel`, `DimLabel`, `BrandLabel`, `Ribbon`,
 `MenuBarPanel`, `SidePanel`, `PanelHeader`, `HudPanel`, `TimelinePanel`,
 `StatusPanel`, `Divider`. `Window` additionally carries

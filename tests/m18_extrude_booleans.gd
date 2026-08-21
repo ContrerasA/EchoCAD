@@ -130,11 +130,10 @@ func _run() -> bool:
 	vols = await _volumes()
 	if vols.size() != 1:
 		return _fail("cut should leave 1 body, got %d" % vols.size())
-	# Cut prisms are inflated EPS_MM sideways (coplanar-skin defence), so an
-	# interior 10x10 through-cut removes (10+2*EPS)^2 * 10.
-	var cut_side := 10.0 + 2.0 * BodyBuilder.EPS_MM
-	var want_cut := 12000.0 - cut_side * cut_side * 10.0
-	if absf(float(vols[0]) - want_cut) > 5.0:
+	# M38: cuts are EXACT — the kernel needs no sideways inflation, so an
+	# interior 10x10 through-cut removes exactly 10*10*10.
+	var want_cut := 12000.0 - 1000.0
+	if absf(float(vols[0]) - want_cut) > 0.01:
 		return _fail("cut volume wrong: %f (want %f)" % [float(vols[0]), want_cut])
 
 	# Undo removes the cut; redo restores it.
@@ -205,18 +204,16 @@ func _run() -> bool:
 
 	# Flush-edge cut (QA §M18.3 follow-up): the pocket shares an edge with the
 	# plate's outer boundary — the coplanar side wall must NOT leave a roof
-	# skin, and the sideways inflation makes the notch open cleanly. Removed:
-	# x spans the full inflated width (interior), y is clipped by the plate
-	# edge at 30 so only EPS of the overhang lands inside.
+	# skin; the kernel's tolerance merges the coincident walls so the notch
+	# opens cleanly and removes exactly 10*10*10.
 	var f9b := _sketch_rect("XY", Vector2(25, 20), Vector2(35, 30))
 	_root.finish_sketch()
 	if _root.extrude(f9b, Vector2(30, 25), 12.0, ExtrudeFeature.OP_CUT) == "":
 		return _fail("flush-edge cut refused")
 	await _idle()
 	vols = await _volumes()
-	var want_flush := want_cut \
-		- (10.0 + 2.0 * BodyBuilder.EPS_MM) * (10.0 + BodyBuilder.EPS_MM) * 10.0
-	if vols.size() != 1 or absf(float(vols[0]) - want_flush) > 5.0:
+	var want_flush := want_cut - 1000.0
+	if vols.size() != 1 or absf(float(vols[0]) - want_flush) > 0.01:
 		return _fail("flush-edge cut volume wrong: %s (want %f)"
 			% [str(vols), want_flush])
 

@@ -197,8 +197,13 @@ func _run() -> bool:
 	for b in after:
 		if String(b["id"]) == spid:
 			spline_vol_after = BodyBuilder.mesh_volume(b["mesh"])
-	if absf(spline_vol_after - spline_vol_before) > spline_vol_before * 0.01:
-		return _fail("cut bled into an unrelated body")
+	# M38: the cone cut genuinely passes through the spline sweep (x 60..100,
+	# z 0..30 crosses the tube) — the old CSG missed it; the exact kernel
+	# carves it, and only it: volume drops but the body survives.
+	if spline_vol_after >= spline_vol_before or spline_vol_after < spline_vol_before * 0.5:
+		return _fail("cut should carve the overlapping sweep too (%f -> %f)"
+			% [spline_vol_before, spline_vol_after])
+		return _fail("cut bled into an unrelated body (%f -> %f)" % [spline_vol_before, spline_vol_after])
 	_root.stack.undo()
 
 	# --- serialization -----------------------------------------------------

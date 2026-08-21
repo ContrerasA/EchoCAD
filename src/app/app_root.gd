@@ -187,6 +187,7 @@ var _calib_picks: Array = []
 var _calib_dialog: Window = null
 var _calib_dist: LineEdit = null
 var _status_mode: Label
+var _status_kernel: Label
 var _status_hint: Label
 ## Wall-clock ms until which a posted hint outranks the cursor readout.
 var _hint_hold_until_ms := 0
@@ -927,7 +928,9 @@ func _build_ui() -> void:
 	# they do, or the browser shows stale rows (deferred: the rebuild can be
 	# triggered from inside a Tree mouse callback, where refresh must not run).
 	world.bodies_rebuilt.connect(func() -> void:
-		browser.refresh.call_deferred())
+		browser.refresh.call_deferred()
+		# Rebuild errors (M38) live on the features — repaint the chips.
+		timeline.refresh.call_deferred())
 	# The rig emitted `moved` from its own _ready, before the connect above.
 	world.set_grid_unit(doc.display_unit)
 	world.update_grid(rig.view_height_mm(), rig.target)
@@ -1597,8 +1600,21 @@ func _build_status_bar(parent: Control) -> void:
 	_status_zoom = _label(status, "")
 	_status_zoom.name = "StatusZoom"
 	_status_zoom.theme_type_variation = "StatusKeyLabel"
+	# M38: which solid kernel computes bodies. Silent when Manifold is
+	# loaded; a visible badge when a platform fell back to the engine CSG.
+	_status_kernel = _label(status, "")
+	_status_kernel.name = "StatusKernel"
+	_status_kernel.theme_type_variation = "StatusLabel"
+	if not SolidKernel.available():
+		_status_kernel.text = "LEGACY KERNEL"
+		_status_kernel.tooltip_text = ("The Manifold kernel binary is missing "
+			+ "for this platform — booleans run through the engine CSG "
+			+ "(slower, approximate).")
+		_status_kernel.mouse_filter = Control.MOUSE_FILTER_STOP
+	else:
+		_status_kernel.visible = false
 	for l in [_status_mode, _status_hint, _status_ids, _status_measure,
-			_status_dof, _status_zoom]:
+			_status_dof, _status_kernel, _status_zoom]:
 		(l as Label).vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 
 
