@@ -76,6 +76,7 @@ func _drag(from: Vector2, delta: Vector2) -> void:
 func _run() -> bool:
 	_root.size = Vector2(1280, 800)
 	var sid := _root.create_sketch("XY")
+	_root.sketch_view.set_view(Vector2.ZERO, 4.0)
 	var sk: Sketch = _root.doc.sketch_feature(sid).sketch
 	_root.snap.grid_enabled = false
 

@@ -289,6 +289,7 @@ func _run() -> bool:
 	await _idle()
 	var lpl := _root.create_offset_plane("XY", 20.0)
 	var ls2 := _root.create_sketch(lpl)
+	_root.sketch_view.set_view(Vector2.ZERO, 4.0)
 	_root.tools.set_active("circle")
 	_click(Vector2(0, 0))
 	_click(Vector2(5, 0))

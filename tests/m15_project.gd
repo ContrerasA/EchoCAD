@@ -29,12 +29,14 @@ func _run() -> bool:
 
 	# --- source sketch S1 on XY: a rectangle -------------------------------
 	var sid1 := _root.create_sketch("XY")
+	_root.sketch_view.set_view(Vector2.ZERO, 4.0)
 	var sk1: Sketch = _root.doc.sketch_feature(sid1).sketch
 	var corner_ids := _rect(sk1, Vector2(10, 10), Vector2(50, 40))
 	_root.finish_sketch()
 
 	# --- target sketch S2 on the same plane --------------------------------
 	var sid2 := _root.create_sketch("XY")
+	_root.sketch_view.set_view(Vector2.ZERO, 4.0)
 	var sk2: Sketch = _root.doc.sketch_feature(sid2).sketch
 	if _root.reference_features().size() != 1:
 		return _fail("S1 should be S2's reference")
@@ -116,6 +118,7 @@ func _run() -> bool:
 	# --- cross-plane rules --------------------------------------------------
 	_root.finish_sketch()
 	var sid3 := _root.create_sketch("XZ")
+	_root.sketch_view.set_view(Vector2.ZERO, 4.0)
 	var feat3 := _root.doc.sketch_feature(sid3)
 	var feat1 := _root.doc.sketch_feature(sid1)
 	var r := Projector.build(feat3, feat1, pl.link_entity)
@@ -141,6 +144,7 @@ func _run() -> bool:
 
 	# --- projected geometry forms profiles (extrudable) --------------------
 	var sid4 := _root.create_sketch("XY")
+	_root.sketch_view.set_view(Vector2.ZERO, 4.0)
 	var feat4 := _root.doc.sketch_feature(sid4)
 	var sk4: Sketch = feat4.sketch
 	for e in sk1.entities():

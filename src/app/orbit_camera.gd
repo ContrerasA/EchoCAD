@@ -356,6 +356,13 @@ func fit_bounds(aabb: AABB) -> void:
 	_apply()
 
 
+## Eye distance at which the perspective frustum spans `height_mm` vertically.
+func distance_for_height(height_mm: float) -> float:
+	if camera == null:
+		return distance
+	return height_mm / (2.0 * tan(deg_to_rad(camera.fov) * 0.5))
+
+
 ## How much world the view spans vertically, in mm.
 ##
 ## Grid density has to key off THIS rather than off `distance`. Under a

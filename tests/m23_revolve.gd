@@ -108,6 +108,7 @@ func _run() -> bool:
 
 	# --- D: a LINE entity as the axis (drawn at x=0, below the profile).
 	_root.edit_sketch(s1)
+	_root.sketch_view.set_view(Vector2.ZERO, 4.0)
 	_root.tools.set_active("line")
 	_click(Vector2(0, -8))
 	_click(Vector2(0, -4))
@@ -139,6 +140,7 @@ func _run() -> bool:
 
 	# --- F: ring with a hole revolves into ring-minus-torus.
 	_root.edit_sketch(s1)
+	_root.sketch_view.set_view(Vector2.ZERO, 4.0)
 	_root.tools.set_active("circle")
 	_click(Vector2(25, 5))
 	_click(Vector2(27, 5))

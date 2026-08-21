@@ -2482,17 +2482,23 @@ func edit_sketch(feature_id: String) -> void:
 	sketch_orbit = false
 	timeline.refresh()   # the active sketch's chip lights up (M36)
 	sketch_view.grid_unit = doc.display_unit
-	sketch_view.set_view(Vector2.ZERO, 4.0)
+	# Carry the 3D framing into the sketch (CHANGES #3): the canvas opens
+	# centred on where the camera was looking, at the zoom the model view
+	# had, instead of snapping to origin @ 4 px/mm every time.
+	var xf := feat.plane_transform()
+	var entry := _sketch_entry_view(xf)
+	sketch_view.set_view(entry["pan"], entry["zoom"])
 	sketch_view.show_sketch(feat.sketch, reference_sketches())
 	# Fly the 3D camera square onto the plane FIRST, then swap in the 2D
 	# canvas. Showing it up front would paint over the animation, which is
 	# what made the transition read as an instant snap.
 	# The grid moves onto the plane being drawn on, so the 3D scene behind the
 	# canvas agrees with it — and so it is already right for the fly-in.
-	var xf := feat.plane_transform()
 	world.set_grid_plane(feat.plane, xf)
 	world.set_grid_unit(doc.display_unit)
-	rig.frame_view(xf.basis.z, xf.basis.y, xf.origin, 500.0)
+	var pan: Vector2 = entry["pan"]
+	rig.frame_view(xf.basis.z, xf.basis.y, xf * Vector3(pan.x, pan.y, 0.0),
+		entry["distance"])
 	_after_camera_move(func() -> void:
 		if mode == Mode.SKETCH:
 			sketch_view.visible = true
@@ -2511,6 +2517,25 @@ func edit_sketch(feature_id: String) -> void:
 	sketch_view.mark_dirty()
 	mode_changed.emit(mode)
 	_refresh_ui()
+
+
+## Where the canvas should open so the sketch matches the 3D view the user
+## was just in: pan = the camera target dropped onto the plane, zoom = the
+## px/mm the model view showed, distance = the eye standoff that keeps that
+## height under the current projection. Falls back to origin @ 4 px/mm when
+## the viewport has no size yet (headless before the first frame).
+func _sketch_entry_view(xf: Transform3D) -> Dictionary:
+	var local := xf.affine_inverse() * rig.target
+	var pan := Vector2(local.x, local.y)
+	var vh_mm := rig.view_height_mm()
+	var vp_h := float(_viewport.size.y) if _viewport != null else 0.0
+	var zoom := 4.0
+	if vp_h > 0.0 and vh_mm > 0.0:
+		zoom = vp_h / vh_mm
+	var dist := rig.distance
+	if not rig.is_orthographic():
+		dist = rig.distance_for_height(vh_mm)
+	return {"pan": pan, "zoom": zoom, "distance": dist}
 
 
 ## Run `done` when the rig's current move finishes — right away when there is
@@ -4747,7 +4772,13 @@ func _on_sketch_orbit_request(screen: Vector2) -> void:
 	# The in-edit sketch gets the same 3D line-mesh treatment as every other
 	# live sketch — the world's meshes may be stale mid-edit, so rebuild now.
 	world.rebuild_sketches(doc)
-	rig.to_perspective_preserving()
+	# Off-axis the sketch follows the model-mode projection preference:
+	# an ortho user stays ortho while orbiting (CHANGES #3); otherwise
+	# perspective with the apparent size preserved.
+	if ThemeService.model_ortho:
+		rig.set_projection_ortho(true)
+	else:
+		rig.to_perspective_preserving()
 	rig.begin_orbit(screen)
 	_refresh_ui()
 
