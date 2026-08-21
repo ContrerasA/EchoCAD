@@ -93,7 +93,9 @@ Rules:
 **Sketch ink** — `ink_free` (under-constrained), `ink_constrained`,
 `ink_construction`, `ink_projected`, `ink_reference`, `region_fill`,
 `dim_line`, `dim_driven`, `constraint_ok`, `constraint_unsolved`,
-`constraint_redundant`, `constraint_conflict`, `constraint_selected`
+`constraint_redundant`, `constraint_conflict`, `constraint_selected`,
+`sk_point` (vertex markers — pick one that reads against `sketch_bg`),
+`sk_selected` (selection outline), `sk_hover` (hover pre-highlight)
 
 ## Metrics
 

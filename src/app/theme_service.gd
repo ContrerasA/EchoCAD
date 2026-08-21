@@ -91,6 +91,8 @@ const FALLBACK_COLORS := {
 	"constraint_ok": "#7fc97f", "constraint_unsolved": "#c2c6cf",
 	"constraint_redundant": "#d9a040", "constraint_conflict": "#de6358",
 	"constraint_selected": "#ffd94d",
+	# point markers + selection/hover outlines in the sketch overlay
+	"sk_point": "#d9e0f2", "sk_selected": "#ffd94d", "sk_hover": "#ffd94d80",
 }
 
 const FALLBACK_METRICS := {
@@ -733,6 +735,15 @@ static func build_theme() -> Theme:
 	t.set_constant("close_v_offset", "Window", th - 8)
 	for cls in ["AcceptDialog", "ConfirmationDialog", "FileDialog"]:
 		t.set_stylebox("panel", cls, _fill(col("panel_alt"), 8.0))
+	# The engine's FileDialog glyphs (folder, file, back/forward/up, reload,
+	# hidden-files, new-folder…) are white: invisible on a light panel. Re-tint
+	# every one of them to the theme's text ink.
+	var dflt := ThemeDB.get_default_theme()
+	for nm in dflt.get_icon_list("FileDialog"):
+		t.set_icon(nm, "FileDialog", _tinted(dflt.get_icon(nm, "FileDialog"), text))
+	t.set_color("folder_icon_color", "FileDialog", col("accent"))
+	t.set_color("file_icon_color", "FileDialog", text)
+	t.set_color("file_disabled_color", "FileDialog", col("text_faint"))
 	t.set_stylebox("panel", "PopupMenu", _flat(col("panel"), col("border_soft"),
 		radius, Vector2(4, 4)))
 	t.set_color("font_color", "PopupMenu", text)
@@ -798,8 +809,27 @@ static func build_theme() -> Theme:
 	hsep.color = col("divider")
 	t.set_stylebox("separator", "HSeparator", hsep)
 	t.set_color("font_color", "ProgressBar", text)
+	# ItemList (FileDialog's file + favourites lists). Left to engine defaults
+	# the hover/selected bands are pale grey with white text — unreadable on a
+	# light theme — so mirror the Tree treatment.
 	t.set_color("font_color", "ItemList", text)
 	t.set_stylebox("panel", "ItemList", _fill(col("field"), 4.0))
+	t.set_stylebox("focus", "ItemList", _empty())
+	t.set_stylebox("cursor", "ItemList", _empty())
+	t.set_stylebox("cursor_unfocused", "ItemList", _empty())
+	var isel := _fill(col("selection"))
+	isel.border_color = col("accent")
+	isel.border_width_left = 2
+	t.set_stylebox("selected", "ItemList", isel)
+	t.set_stylebox("selected_focus", "ItemList", isel)
+	t.set_stylebox("hovered_selected", "ItemList", isel)
+	t.set_stylebox("hovered_selected_focus", "ItemList", isel)
+	t.set_stylebox("hovered", "ItemList", _fill(col("btn_hover")))
+	t.set_color("font_selected_color", "ItemList", col("text_strong"))
+	t.set_color("font_hovered_color", "ItemList", col("text_strong"))
+	t.set_color("font_hovered_selected_color", "ItemList", col("text_strong"))
+	t.set_color("guide_color", "ItemList", Color.TRANSPARENT)
+	t.set_font_size("font_size", "ItemList", font_size("small"))
 	t.set_stylebox("panel", "ScrollContainer", _empty())
 	t.set_stylebox("panel", "TabContainer", _fill(col("panel")))
 	t.set_stylebox("grabber", "VScrollBar", _flat(col("btn_hover"),
@@ -807,6 +837,25 @@ static func build_theme() -> Theme:
 	t.set_stylebox("grabber", "HScrollBar", _flat(col("btn_hover"),
 		Color.TRANSPARENT, 2.0, Vector2(0, 0)))
 	return t
+
+
+## A copy of `tex` with its RGB multiplied by `c` (alpha kept). Used to
+## re-ink the engine's white default glyphs for whichever theme is active.
+static func _tinted(tex: Texture2D, c: Color) -> Texture2D:
+	if tex == null:
+		return null
+	var img := tex.get_image()
+	if img == null:
+		return tex
+	img = img.duplicate()
+	if img.is_compressed():
+		img.decompress()
+	img.convert(Image.FORMAT_RGBA8)
+	for y in img.get_height():
+		for x in img.get_width():
+			var px := img.get_pixel(x, y)
+			img.set_pixel(x, y, Color(px.r * c.r, px.g * c.g, px.b * c.b, px.a * c.a))
+	return ImageTexture.create_from_image(img)
 
 
 ## Title-bar close glyph: a thin × in the given color.

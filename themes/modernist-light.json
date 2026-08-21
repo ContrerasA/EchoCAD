@@ -65,6 +65,9 @@
     "dim_line":            "#2d2b2b",
     "dim_driven":          "#7d7979",
     "constraint_unsolved": "#5a5d66",
-    "constraint_selected": "#b58a00"
+    "constraint_selected": "#b58a00",
+    "sk_point":            "#3b74c4",
+    "sk_selected":         "#d98c00",
+    "sk_hover":            "#d98c00*0.5"
   }
 }

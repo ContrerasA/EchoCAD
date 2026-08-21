@@ -202,7 +202,7 @@ func draw_overlay(overlay: Control) -> void:
 	var v := view()
 	if _hover_axis != "":
 		# Origin-axis pre-highlight: the axis a click would mirror about.
-		var col := Color(1.0, 0.85, 0.3, 0.5)
+		var col := AppRoot.COLOR_HOVER()
 		var half := 100000.0
 		var a := Vector2(-half, 0.0) if _hover_axis == "x" else Vector2(0.0, -half)
 		overlay.draw_line(v.world_to_screen(a), v.world_to_screen(-a), col, 3.0)

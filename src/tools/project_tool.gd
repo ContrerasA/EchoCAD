@@ -66,4 +66,4 @@ func draw_overlay(_overlay: Control) -> void:
 	var e := sf.sketch.entity(String(_target["eid"]))
 	if e != null:
 		# Same outline the selection highlight uses, drawn on the app overlay.
-		app._draw_entity_outline(sf.sketch, e, AppRoot.COLOR_HOVER, 3.0)
+		app._draw_entity_outline(sf.sketch, e, AppRoot.COLOR_HOVER(), 3.0)

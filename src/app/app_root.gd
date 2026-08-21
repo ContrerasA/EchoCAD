@@ -12,10 +12,12 @@ enum Mode { MODEL, SKETCH }
 const BUILD := "2026-08-16-r4"
 
 ## Editor chrome colours.
-const COLOR_SELECTED := Color(1.0, 0.85, 0.3)
+static func COLOR_SELECTED() -> Color:
+	return ThemeService.col("sk_selected")
 ## Hover pre-highlight: the same amber, dimmer, so hovering reads as "this is
 ## what a click would take" without competing with an actual selection.
-const COLOR_HOVER := Color(1.0, 0.85, 0.3, 0.5)
+static func COLOR_HOVER() -> Color:
+	return ThemeService.col("sk_hover")
 ## Ceiling on an arc's on-screen radius when drawing chrome. Guards against a
 ## diverged solve producing a radius whose arc path costs whole frames to walk.
 const ARC_DRAW_MAX_PX := 20000.0
@@ -5364,7 +5366,7 @@ func _on_overlay_draw() -> void:
 	if hov != "":
 		var he := sk.entity(hov)
 		if he != null:
-			_draw_entity_outline(sk, he, COLOR_HOVER, 3.0)
+			_draw_entity_outline(sk, he, COLOR_HOVER(), 3.0)
 	# Point markers go ON TOP of the hover highlight: the highlight for a point
 	# is a larger filled square behind it, so drawing the marker afterwards
 	# leaves the point itself crisp with a halo around it. Drawing them the
@@ -5373,9 +5375,9 @@ func _on_overlay_draw() -> void:
 	for e in sk.entities():
 		if e.kind() == "point":
 			var p := v.world_to_screen((e as SketchPoint).pos)
-			var c := Color(0.85, 0.88, 0.95)
+			var c := ThemeService.col("sk_point")
 			if selection.has(e.id):
-				c = Color(1.0, 0.85, 0.3)
+				c = ThemeService.col("sk_selected")
 			elif constrained_pts.has(e.id):
 				c = RenderBridge.color_constrained()
 			overlay.draw_rect(Rect2(p - Vector2(2.5, 2.5), Vector2(5, 5)), c)
@@ -5383,7 +5385,7 @@ func _on_overlay_draw() -> void:
 		var e := sk.entity(id)
 		if e == null:
 			continue
-		_draw_entity_outline(sk, e, COLOR_SELECTED, 2.0)
+		_draw_entity_outline(sk, e, COLOR_SELECTED(), 2.0)
 	# Badge satisfied/unsolved state is re-read only at REST: mid-gesture the
 	# sub-solves leave transient residuals that made badges flash "unsolved"
 	# during a healthy drag (QA §M17-5). Frozen alongside `dof`, which already

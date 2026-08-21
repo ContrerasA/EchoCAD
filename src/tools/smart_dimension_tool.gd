@@ -270,7 +270,7 @@ func draw_overlay(overlay: Control) -> void:
 			continue
 		var rep := ConstraintOverlay.anchor_of(sk,
 			SketchConstraint.make(SketchConstraint.Type.FIX, [id_]))
-		overlay.draw_circle(v.world_to_screen(rep), 3.0, Color(1.0, 0.85, 0.3))
+		overlay.draw_circle(v.world_to_screen(rep), 3.0, AppRoot.COLOR_SELECTED())
 	if _parked_index >= 0:
 		_fields.draw(overlay, v.world_to_screen(_preview) + Vector2(0, 24),
 			app.doc.display_unit, [])
