@@ -536,6 +536,16 @@ leftovers; release engineering (M49) last, alpha gate (M50).
   editor, toasts/progress, first-run tour, dimension text drag, DOF
   entity list — beta backlog.
 
+- **M49** (2026-08-20): `VERSION` + `application/config/version`,
+  `--version`, About with kernel + log path, file logging to
+  `user://logs/echocad.log`, `export_presets.cfg` (Linux/Windows x86_64,
+  embedded pck), GitHub Actions (tests on push, release zips on `v*`
+  tags), `tests/m49_samples.gd` = generator + regression for the five
+  benchmark parts in `samples/` (listed on the start panel, opened as
+  untitled copies), `docs/USER_GUIDE.md`, `docs/RELEASE_NOTES.md`. No
+  installer / file association yet.
+- **M50**: the gate is manual — `docs/MANUAL_QA3.md` §M38–§M50.
+
 ## Deferred past alpha (beta backlog)
 
 - STEP import/export (B-rep kernel decision: OpenCascade-lite via

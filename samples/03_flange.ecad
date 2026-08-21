@@ -1,0 +1,298 @@
+{
+	"app": "EchoCAD",
+	"camera": {
+		"distance": 86.6663525670721,
+		"ortho": false,
+		"pitch": 0.628318530717959,
+		"target": [
+			0.00000762939453125,
+			0.0,
+			12.0000047683716
+		],
+		"yaw": 0.523598775598299
+	},
+	"display_unit": "mm",
+	"feature_counter": 5,
+	"features": [
+		{
+			"id": "f1",
+			"kind": "sketch",
+			"name": "Sketch1",
+			"plane": "XZ",
+			"sketch": {
+				"constraints": [
+					{
+						"operands": [
+							"e4"
+						],
+						"type": "HORIZONTAL"
+					},
+					{
+						"operands": [
+							"e6"
+						],
+						"type": "VERTICAL"
+					},
+					{
+						"operands": [
+							"e8"
+						],
+						"type": "HORIZONTAL"
+					},
+					{
+						"operands": [
+							"e10"
+						],
+						"type": "VERTICAL"
+					},
+					{
+						"operands": [
+							"e12"
+						],
+						"type": "HORIZONTAL"
+					}
+				],
+				"entities": [
+					{
+						"id": "e1",
+						"kind": "point",
+						"pos": [
+							0.0,
+							0.0
+						]
+					},
+					{
+						"id": "e2",
+						"kind": "point",
+						"pos": [
+							8.0,
+							0.0
+						]
+					},
+					{
+						"id": "e3",
+						"kind": "point",
+						"pos": [
+							40.0,
+							0.0
+						]
+					},
+					{
+						"id": "e4",
+						"kind": "line",
+						"p0": "e2",
+						"p1": "e3"
+					},
+					{
+						"id": "e5",
+						"kind": "point",
+						"pos": [
+							40.0,
+							6.0
+						]
+					},
+					{
+						"id": "e6",
+						"kind": "line",
+						"p0": "e3",
+						"p1": "e5"
+					},
+					{
+						"id": "e7",
+						"kind": "point",
+						"pos": [
+							15.0,
+							6.0
+						]
+					},
+					{
+						"id": "e8",
+						"kind": "line",
+						"p0": "e5",
+						"p1": "e7"
+					},
+					{
+						"id": "e9",
+						"kind": "point",
+						"pos": [
+							15.0,
+							24.0
+						]
+					},
+					{
+						"id": "e10",
+						"kind": "line",
+						"p0": "e7",
+						"p1": "e9"
+					},
+					{
+						"id": "e11",
+						"kind": "point",
+						"pos": [
+							8.0,
+							24.0
+						]
+					},
+					{
+						"id": "e12",
+						"kind": "line",
+						"p0": "e9",
+						"p1": "e11"
+					},
+					{
+						"id": "e13",
+						"kind": "line",
+						"p0": "e11",
+						"p1": "e2"
+					}
+				],
+				"id_counter": 13,
+				"origin": "e1"
+			}
+		},
+		{
+			"anchor": [
+				20.0,
+				3.0
+			],
+			"angle_deg": 360.0,
+			"axis": "y",
+			"id": "f2",
+			"kind": "revolve",
+			"name": "Revolve1",
+			"operation": "new_body",
+			"sketch_id": "f1"
+		},
+		{
+			"cb_depth": 6.5,
+			"cb_diameter": 11.0,
+			"cs_angle": 90.0,
+			"cs_diameter": 12.6,
+			"depth": 10.0,
+			"diameter": 5.5,
+			"extent": "through_all",
+			"hole_type": "simple",
+			"id": "f3",
+			"kind": "hole",
+			"name": "Hole1",
+			"operation": "cut",
+			"ref": {
+				"body": "f2",
+				"d": 5.99999618530273,
+				"face": 8194,
+				"n": [
+					0.0,
+					0.0,
+					1.0
+				]
+			},
+			"thread_depth": 0.0,
+			"thread_id": "M5",
+			"thread_mode": "none",
+			"tip_angle": 118.0,
+			"uv": [
+				[
+					28.0,
+					0.0
+				]
+			],
+			"xf": [
+				1.0,
+				0.0,
+				0.0,
+				0.0,
+				1.0,
+				0.0,
+				0.0,
+				0.0,
+				1.0,
+				0.0,
+				0.0,
+				5.99999618530273
+			]
+		},
+		{
+			"axis_dir": [
+				0.0,
+				0.0,
+				1.0
+			],
+			"axis_origin": [
+				0.0,
+				0.0,
+				0.0
+			],
+			"count1": 6,
+			"count2": 1,
+			"id": "f4",
+			"kind": "pattern_body",
+			"mode": "circular",
+			"name": "Pattern1",
+			"offset1": [
+				20.0,
+				0.0,
+				0.0
+			],
+			"offset2": [
+				0.0,
+				0.0,
+				0.0
+			],
+			"source": "f3",
+			"total_deg": 360.0
+		},
+		{
+			"cb_depth": 6.5,
+			"cb_diameter": 11.0,
+			"cs_angle": 90.0,
+			"cs_diameter": 12.6,
+			"depth": 10.0,
+			"diameter": 3.24225,
+			"extent": "distance",
+			"hole_type": "simple",
+			"id": "f5",
+			"kind": "hole",
+			"name": "Hole2",
+			"operation": "cut",
+			"ref": {
+				"body": "f2",
+				"d": 23.9999923706055,
+				"face": 8196,
+				"n": [
+					0.0,
+					0.0,
+					1.0
+				]
+			},
+			"thread_depth": 0.0,
+			"thread_id": "M4",
+			"thread_mode": "modeled",
+			"tip_angle": 118.0,
+			"uv": [
+				[
+					11.5,
+					0.0
+				]
+			],
+			"xf": [
+				1.0,
+				0.0,
+				0.0,
+				0.0,
+				1.0,
+				0.0,
+				0.0,
+				0.0,
+				1.0,
+				0.0,
+				0.0,
+				23.9999923706055
+			]
+		}
+	],
+	"material": "pla",
+	"named_views": [],
+	"parameters": [],
+	"timeline_marker": 5,
+	"version": 1
+}

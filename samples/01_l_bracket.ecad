@@ -1,0 +1,363 @@
+{
+	"app": "EchoCAD",
+	"camera": {
+		"distance": 63.3087255518539,
+		"ortho": false,
+		"pitch": 0.628318530717959,
+		"target": [
+			30.0000057220459,
+			18.0000057220459,
+			19.9900054931641
+		],
+		"yaw": 0.523598775598299
+	},
+	"display_unit": "mm",
+	"feature_counter": 7,
+	"features": [
+		{
+			"id": "f1",
+			"kind": "sketch",
+			"name": "Sketch1",
+			"plane": "XY",
+			"sketch": {
+				"constraints": [
+					{
+						"operands": [
+							"e6"
+						],
+						"type": "HORIZONTAL"
+					},
+					{
+						"operands": [
+							"e8"
+						],
+						"type": "HORIZONTAL"
+					},
+					{
+						"operands": [
+							"e7"
+						],
+						"type": "VERTICAL"
+					},
+					{
+						"operands": [
+							"e9"
+						],
+						"type": "VERTICAL"
+					}
+				],
+				"entities": [
+					{
+						"id": "e1",
+						"kind": "point",
+						"pos": [
+							0.0,
+							0.0
+						]
+					},
+					{
+						"id": "e2",
+						"kind": "point",
+						"pos": [
+							0.0,
+							0.0
+						]
+					},
+					{
+						"id": "e3",
+						"kind": "point",
+						"pos": [
+							60.0,
+							0.0
+						]
+					},
+					{
+						"id": "e4",
+						"kind": "point",
+						"pos": [
+							60.0,
+							40.0
+						]
+					},
+					{
+						"id": "e5",
+						"kind": "point",
+						"pos": [
+							0.0,
+							40.0
+						]
+					},
+					{
+						"id": "e6",
+						"kind": "line",
+						"p0": "e2",
+						"p1": "e3"
+					},
+					{
+						"id": "e7",
+						"kind": "line",
+						"p0": "e3",
+						"p1": "e4"
+					},
+					{
+						"id": "e8",
+						"kind": "line",
+						"p0": "e4",
+						"p1": "e5"
+					},
+					{
+						"id": "e9",
+						"kind": "line",
+						"p0": "e5",
+						"p1": "e2"
+					}
+				],
+				"id_counter": 9,
+				"origin": "e1"
+			}
+		},
+		{
+			"anchor": [
+				30.0,
+				20.0
+			],
+			"distance": 4.0,
+			"id": "f2",
+			"kind": "extrude",
+			"name": "Extrude1",
+			"operation": "new_body",
+			"sketch_id": "f1"
+		},
+		{
+			"id": "f3",
+			"kind": "sketch",
+			"name": "Sketch2",
+			"plane": "XZ",
+			"sketch": {
+				"constraints": [
+					{
+						"operands": [
+							"e6"
+						],
+						"type": "HORIZONTAL"
+					},
+					{
+						"operands": [
+							"e8"
+						],
+						"type": "HORIZONTAL"
+					},
+					{
+						"operands": [
+							"e7"
+						],
+						"type": "VERTICAL"
+					},
+					{
+						"operands": [
+							"e9"
+						],
+						"type": "VERTICAL"
+					}
+				],
+				"entities": [
+					{
+						"id": "e1",
+						"kind": "point",
+						"pos": [
+							0.0,
+							0.0
+						]
+					},
+					{
+						"id": "e2",
+						"kind": "point",
+						"pos": [
+							0.0,
+							0.0
+						]
+					},
+					{
+						"id": "e3",
+						"kind": "point",
+						"pos": [
+							60.0,
+							0.0
+						]
+					},
+					{
+						"id": "e4",
+						"kind": "point",
+						"pos": [
+							60.0,
+							40.0
+						]
+					},
+					{
+						"id": "e5",
+						"kind": "point",
+						"pos": [
+							0.0,
+							40.0
+						]
+					},
+					{
+						"id": "e6",
+						"kind": "line",
+						"p0": "e2",
+						"p1": "e3"
+					},
+					{
+						"id": "e7",
+						"kind": "line",
+						"p0": "e3",
+						"p1": "e4"
+					},
+					{
+						"id": "e8",
+						"kind": "line",
+						"p0": "e4",
+						"p1": "e5"
+					},
+					{
+						"id": "e9",
+						"kind": "line",
+						"p0": "e5",
+						"p1": "e2"
+					}
+				],
+				"id_counter": 9,
+				"origin": "e1"
+			}
+		},
+		{
+			"anchor": [
+				30.0,
+				20.0
+			],
+			"distance": 4.0,
+			"id": "f4",
+			"kind": "extrude",
+			"name": "Extrude2",
+			"operation": "join",
+			"sketch_id": "f3"
+		},
+		{
+			"cb_depth": 6.5,
+			"cb_diameter": 11.0,
+			"cs_angle": 90.0,
+			"cs_diameter": 12.6,
+			"depth": 10.0,
+			"diameter": 4.5,
+			"extent": "through_all",
+			"hole_type": "simple",
+			"id": "f5",
+			"kind": "hole",
+			"name": "Hole1",
+			"operation": "cut",
+			"ref": {
+				"body": "f2",
+				"d": 4.0,
+				"face": 8193,
+				"n": [
+					0.0,
+					0.0,
+					1.0
+				]
+			},
+			"thread_depth": 0.0,
+			"thread_id": "M4",
+			"thread_mode": "none",
+			"tip_angle": 118.0,
+			"uv": [
+				[
+					15.0,
+					25.0
+				],
+				[
+					45.0,
+					25.0
+				]
+			],
+			"xf": [
+				1.0,
+				0.0,
+				0.0,
+				0.0,
+				1.0,
+				0.0,
+				0.0,
+				0.0,
+				1.0,
+				0.0,
+				0.0,
+				4.0
+			]
+		},
+		{
+			"body": "f2",
+			"edges": [
+				{
+					"fa": 8196,
+					"fb": 8197,
+					"hint": [
+						0.0,
+						40.0,
+						2.0
+					],
+					"k": 0
+				},
+				{
+					"fa": 8195,
+					"fb": 8196,
+					"hint": [
+						60.0,
+						40.0,
+						2.0
+					],
+					"k": 0
+				}
+			],
+			"id": "f6",
+			"kind": "edge_fillet",
+			"name": "Fillet1",
+			"size_mm": 5.0,
+			"treat": "fillet"
+		},
+		{
+			"body": "f2",
+			"edges": [
+				{
+					"fa": 8193,
+					"fb": 20480,
+					"hint": [
+						15.0,
+						25.0,
+						4.0
+					],
+					"k": 0
+				},
+				{
+					"fa": 8193,
+					"fb": 20483,
+					"hint": [
+						45.0000038146973,
+						25.0000019073486,
+						4.0
+					],
+					"k": 0
+				}
+			],
+			"id": "f7",
+			"kind": "edge_fillet",
+			"name": "Chamfer1",
+			"size_mm": 0.5,
+			"treat": "chamfer"
+		}
+	],
+	"material": "pla",
+	"named_views": [],
+	"parameters": [],
+	"timeline_marker": 7,
+	"version": 1
+}

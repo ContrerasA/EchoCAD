@@ -1,0 +1,60 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  headless:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Godot 4.7.1
+        run: |
+          set -e
+          curl -sSL -o godot.zip "https://github.com/godotengine/godot/releases/download/4.7.1-stable/Godot_v4.7.1-stable_linux.x86_64.zip"
+          unzip -q godot.zip
+          chmod +x Godot_v4.7.1-stable_linux.x86_64
+          echo "GODOT=$PWD/Godot_v4.7.1-stable_linux.x86_64" >> "$GITHUB_ENV"
+      - name: Import project (registers class_names)
+        run: "$GODOT" --path . --editor --quit --headless || true
+      - name: Version
+        run: "$GODOT" --path . --headless -- --version
+      - name: Headless tests
+        run: tools/run_tests.sh
+      - name: RPC suites
+        run: HEADLESS=1 tools/run_rpc_tests.sh
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: godot-logs
+          path: ~/.local/share/godot/app_userdata/EchoCAD/logs/
+  export:
+    runs-on: ubuntu-latest
+    needs: headless
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Godot + export templates
+        run: |
+          set -e
+          curl -sSL -o godot.zip "https://github.com/godotengine/godot/releases/download/4.7.1-stable/Godot_v4.7.1-stable_linux.x86_64.zip"
+          unzip -q godot.zip && chmod +x Godot_v4.7.1-stable_linux.x86_64
+          curl -sSL -o tpz.zip "https://github.com/godotengine/godot/releases/download/4.7.1-stable/Godot_v4.7.1-stable_export_templates.tpz"
+          mkdir -p ~/.local/share/godot/export_templates/4.7.1.stable
+          unzip -q tpz.zip -d tpl && mv tpl/templates/* ~/.local/share/godot/export_templates/4.7.1.stable/
+      - name: Export
+        run: |
+          ./Godot_v4.7.1-stable_linux.x86_64 --path . --editor --quit --headless || true
+          mkdir -p dist/linux dist/windows
+          ./Godot_v4.7.1-stable_linux.x86_64 --path . --headless --export-release "Linux x86_64" dist/linux/EchoCAD.x86_64
+          ./Godot_v4.7.1-stable_linux.x86_64 --path . --headless --export-release "Windows x86_64" dist/windows/EchoCAD.exe
+          (cd dist && zip -qr EchoCAD-linux-x86_64.zip linux && zip -qr EchoCAD-windows-x86_64.zip windows)
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/EchoCAD-linux-x86_64.zip
+            dist/EchoCAD-windows-x86_64.zip

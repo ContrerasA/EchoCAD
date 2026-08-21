@@ -6,7 +6,10 @@ Fusion 360–style parametric CAD in Godot 4.7. Phase 1: constrained/dimensioned
 each), `docs/TESTING.md` (test strategy + automation RPC spec) and
 `docs/THEMING.md` (theme file format) before working. Volume 2 lives in
 `docs/MILESTONES2.md` (M26–M36), volume 3 — the alpha plan — in
-`docs/MILESTONES3.md` (M38–M50 + polish rounds P1–P4).
+`docs/MILESTONES3.md` (M38–M50 + polish rounds P1–P4); `docs/USER_GUIDE.md`
+is the user-facing manual, `docs/MANUAL_QA3.md` the volume-3 QA sheet.
+`tests/m49_samples.gd` regenerates `samples/*.ecad` — re-run it after any
+file-format change.
 
 ## Commands
 

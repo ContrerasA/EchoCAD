@@ -1,0 +1,146 @@
+{
+	"app": "EchoCAD",
+	"camera": {
+		"distance": 24.4327374879979,
+		"ortho": false,
+		"pitch": 0.628318530717959,
+		"target": [
+			0.000003814697265625,
+			0.0,
+			8.09000015258789
+		],
+		"yaw": 0.523598775598299
+	},
+	"display_unit": "mm",
+	"feature_counter": 5,
+	"features": [
+		{
+			"id": "f1",
+			"kind": "sketch",
+			"name": "Sketch1",
+			"plane": "XY",
+			"sketch": {
+				"constraints": [],
+				"entities": [
+					{
+						"id": "e1",
+						"kind": "point",
+						"pos": [
+							0.0,
+							0.0
+						]
+					},
+					{
+						"id": "e2",
+						"kind": "point",
+						"pos": [
+							0.0,
+							0.0
+						]
+					},
+					{
+						"center": "e2",
+						"id": "e3",
+						"kind": "circle",
+						"radius": 10.0
+					}
+				],
+				"id_counter": 3,
+				"origin": "e1"
+			}
+		},
+		{
+			"anchor": [
+				0.0,
+				0.0
+			],
+			"distance": 8.0,
+			"id": "f2",
+			"kind": "extrude",
+			"name": "Extrude1",
+			"operation": "new_body",
+			"sketch_id": "f1"
+		},
+		{
+			"cb_depth": 6.5,
+			"cb_diameter": 11.0,
+			"cs_angle": 90.0,
+			"cs_diameter": 12.6,
+			"depth": 10.0,
+			"diameter": 5.5,
+			"extent": "through_all",
+			"hole_type": "simple",
+			"id": "f3",
+			"kind": "hole",
+			"name": "Hole1",
+			"operation": "cut",
+			"ref": {
+				"body": "f2",
+				"d": 7.99999904632568,
+				"face": 8193,
+				"n": [
+					0.0,
+					0.0,
+					1.0
+				]
+			},
+			"thread_depth": 0.0,
+			"thread_id": "",
+			"thread_mode": "none",
+			"tip_angle": 118.0,
+			"uv": [
+				[
+					0.0,
+					0.0
+				]
+			],
+			"xf": [
+				1.0,
+				0.0,
+				0.0,
+				0.0,
+				1.0,
+				0.0,
+				0.0,
+				0.0,
+				1.0,
+				0.0,
+				0.0,
+				7.99999904632568
+			]
+		},
+		{
+			"id": "f4",
+			"kind": "copy_body",
+			"name": "Copy1",
+			"source": "f2",
+			"translation": [
+				0.0,
+				0.0,
+				8.0
+			]
+		},
+		{
+			"body": "f4",
+			"id": "f5",
+			"kind": "transform",
+			"name": "Move1",
+			"rot_axis": [
+				0.0,
+				0.0,
+				1.0
+			],
+			"rot_deg": 0.0,
+			"translation": [
+				0.0,
+				0.0,
+				0.200000002980232
+			]
+		}
+	],
+	"material": "pla",
+	"named_views": [],
+	"parameters": [],
+	"timeline_marker": 5,
+	"version": 1
+}

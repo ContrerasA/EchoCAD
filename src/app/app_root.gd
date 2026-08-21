@@ -194,6 +194,12 @@ var _status_ids: Label = null
 
 
 func _ready() -> void:
+	# `godot --path . -- --version` prints the version and exits (CI / packaging).
+	if OS.get_cmdline_user_args().has("--version"):
+		print("EchoCAD %s (Godot %s, %s)" % [app_version(),
+			Engine.get_version_info()["string"], SolidKernel.kernel_name()])
+		get_tree().quit.call_deferred(0)
+		return
 	doc = CadDocument.new()
 	bridge = RenderBridge.new()
 	stack = CommandStack.new(doc)
@@ -1135,13 +1141,23 @@ func _rebuild_theme_menu() -> void:
 		_view_menu.set_item_checked(_view_menu_ortho_idx, ThemeService.model_ortho)
 
 
+## App version: the project setting (export builds) falls back to VERSION.
+static func app_version() -> String:
+	var v := String(ProjectSettings.get_setting("application/config/version", ""))
+	if v == "" and FileAccess.file_exists("res://VERSION"):
+		v = FileAccess.get_file_as_string("res://VERSION").strip_edges()
+	return v if v != "" else "dev"
+
+
 func _show_about() -> void:
 	var d := AcceptDialog.new()
 	d.name = "AboutDialog"
 	d.title = "About EchoCAD"
-	d.dialog_text = ("EchoCAD — parametric CAD in Godot %s\n\nTheme: %s\n"
-		+ "UI font: Archivo (SIL OFL)") % [Engine.get_version_info()["string"],
-		ThemeService.theme_id]
+	d.dialog_text = ("EchoCAD %s — parametric CAD in Godot %s\n"
+		+ "Solid kernel: %s\nTheme: %s\nUI font: Archivo (SIL OFL)\n\n"
+		+ "Logs: %s") % [app_version(), Engine.get_version_info()["string"],
+		SolidKernel.kernel_name(), ThemeService.theme_id,
+		ProjectSettings.globalize_path("user://logs/")]
 	d.confirmed.connect(d.queue_free)
 	d.canceled.connect(d.queue_free)
 	add_child(d)
@@ -5437,6 +5453,33 @@ func show_start_panel() -> void:
 				hide_start_panel()
 				open_from(path))
 			col.add_child(rb)
+	# Shipped sample parts (the alpha benchmarks).
+	var sdir := DirAccess.open("res://samples")
+	if sdir != null:
+		var files := sdir.get_files()
+		files.sort()
+		var any := false
+		for fname in files:
+			if not fname.ends_with(".ecad"):
+				continue
+			if not any:
+				var sl := Label.new()
+				sl.text = "Samples"
+				sl.theme_type_variation = "CaptionLabel"
+				col.add_child(sl)
+				any = true
+			var spath := "res://samples/" + fname
+			var sb := Button.new()
+			sb.name = "StartSample_" + fname.get_basename()
+			sb.text = fname.get_basename().substr(3).replace("_", " ").capitalize()
+			sb.tooltip_text = spath
+			sb.alignment = HORIZONTAL_ALIGNMENT_LEFT
+			sb.theme_type_variation = "FlyoutButton"
+			sb.focus_mode = Control.FOCUS_NONE
+			sb.pressed.connect(func() -> void:
+				hide_start_panel()
+				open_sample(spath))
+			col.add_child(sb)
 	var dismiss := Button.new()
 	dismiss.name = "StartDismissBtn"
 	dismiss.text = "Dismiss"
@@ -5447,6 +5490,25 @@ func show_start_panel() -> void:
 	_viewport_host().add_child(_start_panel)
 	_start_panel.reset_size()
 	_start_panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+
+
+## Open a shipped sample as an UNTITLED copy (Save asks for a path), so
+## the samples stay pristine inside the app bundle.
+func open_sample(res_path: String) -> void:
+	var loaded := Serializer.load_file(res_path)
+	if loaded == null:
+		set_status_hint("Sample failed to load: " + Serializer.last_error)
+		return
+	if mode == Mode.SKETCH:
+		finish_sketch()
+	_autosave_forget()
+	load_document(loaded)
+	_save_path = ""
+	_autosave_session = "sample-%d" % (Time.get_unix_time_from_system() as int)
+	stack.mark_saved()
+	browser.refresh()
+	fit_view()
+	set_status_hint("Opened sample %s (unsaved copy — Save As to keep changes)" % res_path.get_file())
 
 
 func hide_start_panel() -> void:

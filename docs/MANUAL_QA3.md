@@ -512,3 +512,52 @@ Status: PENDING
 ### Fix log
 
 (none yet)
+
+---
+
+## §M49 — Release engineering
+
+Status: PENDING
+
+- [ ] 1. `godot --path . -- --version` prints "EchoCAD 0.1.0-alpha (Godot
+   4.7.1…, manifold 3.2.1)". Help ▸ About shows the same version, the
+   kernel, the theme and the log folder.
+- [ ] 2. **Samples.** The start panel lists L Bracket, Enclosure Lid,
+   Flange, Spacer Stack, Vendor Fit. Each opens as an UNTITLED copy (Save
+   asks for a path), rebuilds with no red chip, looks like its name, and
+   exports a 3MF the slicer accepts.
+- [ ] 3. **Logs.** `user://logs/echocad.log` exists after a run.
+- [ ] 4. **Export presets.** With export templates installed, Project ▸
+   Export lists "Linux x86_64" and "Windows x86_64"; both export and the
+   result launches, opens a sample, and shows no "LEGACY KERNEL" badge.
+- [ ] 5. **CI.** `.github/workflows/tests.yml` runs headless + RPC suites on
+   push; a `v*` tag builds both zips and attaches them to a release.
+- [ ] 6. **Docs.** `docs/USER_GUIDE.md` mentions every ribbon command;
+   `docs/RELEASE_NOTES.md` reads right for the tag.
+
+### Fix log
+
+(none yet)
+
+---
+
+## §M50 — Alpha gate
+
+Status: PENDING
+
+Run on the EXPORTED build, both platforms, both themes. Build the five
+benchmark parts by hand following only `docs/USER_GUIDE.md`; every
+papercut goes to `docs/CHANGES.md` for a polish round. Then walk every
+section §M38–§M49 above. Tag `v0.1.0-alpha` when no `[ ]` / `[!]` remain.
+
+- [ ] 1. L-bracket by hand (extrude, holes, fillet after cuts, chamfered
+   holes, mass properties within 1 % of a hand calculation).
+- [ ] 2. Enclosure + lid by hand (shell, lip, bosses, section check,
+   interference check of the lid).
+- [ ] 3. Flange by hand (revolve, circular pattern of a cut, modelled
+   thread, draft on the hub via taper).
+- [ ] 4. Spacer stack by hand (copy, move, measure the gap, multi-object
+   3MF).
+- [ ] 5. Vendor fit by hand (import an STL, cut its pocket with clearance,
+   interference check, export).
+- [ ] 6. Startup under 2 s; kill −9 recovery; theme/prefs survive.
