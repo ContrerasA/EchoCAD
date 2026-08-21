@@ -463,6 +463,71 @@ func _edge_treat(a: Dictionary, p: StreamPeerTCP, id: Variant,
 	return {"feature": fid}
 
 
+## --- M43 inspection --------------------------------------------------------------
+
+## {body, material?} -> volume_mm3, area_mm2, mass_g, centroid, inertia (diag), watertight
+func _cmd_query_mass_properties(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
+	var entry := app.world.body_entry(String(a.get("body", "")))
+	if entry.is_empty():
+		_reply_err(p, id, "not_found", "no body %s" % String(a.get("body", "")))
+		return null
+	var mat := String(a.get("material", app.doc.material))
+	var mp := Inspect.mass_properties(entry, Inspect.density_of(mat))
+	var c: Vector3 = mp["centroid"]
+	var I: Basis = mp["inertia_gmm2"]
+	return {"volume_mm3": mp["volume_mm3"], "area_mm2": mp["area_mm2"], "mass_g": mp["mass_g"],
+		"material": mat, "centroid": [c.x, c.y, c.z], "inertia": [I.x.x, I.y.y, I.z.z],
+		"watertight": mp["watertight"]}
+
+
+## {bodies?: [ids]} -> overlaps [{a, b, volume}]
+func _cmd_query_interference(a: Dictionary, _p: StreamPeerTCP, _id: Variant) -> Dictionary:
+	var ids := _str_list(a.get("bodies", []))
+	var entries: Array = []
+	for b: Dictionary in app.world.bodies():
+		if ids.is_empty() or ids.has(String(b["id"])):
+			entries.append(b)
+	var out: Array = []
+	for h: Dictionary in Inspect.interference(entries):
+		out.append({"a": h["a"], "b": h["b"], "volume": h["volume"]})
+	return {"overlaps": out}
+
+
+## {on, plane?, offset?, flip?} — view-state section; {body} adds the kept volume.
+func _cmd_action_section(a: Dictionary, _p: StreamPeerTCP, _id: Variant) -> Dictionary:
+	var on := bool(a.get("on", true))
+	var pid := String(a.get("plane", "XZ"))
+	var xf := Transform3D(SketchFeature.plane_basis(pid), Vector3.ZERO) \
+		if SketchFeature.PLANES.has(pid) else app.doc.plane_transform(pid)
+	var n: Vector3 = xf.basis.z
+	var off := float(a.get("offset", 0.0))
+	if bool(a.get("flip", false)):
+		n = -n
+		off = -off
+	app.world.set_section(on, n, xf.origin.dot(n) + off)
+	var out := {"on": app.world.section_enabled()}
+	if a.has("body"):
+		var entry := app.world.body_entry(String(a["body"]))
+		var sec := Inspect.section(entry, n, xf.origin.dot(n) + off)
+		out["kept_volume"] = sec.get("volume", 0.0)
+	return out
+
+
+## {body, bed?: [x,y,z], angle?} -> watertight, fits, size, overhang_ratio
+func _cmd_query_print_check(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
+	var entry := app.world.body_entry(String(a.get("body", "")))
+	if entry.is_empty():
+		_reply_err(p, id, "not_found", "no body %s" % String(a.get("body", "")))
+		return null
+	var bed := _vec3(a.get("bed", [220, 220, 250]))
+	var ang := float(a.get("angle", 45.0))
+	var fit := Inspect.fits_bed(entry, bed)
+	var ov := Inspect.overhangs(entry, Vector3(0, 0, 1), ang)
+	var sz: Vector3 = fit["size"]
+	return {"watertight": entry.get("solid") != null and SolidKernel.is_valid(entry["solid"]),
+		"fits": fit["fits"], "size": [sz.x, sz.y, sz.z], "overhang_ratio": ov["ratio"]}
+
+
 ## --- M42 shell / combine / split / press-pull -----------------------------------
 
 func _face_ref_from(a: Variant) -> TopoRef:

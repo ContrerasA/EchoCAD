@@ -85,6 +85,7 @@ const FALLBACK_COLORS := {
 	"view_cube_nav": "#c4c0bd",
 	"hover": "#ffe08c59",
 	"edge_candidate": "#8cbfff",
+	"section_cap": "#c9504a",
 	# sketch ink
 	"ink_free": "#f0edeb", "ink_constrained": "#7fc97f",
 	"ink_construction": "#b88cf2", "ink_projected": "#d973d9",
@@ -1011,4 +1012,20 @@ static func save_settings() -> void:
 	cfg.set_value("ui", "dark", dark)
 	cfg.set_value("view", "ortho", model_ortho)
 	cfg.set_value("ui", "show_tool_names", show_tool_names)
+	cfg.save(settings_path())
+
+
+## M43: generic user preferences (one [prefs] section) — read/written
+## without touching the theme keys above. Never persisted in scratch runs.
+static func get_pref(key: String, fallback: Variant = null) -> Variant:
+	var cfg := ConfigFile.new()
+	if cfg.load(settings_path()) != OK:
+		return fallback
+	return cfg.get_value("prefs", key, fallback)
+
+
+static func set_pref(key: String, value: Variant) -> void:
+	var cfg := ConfigFile.new()
+	cfg.load(settings_path())
+	cfg.set_value("prefs", key, value)
 	cfg.save(settings_path())

@@ -60,6 +60,7 @@
     "view_cube":     "#f6f6f5",
     "view_cube_text": "#3a3836",
     "view_cube_nav":  "#6a6765",
+    "section_cap":    "#d9534f",
     "edge_candidate": "#3d7fd6",
     "hover":         "#e08c00*0.35",
 

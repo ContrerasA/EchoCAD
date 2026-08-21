@@ -335,3 +335,50 @@ picking and chip editing.
 ### Fix log
 
 (none yet)
+
+---
+
+## §M43 — Inspection
+
+Status: PENDING
+
+New INSPECT ribbon group: Measure, Section, and a stack with Properties,
+Interference, Print Check.
+
+- [ ] 1. **Properties.** Select a body, press Properties (stack face).
+   **Expect:** a docked panel: Body, Material dropdown (PLA default, with
+   densities), Volume (in the display unit AND cm³), Surface area, Mass,
+   Size, Centre of mass, Inertia, Watertight; a red sphere marks the centre
+   of mass in the viewport while the panel is open (checkbox hides it).
+   Switch Material ▸ Steel: mass updates; Save/Open: the material is
+   remembered with the document. With nothing selected the button arms a
+   body pick (hover tints, click opens the panel for that body).
+- [ ] 2. **Section.** Press Section. **Expect:** the dialog opens with
+   "show the cut" ticked, plane XZ, offset through the middle of the
+   model; bodies are cut away in front of the plane and the cut faces are
+   painted `section_cap` (red), holes/pockets show as gaps in the cap. Type
+   a new offset: the cut moves live; "flip which side is kept" flips; the
+   Plane dropdown lists construction planes too. Close keeps the section
+   and the Section button stays lit; press it again and Cancel: the section
+   switches off. Face picks and edge picks still work on the cut bodies.
+- [ ] 3. **Interference.** Two overlapping bodies; press Interference (stack
+   flyout); Check. **Expect:** "ExtrudeN ∩ ExtrudeM: … in³" and the overlap
+   drawn as a translucent red volume; "no interference" when they don't
+   touch; Bodies ▸ Pick… restricts the check to chosen bodies.
+- [ ] 4. **Print Check.** Select a body, Print Check. **Expect:** Watertight,
+   Fits bed (bed size editable, remembered in preferences), "x % of the
+   surface needs support (>45°)" with overhanging faces shaded amber in
+   the viewport; a box reports 0 %; a 60° outward taper reports a lot.
+   Change the angle field: live update.
+- [ ] 5. **Measure.** Press Measure; status bar explains. Hover a body
+   corner — a highlighted dot snaps to it (bigger dot = snapped), an edge
+   snaps to the edge, a face interior shows its area and normal in the
+   measure slot. Click corner A, then corner B: a line and the distance
+   with Δx/Δy/Δz in the status bar (display unit). A third click starts
+   the next measurement from that point; right-click or Esc ends it and
+   clears the markers; the Measure button toggles off.
+- [ ] 6. Both themes: section cap colour, overhang shading, markers.
+
+### Fix log
+
+(none yet)

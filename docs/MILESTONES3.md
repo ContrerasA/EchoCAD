@@ -482,6 +482,17 @@ leftovers; release engineering (M49) last, alpha gate (M50).
   (numeric + dialog only). RPC: `action.shell / combine / split_body /
   press_pull`.
 
+- **M43** (2026-08-20): `Inspect` helpers (mass properties from the
+  kernel's signed-tetrahedra integrals with a per-document material,
+  pairwise interference via kernel intersect, section = `trim_by_plane`
+  with cap triangles recoloured, overhang census, bed fit); INSPECT ribbon
+  group (Measure, Section, Properties▸Interference▸Print Check stack);
+  section is a world view state (caps in `section_cap`), the Section
+  button stays lit; generic `ThemeService.get_pref/set_pref` ([prefs]
+  section). Measure snaps to corners/edges via edge chains. Wall-thickness
+  probe and min-wall scan were not built. RPC: `query.mass_properties`,
+  `query.interference`, `action.section`, `query.print_check`.
+
 ## Deferred past alpha (beta backlog)
 
 - STEP import/export (B-rep kernel decision: OpenCascade-lite via

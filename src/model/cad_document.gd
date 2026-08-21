@@ -17,6 +17,8 @@ var display_unit := UnitConverter.Unit.IN
 ## Camera bookmarks, not model state — they ride along in the file for
 ## convenience but sit outside the command stack (like display_unit).
 var named_views: Array = []
+## M43: material id (Inspect.MATERIALS) used for mass properties.
+var material := "pla"
 ## The model-mode camera at the last save ({yaw, pitch, target:[x,y,z],
 ## distance, ortho} — same shape as a named view, minus the name). Empty when
 ## the file predates it; the app then keeps whatever view it had.
@@ -112,6 +114,7 @@ func to_dict() -> Dictionary:
 		"features": feats,
 		"named_views": named_views.duplicate(true),
 		"camera": camera.duplicate(true),
+		"material": material,
 	}
 
 
@@ -136,6 +139,7 @@ static func from_dict(d: Dictionary) -> CadDocument:
 			doc.named_views.append((vd as Dictionary).duplicate(true))
 	if d.get("camera") is Dictionary:
 		doc.camera = (d["camera"] as Dictionary).duplicate(true)
+	doc.material = String(d.get("material", "pla"))
 	return doc
 
 

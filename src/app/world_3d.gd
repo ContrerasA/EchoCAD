@@ -873,7 +873,8 @@ func pick_face(origin: Vector3, dir: Vector3) -> Dictionary:
 		return best
 	for c in _sketch_root.get_children():
 		var mi := c as MeshInstance3D
-		if mi == null or not mi.visible or not mi.has_meta("is_body"):
+		if mi == null or not mi.visible or not mi.has_meta("is_body") \
+				or not mi.has_meta("feature_id"):
 			continue
 		var hit := _ray_mesh_face(mi, origin, dir)
 		if not hit.is_empty() and float(hit["t"]) < best_t:
@@ -1296,6 +1297,73 @@ func hide_loft_sections() -> void:
 		_loft_sections_root = null
 
 
+var _inspect_root: Node3D = null
+
+
+## M43: transient inspection overlays (interference volumes, overhang
+## faces, the centre-of-mass marker, measure markers). One call replaces
+## the previous set; hide_inspect() clears.
+func show_inspect(items: Array) -> void:
+	hide_inspect()
+	if items.is_empty():
+		return
+	_inspect_root = Node3D.new()
+	_inspect_root.name = "InspectOverlay"
+	add_child(_inspect_root)
+	for it: Dictionary in items:
+		match String(it.get("kind", "")):
+			"mesh":
+				var mi := MeshInstance3D.new()
+				mi.mesh = it["mesh"]
+				mi.material_override = _fill_material(it.get("color", ThemeService.col("error")) as Color, true)
+				_inspect_root.add_child(mi)
+			"tris":
+				var tris: PackedVector3Array = it["tris"]
+				if tris.is_empty():
+					continue
+				var am := ArrayMesh.new()
+				var arr := []
+				arr.resize(Mesh.ARRAY_MAX)
+				# Lift a hair along each normal so the overlay wins the z-fight.
+				var lifted := PackedVector3Array()
+				for t in tris.size() / 3:
+					var a := tris[t * 3]
+					var b := tris[t * 3 + 1]
+					var c := tris[t * 3 + 2]
+					var n := (b - a).cross(c - a).normalized() * 0.05
+					lifted.append_array([a + n, b + n, c + n])
+				arr[Mesh.ARRAY_VERTEX] = lifted
+				am.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+				var mi2 := MeshInstance3D.new()
+				mi2.mesh = am
+				mi2.material_override = _fill_material(it.get("color", ThemeService.col("warning")) as Color, false)
+				_inspect_root.add_child(mi2)
+			"marker":
+				var sm := SphereMesh.new()
+				var r := float(it.get("radius", 1.0))
+				sm.radius = r
+				sm.height = r * 2.0
+				var mi3 := MeshInstance3D.new()
+				mi3.mesh = sm
+				mi3.position = it["pos"]
+				var mat := StandardMaterial3D.new()
+				mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+				mat.albedo_color = it.get("color", ThemeService.col("accent"))
+				mat.no_depth_test = true
+				mat.render_priority = 11
+				mi3.material_override = mat
+				_inspect_root.add_child(mi3)
+			"line":
+				_inspect_root.add_child(_edge_tube(it["a"], it["b"],
+					float(it.get("width", 0.3)), it.get("color", ThemeService.col("accent"))))
+
+
+func hide_inspect() -> void:
+	if _inspect_root != null:
+		_inspect_root.queue_free()
+		_inspect_root = null
+
+
 var _hole_preview_root: Node3D = null
 
 
@@ -1617,6 +1685,24 @@ func _rebuild_bodies(doc: CadDocument) -> void:
 	_bodies_building = false
 
 
+## M43 section analysis: when enabled every body displays trimmed by the
+## plane, with its cut face painted in the `section_cap` colour.
+var _section_on := false
+var _section_normal := Vector3(0, 0, 1)
+var _section_offset := 0.0
+
+
+func set_section(on: bool, normal := Vector3(0, 0, 1), offset := 0.0) -> void:
+	_section_on = on
+	_section_normal = normal.normalized() if normal.length() > 1e-9 else Vector3(0, 0, 1)
+	_section_offset = offset
+	_apply_bodies(_bodies)
+
+
+func section_enabled() -> bool:
+	return _section_on
+
+
 func _apply_bodies(bodies: Array) -> void:
 	_bodies = bodies
 	bodies_rebuilt.emit()
@@ -1625,6 +1711,13 @@ func _apply_bodies(bodies: Array) -> void:
 			c.free()   # immediate: the replacement is added THIS call
 	for b: Dictionary in bodies:
 		var mesh: ArrayMesh = b["mesh"]
+		var cap_mesh: ArrayMesh = null
+		if _section_on and b.get("solid") != null:
+			var sec := Inspect.section(b, _section_normal, _section_offset)
+			if sec.is_empty():
+				continue   # entirely in front of the plane: hidden
+			mesh = sec["mesh"]
+			cap_mesh = sec["cap"]
 		# A bake can legitimately come back with no surfaces (a cut consumed
 		# the body); putting a surface override on it is the out-of-bounds
 		# error QA §M18.6 hit.
@@ -1659,6 +1752,20 @@ func _apply_bodies(bodies: Array) -> void:
 			smi.set_surface_override_material(1, emat)
 		smi.visible = _body_shown(b["id"])
 		_sketch_root.add_child(smi)
+		if cap_mesh != null and cap_mesh.get_surface_count() > 0:
+			var cmi := MeshInstance3D.new()
+			cmi.name = String(b["name"]) + "SectionCap"
+			cmi.mesh = cap_mesh
+			cmi.set_meta("is_body", true)
+			cmi.set_meta("section_cap", true)
+			var cmat := StandardMaterial3D.new()
+			cmat.albedo_color = ThemeService.col("section_cap", Color(0.85, 0.3, 0.3))
+			cmat.cull_mode = BaseMaterial3D.CULL_DISABLED
+			cmat.metallic = 0.0
+			cmat.roughness = 0.9
+			cmi.material_override = cmat
+			cmi.visible = smi.visible
+			_sketch_root.add_child(cmi)
 
 
 ## The last built body list: [{id, name, mesh, feature_ids}]. Display state —

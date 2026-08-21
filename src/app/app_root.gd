@@ -1224,6 +1224,26 @@ func _build_ribbon(parent: Control) -> void:
 			"handler": func() -> void: open_copy_dialog("")}])
 
 	_divider(model)
+	var g_inspect := _tool_grid(_shelf_group(model, "Inspect"), 3)
+	var measb := _tool_button(g_inspect, "Measure", _on_measure_pressed, "measure")
+	measb.name = "MeasureBtn"
+	measb.tooltip_text = "Measure: click two points on bodies (snaps to corners and edges); hover a face for its area"
+	_btn_section = _tool_button(g_inspect, "Section", func() -> void: open_section_dialog(), "section")
+	_btn_section.name = "SectionBtn"
+	_btn_section.toggle_mode = true
+	_btn_section.tooltip_text = "Section analysis: look inside the model along a plane"
+	_tool_stack(g_inspect, [
+		{"id": "properties", "name": "PropertiesBtn", "title": "Properties", "icon": "properties",
+			"tooltip": "Mass properties: volume, mass by material, centre of mass, inertia",
+			"handler": func() -> void: open_properties_dialog(world.selected_body())},
+		{"id": "interference", "name": "InterferenceBtn", "title": "Interference", "icon": "interference",
+			"tooltip": "Find overlapping volume between bodies",
+			"handler": func() -> void: open_interference_dialog()},
+		{"id": "print_check", "name": "PrintCheckBtn", "title": "Print Check", "icon": "print_check",
+			"tooltip": "Printability: watertight, bed fit, overhangs",
+			"handler": func() -> void: open_print_check_dialog(world.selected_body())}])
+
+	_divider(model)
 	var g_construct := _shelf_group(model, "Construct")
 	_btn_offset_plane = _tool_button(g_construct, "Offset Plane",
 		_on_offset_plane_pressed, "offset_plane")
@@ -1907,7 +1927,12 @@ func _tool_stack(parent: Control, variants: Array, group: ButtonGroup = null) ->
 		"current": head["id"]}
 	var b := _tool_button(parent, String(head["title"]), Callable(),
 		String(head["icon"]))
-	b.name = String(head.get("name", _pascal(String(head["id"])) + "ToolBtn"))
+	# Named (model-mode) stacks: the flyout buttons carry the canonical
+	# names ("PropertiesBtn", …) so automation always finds one control per
+	# command whatever variant the face currently shows; the face itself is
+	# "<head>Face".
+	b.name = (String(head["name"]) + "Face") if head.has("name") \
+		else _pascal(String(head["id"])) + "ToolBtn"
 	b.tooltip_text = String(head.get("tooltip", head["title"])) \
 		+ "\nRight-click or hold for more"
 	if group != null:
@@ -1956,9 +1981,10 @@ func _tool_stack(parent: Control, variants: Array, group: ButtonGroup = null) ->
 	popup.add_child(col)
 	for v: Dictionary in variants:
 		var vb := Button.new()
-		vb.name = String(v.get("name", "")) + "Variant" if v.has("name") and v["id"] == head["id"] \
-			else (String(v["name"]) if v.has("name") else _pascal(String(v["id"]))
-			+ ("VariantBtn" if v["id"] == head["id"] else "ToolBtn"))
+		if v.has("name"):
+			vb.name = String(v["name"])
+		else:
+			vb.name = _pascal(String(v["id"])) + ("VariantBtn" if v["id"] == head["id"] else "ToolBtn")
 		vb.text = String(v["title"])
 		vb.icon = ThemeService.icon(String(v["icon"]))
 		vb.tooltip_text = String(v.get("tooltip", v["title"]))
@@ -2426,8 +2452,11 @@ func set_display_unit(u: UnitConverter.Unit) -> void:
 func _update_measure_label() -> void:
 	if _status_measure == null:
 		return
-	_status_measure.text = "" if mode != Mode.SKETCH \
-		else Measure.describe(active_sketch(), selection, doc.display_unit)
+	if mode == Mode.SKETCH:
+		_status_measure.text = Measure.describe(active_sketch(), selection, doc.display_unit)
+	elif not picking_measure:
+		_status_measure.text = ""
+	# (picking_measure: the model-mode Measure tool owns the slot)
 	_update_ids_label()
 
 
@@ -4385,6 +4414,392 @@ func _commit_press_pull() -> void:
 			f.set(k, props[k])
 		stack.push_no_merge(CmdAddFeature.new(f))
 	_refresh_ui()
+
+
+
+## --- M43 inspection ------------------------------------------------------------
+
+var _props_dialog: FeatureDialog = null
+var _props_body := ""
+var _btn_section: Button = null
+var _section_dialog: FeatureDialog = null
+var _interf_dialog: FeatureDialog = null
+var _print_dialog: FeatureDialog = null
+var _print_body := ""
+var picking_measure := false
+var _measure_a: Variant = null      # Vector3 once the first point is taken
+var _measure_hover: Dictionary = {}
+
+
+func _body_entry_now(body: String) -> Dictionary:
+	return world.body_entry(body)
+
+
+## --- properties (mass) ---------------------------------------------------------
+
+func open_properties_dialog(body: String) -> void:
+	if mode != Mode.MODEL:
+		return
+	if body == "":
+		if world.body_ids().is_empty():
+			set_status_hint("Properties: no bodies yet")
+			return
+		require_body("Properties", func() -> void: open_properties_dialog(world.selected_body()))
+		return
+	_props_body = body
+	if _props_dialog == null:
+		_props_dialog = FeatureDialog.create(self, "PropertiesDialog", "Properties")
+		_props_dialog.set_ok_name("PropertiesOkBtn")
+		_props_dialog.set_ok_text("Close")
+		_props_dialog.add_info("body", "Body")
+		var names: Array = []
+		for mid in Inspect.material_ids():
+			names.append("%s (%.2f g/cm³)" % [Inspect.material_name(String(mid)), Inspect.density_of(String(mid))])
+		var mat := _props_dialog.add_option("material", "Material", "PropsMaterialPick", names)
+		mat.item_selected.connect(func(i: int) -> void:
+			doc.material = String(Inspect.material_ids()[i])
+			_props_refresh())
+		_props_dialog.add_info("volume", "Volume")
+		_props_dialog.add_info("area", "Surface area")
+		_props_dialog.add_info("mass", "Mass")
+		_props_dialog.add_info("size", "Size")
+		_props_dialog.add_info("com", "Centre of mass")
+		_props_dialog.add_info("inertia", "Inertia (g·mm²)")
+		_props_dialog.add_info("closed", "Watertight")
+		var show := _props_dialog.add_check("marker", "", "PropsComCheck", "show the centre of mass", true)
+		show.toggled.connect(func(_on: bool) -> void: _props_refresh())
+		_props_dialog.confirmed.connect(func() -> void:
+			_props_dialog.close()
+			world.hide_inspect())
+		_props_dialog.cancelled.connect(func() -> void: world.hide_inspect())
+		add_child(_props_dialog)
+	var mp := _props_dialog.field("material") as OptionButton
+	mp.select(maxi(Inspect.material_ids().find(doc.material), 0))
+	_props_refresh()
+	_props_dialog.open()
+
+
+func _props_refresh() -> void:
+	var d := _props_dialog
+	var entry := _body_entry_now(_props_body)
+	if entry.is_empty():
+		(d.field("body") as Label).text = "— body gone —"
+		return
+	var u := doc.display_unit
+	var per := UnitConverter.to_mm(1.0, u)
+	var us := UnitConverter.unit_to_string(u)
+	var mpz := Inspect.mass_properties(entry, Inspect.density_of(doc.material))
+	(d.field("body") as Label).text = body_display_name(_props_body)
+	(d.field("volume") as Label).text = "%.4f %s³  (%.2f cm³)" % [
+		float(mpz["volume_mm3"]) / (per * per * per), us, float(mpz["volume_mm3"]) / 1000.0]
+	(d.field("area") as Label).text = "%.3f %s²" % [float(mpz["area_mm2"]) / (per * per), us]
+	var g := float(mpz["mass_g"])
+	(d.field("mass") as Label).text = ("%.2f g" % g) if g < 1000.0 else ("%.3f kg" % (g / 1000.0))
+	var box: AABB = mpz["aabb"]
+	(d.field("size") as Label).text = "%s × %s × %s" % [UnitConverter.format(box.size.x, u),
+		UnitConverter.format(box.size.y, u), UnitConverter.format(box.size.z, u)]
+	var c: Vector3 = mpz["centroid"]
+	(d.field("com") as Label).text = "%s, %s, %s" % [UnitConverter.format(c.x, u),
+		UnitConverter.format(c.y, u), UnitConverter.format(c.z, u)]
+	var I: Basis = mpz["inertia_gmm2"]
+	(d.field("inertia") as Label).text = "Ixx %.1f  Iyy %.1f  Izz %.1f" % [I.x.x, I.y.y, I.z.z]
+	(d.field("closed") as Label).text = "yes" if bool(mpz["watertight"]) else "NO — repair before printing"
+	if d.checked("marker"):
+		var r := maxf(box.get_longest_axis_size() * 0.02, 0.5)
+		world.show_inspect([{"kind": "marker", "pos": c, "radius": r,
+			"color": ThemeService.col("accent")}])
+	else:
+		world.hide_inspect()
+
+
+## --- section analysis ----------------------------------------------------------
+
+func open_section_dialog() -> void:
+	if mode != Mode.MODEL:
+		return
+	if _section_dialog == null:
+		_section_dialog = FeatureDialog.create(self, "SectionDialog", "Section Analysis")
+		_section_dialog.set_ok_name("SectionOkBtn")
+		_section_dialog.set_ok_text("Close")
+		var en := _section_dialog.add_check("on", "Section", "SectionOnCheck", "show the cut", true)
+		en.toggled.connect(func(_o: bool) -> void: _section_apply())
+		var pl := _section_dialog.add_option("plane", "Plane", "SectionPlanePick", [])
+		pl.item_selected.connect(func(_i: int) -> void: _section_apply())
+		var off := _section_dialog.add_field("offset", "Offset", "SectionOffsetEdit", "along the plane normal")
+		off.text_changed.connect(func(_t: String) -> void: _section_apply())
+		var flip := _section_dialog.add_check("flip", "", "SectionFlipCheck", "flip which side is kept", false)
+		flip.toggled.connect(func(_o: bool) -> void: _section_apply())
+		# Close keeps the section (a view state — the ribbon button stays lit
+		# while it is on; press it again to change or switch it off); Cancel
+		# / Esc switches it off.
+		_section_dialog.set_ok_text("Close")
+		_section_dialog.confirmed.connect(func() -> void:
+			_section_dialog.close()
+			_refresh_ui())
+		_section_dialog.cancelled.connect(func() -> void:
+			world.set_section(false)
+			_refresh_ui())
+		add_child(_section_dialog)
+	var opt := _section_dialog.field("plane") as OptionButton
+	var cur := String(opt.get_item_metadata(opt.selected)) if opt.selected >= 0 else "XZ"
+	opt.clear()
+	for c: Dictionary in _plane_choices():
+		opt.add_item(String(c["label"]))
+		opt.set_item_metadata(opt.item_count - 1, c["id"])
+		if String(c["id"]) == cur:
+			opt.select(opt.item_count - 1)
+	if opt.selected < 0:
+		opt.select(1 if opt.item_count > 1 else 0)
+	if (_section_dialog.field("offset") as LineEdit).text == "":
+		# Default through the middle of the model.
+		var mid := world.model_bounds().get_center()
+		var xf := _section_plane_xf()
+		(_section_dialog.field("offset") as LineEdit).text = UnitConverter.format_exact(
+			(mid - xf.origin).dot(xf.basis.z), doc.display_unit)
+	_section_dialog.open()
+	_section_apply()
+
+
+func _section_plane_xf() -> Transform3D:
+	var opt := _section_dialog.field("plane") as OptionButton
+	var pid := String(opt.get_item_metadata(opt.selected)) if opt.selected >= 0 else "XZ"
+	if SketchFeature.PLANES.has(pid):
+		return Transform3D(SketchFeature.plane_basis(pid), Vector3.ZERO)
+	var pf := doc.plane_feature(pid)
+	return pf.transform() if pf != null else Transform3D.IDENTITY
+
+
+func _section_apply() -> void:
+	if _section_dialog == null:
+		return
+	var on := _section_dialog.checked("on")
+	var xf := _section_plane_xf()
+	var n := xf.basis.z
+	var r := UnitConverter.parse(_section_dialog.text_of("offset"), doc.display_unit)
+	var off := float(r["mm"]) if r["ok"] else 0.0
+	if _section_dialog.checked("flip"):
+		n = -n
+		off = -off
+	world.set_section(on, n, xf.origin.dot(n) + off)
+	_refresh_ui()
+
+
+func section_active() -> bool:
+	return world.section_enabled()
+
+
+## --- interference ---------------------------------------------------------------
+
+func open_interference_dialog() -> void:
+	if mode != Mode.MODEL:
+		return
+	if world.body_ids().size() < 2:
+		set_status_hint("Interference: needs at least two bodies")
+		return
+	if _interf_dialog == null:
+		_interf_dialog = FeatureDialog.create(self, "InterferenceDialog", "Interference")
+		_interf_dialog.set_ok_name("InterferenceOkBtn")
+		_interf_dialog.set_ok_text("Check")
+		_interf_dialog.add_targets("bodies", "Bodies", "InterferenceBodiesBtn")
+		(_interf_dialog.find_child("InterferenceBodiesBtnAuto", true, false) as Label).text = "all bodies"
+		_interf_dialog.add_info("result", "Result", "—")
+		_interf_dialog.confirmed.connect(_run_interference)
+		_interf_dialog.cancelled.connect(func() -> void: world.hide_inspect())
+		add_child(_interf_dialog)
+	_interf_dialog.set_targets("bodies", [])
+	(_interf_dialog.field("result") as Label).text = "—"
+	_interf_dialog.open()
+
+
+func _run_interference() -> void:
+	var ids := _interf_dialog.targets("bodies")
+	var entries: Array = []
+	for b: Dictionary in world.bodies():
+		if ids.is_empty() or ids.has(String(b["id"])):
+			entries.append(b)
+	var hits := Inspect.interference(entries)
+	var items: Array = []
+	var u := doc.display_unit
+	var per := UnitConverter.to_mm(1.0, u)
+	var lines: Array = []
+	for h: Dictionary in hits:
+		lines.append("%s ∩ %s: %.3f %s³" % [h["a_name"], h["b_name"],
+			float(h["volume"]) / (per * per * per), UnitConverter.unit_to_string(u)])
+		items.append({"kind": "mesh", "mesh": h["mesh"], "color": ThemeService.col("error")})
+	(_interf_dialog.field("result") as Label).text = "no interference" if hits.is_empty() \
+		else "\n".join(lines)
+	world.show_inspect(items)
+	set_status_hint("Interference: %d overlap(s)" % hits.size())
+	_interf_dialog.size = Vector2i(_interf_dialog.size.x, 0)
+
+
+## --- print check -----------------------------------------------------------------
+
+func open_print_check_dialog(body: String) -> void:
+	if mode != Mode.MODEL:
+		return
+	if body == "":
+		if world.body_ids().is_empty():
+			set_status_hint("Print Check: no bodies yet")
+			return
+		require_body("Print Check", func() -> void: open_print_check_dialog(world.selected_body()))
+		return
+	_print_body = body
+	if _print_dialog == null:
+		_print_dialog = FeatureDialog.create(self, "PrintCheckDialog", "Print Check")
+		_print_dialog.set_ok_name("PrintCheckOkBtn")
+		_print_dialog.set_ok_text("Close")
+		_print_dialog.add_info("body", "Body")
+		var bed := _print_dialog.add_field("bed", "Bed (X,Y,Z)", "PrintBedEdit", "e.g. 220, 220, 250")
+		bed.text_changed.connect(func(_t: String) -> void: _print_refresh())
+		var ang := _print_dialog.add_field("angle", "Overhang >", "PrintAngleEdit", "degrees from horizontal")
+		ang.text_changed.connect(func(_t: String) -> void: _print_refresh())
+		_print_dialog.add_info("closed", "Watertight")
+		_print_dialog.add_info("fit", "Fits bed")
+		_print_dialog.add_info("over", "Overhangs")
+		var sh := _print_dialog.add_check("shade", "", "PrintShadeCheck", "shade overhanging faces", true)
+		sh.toggled.connect(func(_o: bool) -> void: _print_refresh())
+		_print_dialog.confirmed.connect(func() -> void:
+			_print_dialog.close()
+			world.hide_inspect())
+		_print_dialog.cancelled.connect(func() -> void: world.hide_inspect())
+		add_child(_print_dialog)
+	var u := doc.display_unit
+	var bedv: Vector3 = _pref_vec3("print_bed_mm", Vector3(220, 220, 250))
+	(_print_dialog.field("bed") as LineEdit).text = "%s, %s, %s" % [UnitConverter.format_exact(bedv.x, u),
+		UnitConverter.format_exact(bedv.y, u), UnitConverter.format_exact(bedv.z, u)]
+	(_print_dialog.field("angle") as LineEdit).text = "45"
+	_print_refresh()
+	_print_dialog.open()
+
+
+func _pref_vec3(key: String, fallback: Vector3) -> Vector3:
+	var v: Variant = ThemeService.get_pref(key, null)
+	if v is Array and (v as Array).size() == 3:
+		return Vector3(float(v[0]), float(v[1]), float(v[2]))
+	return fallback
+
+
+func _print_refresh() -> void:
+	var d := _print_dialog
+	var entry := _body_entry_now(_print_body)
+	if entry.is_empty():
+		(d.field("body") as Label).text = "— body gone —"
+		return
+	(d.field("body") as Label).text = body_display_name(_print_body)
+	var u := doc.display_unit
+	var bed := _parse_vec3(d.text_of("bed"), u)
+	if bed.x > 0.0 and bed.y > 0.0 and bed.z > 0.0:
+		ThemeService.set_pref("print_bed_mm", [bed.x, bed.y, bed.z])
+	var ang_t := d.text_of("angle")
+	var ang := ang_t.to_float() if ang_t.is_valid_float() else 45.0
+	var closed := entry.get("solid") != null and SolidKernel.is_valid(entry["solid"])
+	(d.field("closed") as Label).text = "yes" if closed else "NO — the slicer will need repairs"
+	var fit := Inspect.fits_bed(entry, bed)
+	var sz: Vector3 = fit["size"]
+	(d.field("fit") as Label).text = ("yes" if bool(fit["fits"]) else "NO") + " (%s × %s × %s)" % [
+		UnitConverter.format(sz.x, u), UnitConverter.format(sz.y, u), UnitConverter.format(sz.z, u)]
+	var ov := Inspect.overhangs(entry, Vector3(0, 0, 1), ang)
+	(d.field("over") as Label).text = "%.1f %% of the surface needs support (>%.0f°)" % [
+		float(ov["ratio"]) * 100.0, ang]
+	if d.checked("shade"):
+		world.show_inspect([{"kind": "tris", "tris": ov["tris"], "color": ThemeService.col("warning") * Color(1, 1, 1, 0.6)}])
+	else:
+		world.hide_inspect()
+
+
+## --- measure (model mode) --------------------------------------------------------
+
+func _on_measure_pressed() -> void:
+	if mode != Mode.MODEL:
+		return
+	if picking_measure:
+		_end_measure()
+		return
+	picking_measure = true
+	_measure_a = null
+	_measure_hover = {}
+	world.hide_inspect()
+	_refresh_ui()
+
+
+func _end_measure() -> void:
+	picking_measure = false
+	_measure_a = null
+	_measure_hover = {}
+	world.hide_inspect()
+	_status_measure.text = ""
+	_refresh_ui()
+
+
+## Snap candidate under the ray: a body corner or edge point within ~8 px,
+## else the face point. {} on a miss.
+func _measure_candidate(origin: Vector3, dir: Vector3) -> Dictionary:
+	var face := world.pick_face(origin, dir)
+	if face.is_empty():
+		return {}
+	var p: Vector3 = face["point"]
+	var tol := rig.view_height_mm() * 8.0 / maxf(float(_viewport.size.y), 1.0)
+	var entry := world.body_entry(String(face["body"]))
+	var best := p
+	var best_d := tol
+	var label := "face"
+	if not entry.is_empty():
+		for ch: Dictionary in SolidKernel.edge_chains(entry):
+			var pts: PackedVector3Array = ch["points"]
+			var n := pts.size()
+			var cnt := n if bool(ch["closed"]) else n - 1
+			for i in cnt:
+				var a := pts[i]
+				var b := pts[(i + 1) % n]
+				for v: Vector3 in [a, b]:
+					var dv: float = v.distance_to(p)
+					if dv < best_d * 0.999:
+						best_d = dv
+						best = v
+						label = "corner"
+				var q := Geometry3D.get_closest_point_to_segment(p, a, b)
+				var dq := q.distance_to(p)
+				if dq < best_d and label != "corner":
+					best_d = dq
+					best = q
+					label = "edge"
+	return {"pos": best, "label": label, "face": face, "snapped": label != "face"}
+
+
+func _measure_report() -> void:
+	var u := doc.display_unit
+	var items: Array = []
+	if _measure_a != null:
+		items.append({"kind": "marker", "pos": _measure_a, "radius": _measure_marker_r(),
+			"color": ThemeService.col("accent")})
+	if not _measure_hover.is_empty():
+		var hp: Vector3 = _measure_hover["pos"]
+		items.append({"kind": "marker", "pos": hp, "radius": _measure_marker_r() * (1.3 if bool(_measure_hover["snapped"]) else 0.8),
+			"color": ThemeService.col("hover") * Color(1, 1, 1, 2.0)})
+		if _measure_a != null:
+			items.append({"kind": "line", "a": _measure_a, "b": hp, "width": _measure_marker_r() * 0.5,
+				"color": ThemeService.col("accent")})
+			var dv: Vector3 = hp - (_measure_a as Vector3)
+			_status_measure.text = "%s  (Δ %s, %s, %s)" % [UnitConverter.format(dv.length(), u),
+				UnitConverter.format(dv.x, u), UnitConverter.format(dv.y, u), UnitConverter.format(dv.z, u)]
+		else:
+			var face: Dictionary = _measure_hover["face"]
+			var entry := world.body_entry(String(face["body"]))
+			var fp: Dictionary = TopoRef.face_planes(entry).get(int(face.get("face", -1)), {})
+			var per := UnitConverter.to_mm(1.0, u)
+			if not fp.is_empty():
+				_status_measure.text = "%s face: %.3f %s²  n=(%.2f, %.2f, %.2f)" % [
+					String(_measure_hover["label"]), float(fp["area"]) / (per * per),
+					UnitConverter.unit_to_string(u), (fp["normal"] as Vector3).x,
+					(fp["normal"] as Vector3).y, (fp["normal"] as Vector3).z]
+			else:
+				_status_measure.text = String(_measure_hover["label"])
+	world.show_inspect(items)
+
+
+func _measure_marker_r() -> float:
+	return maxf(rig.view_height_mm() * 0.006, 0.2)
 
 
 ## --- construction planes (M22) -------------------------------------------------
@@ -6679,6 +7094,26 @@ func _on_viewport_input(event: InputEvent) -> void:
 				world.show_treat_edges(_treat_pick_edges, _treat_selected,
 					_axis_hover_width_mm())
 				_update_treat_pick_count()
+		elif mb.pressed and picking_measure and mb.button_index == MOUSE_BUTTON_RIGHT:
+			_end_measure()
+		elif mb.pressed and picking_measure and mb.button_index == MOUSE_BUTTON_LEFT:
+			var raymz := rig.pixel_ray(mb.position)
+			var cand := _measure_candidate(raymz[0], raymz[1])
+			if cand.is_empty():
+				set_status_hint("Measure: click a point on a body")
+			elif _measure_a == null:
+				_measure_a = cand["pos"]
+				_measure_hover = cand
+				_measure_report()
+				set_status_hint("Measure: click the second point (right-click or Esc to finish)")
+			else:
+				_measure_hover = cand
+				_measure_report()
+				# The result stays in the status bar; the next click starts a
+				# new measurement from this point.
+				_measure_a = cand["pos"]
+				set_status_hint("Measure: %s — click for the next point, Esc to finish"
+					% _status_measure.text)
 		elif mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT \
 				and (picking_shell_faces or picking_split_face or picking_pp_face):
 			var raysf := rig.pixel_ray(mb.position)
@@ -6811,6 +7246,10 @@ func _on_viewport_input(event: InputEvent) -> void:
 		elif picking_offset_base:
 			var rayb := rig.pixel_ray(mm.position)
 			world.set_plane_hover(world.pick_plane(rayb[0], rayb[1]))
+		elif picking_measure:
+			var raymh := rig.pixel_ray(mm.position)
+			_measure_hover = _measure_candidate(raymh[0], raymh[1])
+			_measure_report()
 		elif picking_shell_faces or picking_split_face or picking_pp_face:
 			var raysh := rig.pixel_ray(mm.position)
 			var facesh := world.pick_face(raysh[0], raysh[1])
@@ -6976,6 +7415,9 @@ func handle_app_key(k: InputEventKey) -> bool:
 			if sketch_orbit:
 				return_to_sketch_plane()
 				return true
+		if picking_measure:
+			_end_measure()
+			return true
 		if picking_shell_faces:
 			(_shell_dialog.find_child("ShellFacesBtn", true, false) as Button).button_pressed = false
 			return true
@@ -7497,6 +7939,8 @@ func _refresh_chrome_labels() -> void:
 
 
 func _refresh_ui() -> void:
+	if _btn_section != null:
+		_btn_section.set_pressed_no_signal(world != null and world.section_enabled())
 	var in_sketch := mode == Mode.SKETCH
 	# M36 ribbon: the model row and the sketch row swap with the mode.
 	_model_ribbon.visible = not in_sketch
@@ -7540,6 +7984,10 @@ func _refresh_ui() -> void:
 	if picking_look_at:
 		_status_hint.text = ("Look At: select a plane or a flat body face "
 			+ "(Esc to cancel)")
+	elif picking_measure:
+		_status_hint.text = ("Measure: click two points (snaps to corners/edges); hover a face "
+			+ "for its area — right-click or Esc to finish") if _measure_a == null \
+			else "Measure: click the second point — right-click or Esc to finish"
 	elif picking_shell_faces:
 		_status_hint.text = ("Shell: click the faces to open (%d) — Enter or right-click "
 			+ "when done; none = closed hollow") % _shell_faces.size()

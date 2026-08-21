@@ -79,6 +79,9 @@ fixture sketch quickly).
   `extent`, `distance2`, `symmetric_whole`, `taper_deg`, `to_face {body,
   face}`; `action.select_option {name, index}` drives OptionButtons;
   `query.project {p:[x,y,z]}` gives the window pixel of a world point.
+- `query.mass_properties {body, material?}`, `query.interference
+  {bodies?}`, `action.section {on, plane?, offset?, flip?, body?}`,
+  `query.print_check {body, bed?, angle?}` (M43 inspection).
 - `action.shell {body, thickness, direction?, remove?:[{body, face}]}`,
   `action.combine {target, tools, operation?, keep_tools?}`,
   `action.split_body {body, plane?}` / `{body, face:{body, face}}`,

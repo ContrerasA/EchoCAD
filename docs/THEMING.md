@@ -92,7 +92,7 @@ Rules:
 `view_cube_nav` (the house glyph beside the cube — pick one that reads
 against `bg3d`), `edge_candidate` (pickable edge lines while a fillet /
 chamfer pick is armed; picked edges use `body_selected`, the hovered chain
-`hover`)
+`hover`), `section_cap` (the cut face of bodies in section analysis)
 
 **Sketch ink** — `ink_free` (under-constrained), `ink_constrained`,
 `ink_construction`, `ink_projected`, `ink_reference`, `region_fill`,
