@@ -96,7 +96,15 @@ const GRID_MAJOR_EVERY := 5
 ## a fixed mm span would leave the grid ending mid-screen when zoomed out and
 ## emit needless geometry when zoomed in. The fade is derived from the same
 ## number, so the grid always ends by fading, never by the mesh running out.
-const GRID_SPAN_STEPS := 44
+##
+## At ~14.6 lines per view-height (see GRID_TARGET_FRAC) this is a radius in
+## VIEW HEIGHTS: 44 steps was three of them, which covers a view looking
+## straight down but not a tilted one, where the ground runs away far past the
+## top of the screen and the grid faded out mid-picture (QA §M38.2 "the grid
+## clips"). 160 steps is ~11 view-heights, which puts the fade off-screen at
+## any usable pitch. The grid is drawn ANALYTICALLY on two triangles, so a
+## wider reach costs nothing but the fill it already paid for.
+const GRID_SPAN_STEPS := 160
 ## Upper bound on lines per direction, so a fine step over the fixed span
 ## cannot emit a wall of geometry.
 const GRID_MAX_LINES := 400
@@ -915,6 +923,13 @@ func _on_quad(hit: Vector3, basis: Basis) -> bool:
 ## Math raycast (no physics): which plane quad does the ray hit — an origin
 ## plane (name) or a construction plane (feature id)? Returns "" on a miss.
 func pick_plane(origin: Vector3, dir: Vector3) -> String:
+	return String(pick_plane_hit(origin, dir)["plane"])
+
+
+## `pick_plane` with the hit DISTANCE alongside it: {"plane", "t"}, t = INF
+## on a miss. Callers that also pick faces need it — a plane quad behind the
+## body must not win the click just for being a plane (QA §M38.2).
+func pick_plane_hit(origin: Vector3, dir: Vector3) -> Dictionary:
 	var best := ""
 	var best_t := INF
 	for plane_name: String in _plane_meshes:
@@ -950,7 +965,7 @@ func pick_plane(origin: Vector3, dir: Vector3) -> String:
 		if absf(local.x) <= PLANE_SIDE * 0.5 and absf(local.y) <= PLANE_SIDE * 0.5:
 			best = fid
 			best_t = t2
-	return best
+	return {"plane": best, "t": best_t}
 
 
 ## Resolved transform of a construction plane quad currently in the scene.
@@ -2030,6 +2045,27 @@ func model_bounds() -> AABB:
 			any = true
 		else:
 			out = out.merge(box)
+	return out
+
+
+## World-space bounds of ONE body (or of the sketch lines of one sketch
+## feature): the node tagged with that feature id. Zero-size AABB when the
+## feature has nothing on screen — what "Fit" reads as "frame the whole
+## model instead".
+func feature_bounds(fid: String) -> AABB:
+	var out := AABB()
+	var any := false
+	if _sketch_root == null or fid == "":
+		return out
+	for c in _sketch_root.get_children():
+		var mi := c as MeshInstance3D
+		if mi == null or mi.mesh == null or not mi.visible:
+			continue
+		if String(mi.get_meta("feature_id", "")) != fid:
+			continue
+		var box := mi.transform * mi.mesh.get_aabb()
+		out = box if not any else out.merge(box)
+		any = true
 	return out
 
 

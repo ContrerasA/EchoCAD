@@ -30,16 +30,31 @@ Bodies are now computed by the Manifold kernel (`MeshSolid` in the vendored
 geometry addon) instead of the engine's CSG: exact booleans, synchronous
 rebuilds, face ids on every triangle, an edge overlay on every body.
 
-- [ ] 1. Launch the app. **Expect:** the status bar shows no "LEGACY
+- [X] 1. Launch the app. **Expect:** the status bar shows no "LEGACY
    KERNEL" badge (it only appears on a platform whose addon binary is
    missing — Linux and Windows x86_64 ship it).
-- [ ] 2. Sketch a 40×30 rectangle on XY, extrude 10. Sketch a 10×10 square
+- [!] 2. Sketch a 40×30 rectangle on XY, extrude 10. Sketch a 10×10 square
    in the middle of its top face, extrude −10 as **Cut**. **Expect:** the
    pocket appears the instant the dialog closes — no one-frame flash of the
    raw cutter, no z-fighting ghost, no see-through skin at the pocket's
    floor or rim. Body properties (browser right-click ▸ Properties or the
    `query.bodies` volume) read exactly 11000 mm³ — cuts are no longer
    inflated by 0.05 mm.
+   Issue (camera, 2026-08-21 — the pocket itself was not reached; every note
+   below is about getting the view to where the work is):
+   - Sketching on the top face flew square onto the plane but framed
+     somewhere else entirely — zoom out, find the middle of the face, zoom
+     back in before a line could be drawn.
+   - Finish Sketch always moved the camera. Fusion only hands back the
+     pre-sketch view when you are still looking square at the plane; once
+     you have orbited into a 3D view, leaving the sketch leaves you where
+     you are looking.
+   - The 40×30 part needed a lot of zooming before it could be seen at all,
+     the grid cut off mid-picture once zoomed in, and pushing further went
+     through the part. Blender re-frames with the period key; something like
+     that is wanted here.
+   - Fusion re-scales the view as a first sketch gets its dimensions, so the
+     part is never a speck or larger than the window.
 - [ ] 3. Sketch another 10×10 square that shares the plate's outer edge
    (flush notch), cut through. **Expect:** the notch opens cleanly to the
    outside — no paper-thin wall left standing on the flush side. Volume
@@ -77,10 +92,110 @@ rebuilds, face ids on every triangle, an edge overlay on every body.
    seam-free).
 - [ ] 13. Both themes: the error chip reads clearly against the timeline in
    Modernist Dark and Modernist Light.
+- [ ] 14. **Navigation, after the camera round below.** Fresh document: the
+   view spans about 200 mm (a 200 mm cube would fill it), not a metre-plus.
+   Wheel over a corner of the part: it stays under the cursor while the view
+   zooms into it. Sketch on a face: the canvas opens centred on THAT face,
+   at a zoom that shows all of it. Finish Sketch square-on: the model view
+   you left comes back; Finish Sketch after a Shift+MMB orbit: you stay
+   where you are looking. First sketch in an empty document: it frames
+   itself on Finish, at the 3/4 angle — and the first body frames itself
+   when it appears. Dimension that rectangle to 400 mm (or to 2 mm): the
+   canvas re-frames; one that still reads leaves the view alone. `Home`
+   fits (in a sketch too; `F` still does in model mode), and a selected
+   body fits on its own. Orbit down to a grazing angle: the grid runs to the
+   horizon instead of ending mid-screen, and zooming right into the part
+   does not clip it away. With New Sketch armed, hovering the plate's top
+   face highlights the FACE (not the origin quad in front of it) and the
+   click sketches on the face; the quads still highlight and pick anywhere
+   they are not over a body, and an offset construction plane in front of a
+   body still wins.
 
 ### Fix log
 
-(none yet)
+- **2026-08-21 — §M38.2 camera round.** Every note above, in order.
+  - *Sketch entry framed the wrong place.* `AppRoot._sketch_entry_view` took
+    the camera target as the canvas centre, so "sketch on this face" opened
+    wherever the model camera happened to point. It now frames what the
+    sketch is ABOUT: the sketch's own geometry when it has some, else the
+    face it sits on (`_face_plane_rect`, via the plane's TopoRef), else the
+    old target fallback. The zoom the user already had is kept whenever it
+    shows the subject between a quarter of the view and the whole of it.
+  - *Finish Sketch always moved.* It now follows Fusion's rule: still
+    square-on to the plane, the pre-sketch view is restored; having ORBITED
+    off it (`sketch_orbit`), the user's own view stands.
+  - *A part too small to see.* The perspective lens went from Godot's 75°
+    default to `OrbitCamera.FOV_DEG` (35°, CAD-like) and the empty-document
+    framing to `HOME_VIEW_MM` (200 mm) — the old 800 mm / 75° pair spanned
+    1.2 m, which is why a 40 mm plate arrived as a speck.
+  - *Zoom walked the part out of frame.* The wheel now calls
+    `OrbitCamera.zoom_at`, which keeps the world point under the cursor on
+    its pixel (the 2D canvas already did this). This is what removes the
+    "zoom out, find the middle, zoom in" dance.
+  - *Nothing framed itself.* A document's first geometry now frames itself
+    on Finish Sketch (at the model orientation, not the sketch's square-on
+    one), the first body frames itself when it appears
+    (`_frame_first_body`), and a dimension that pushes the sketch off screen
+    or shrinks it to a speck re-frames the canvas
+    (`reframe_sketch_if_lost`) — a sketch that still reads is left alone.
+    Construction geometry is excluded from all of this framing
+    (`SketchGeometry.bounds`): the origin axes the dimension tool mints
+    reach far past the part on purpose.
+  - *"Blender's period key".* `Home` fits in every mode (in a sketch `F` is
+    the fillet tool, so it could not be that key); `F` still fits in model
+    mode. A selected body fits on its own; inside a sketch the selected
+    entities do.
+  - *The grid cut off mid-picture.* `GRID_SPAN_STEPS` 44 → 160: the reach is
+    a radius in view-heights (~3 → ~11), and the old three covered a
+    top-down view but not a tilted one, where the ground runs far past the
+    top of the screen. The grid is analytic on two triangles, so the wider
+    reach is free.
+  - *Zooming in clipped the part.* The near/far planes were fixed at
+    0.05 mm / 1 km, which spent the whole depth budget on the first metre
+    and still clipped when the eye came close. `OrbitCamera._update_clip`
+    now scales both with the eye distance (far/near ≈ 1e5 everywhere), and
+    the eye may come to 0.5 mm (`MIN_DISTANCE`) instead of 10 mm.
+  - *Falling out of the fix: the plane pick.* From the new 3/4 default view
+    an origin-plane quad usually hangs between the camera and the part, and
+    "pick a plane or a flat face" preferred the quad — so clicking a plate's
+    top face started a sketch on XZ. A body face now beats an ORIGIN quad
+    wherever they overlap (the quads stay pickable everywhere they are not
+    over a body); a CONSTRUCTION plane still wins on depth, since those are
+    placed by hand against the body they are meant for
+    (`AppRoot._plane_or_face_under`, `CadWorld.pick_plane_hit`). Look At
+    picks the same way, and both hovers pre-highlight what the click takes.
+  - Covered by `tests/m38_camera_qa.gd` (new file, sections A–G).
+
+  **State when this round was handed back (2026-08-21).** The code is
+  written and green; only re-verification is outstanding.
+  - Touched: `src/app/orbit_camera.gd` (FOV_DEG / HOME_VIEW_MM /
+    MIN_DISTANCE / `_update_clip` / `zoom_at` / `fit_bounds`),
+    `src/app/app_root.gd` (`_sketch_entry_view` + `_sketch_subject_rect` +
+    `_face_plane_rect`, `finish_sketch` view rules, `fit_view` /
+    `_fit_sketch_view` / `reframe_sketch_if_lost`, `_frame_first_body`,
+    `_plane_or_face_under`, `Home` key, shortcut sheet),
+    `src/app/world_3d.gd` (`GRID_SPAN_STEPS`, `feature_bounds`,
+    `pick_plane_hit`), `src/model/sketch_geometry.gd` (`bounds`),
+    `docs/USER_GUIDE.md`, `samples/*.ecad` (regenerated — the saved cameras
+    follow the new lens).
+  - Test edits that were assumptions about the OLD framing, not bugs:
+    `tests/m37_arm_then_pick.gd` (probe the body's own centre),
+    `tests/m13_zup_orbit.gd` (let the one-shot first-body fit land before
+    posing the camera), `tests/rpc/test_stl.py` (set the view before drawing
+    a rect 100 mm from the first body).
+  - Last full runs, all green: `toolsun_tests.ps1` 75/75 and all 35 RPC
+    suites. Since then only this file, `docs/USER_GUIDE.md` and section G of
+    `tests/m38_camera_qa.gd` changed (that test passes on its own) — **re-run
+    both suites before merging.** On this machine the RPC runner is happiest
+    with the NON-console Godot exe and one fresh app per suite; a killed
+    console wrapper leaves the real app holding the port and the next suite
+    then talks to a stale document.
+  - Not done, and deliberately out of scope: step 2's actual subject (the
+    pocket cut and its 11000 mm³) was never reached — the notes were all
+    about getting the view there. Re-run step 2 from the top. One thing seen
+    while checking: a sketch-on-face mints a visible 120 mm construction
+    quad (Plane1) that hangs over the part afterwards; Fusion shows nothing
+    there. Worth a decision in a later round.
 
 ---
 

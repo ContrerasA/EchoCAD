@@ -180,7 +180,11 @@ func _run() -> bool:
 	if not _root.picking_body:
 		return _fail("E: Move Body with no body selected should arm a body pick")
 	# Hover then click the body through the viewport input path.
-	var at := _root.rig.camera.unproject_position(Vector3(10, 5, 10))
+	# Aim at the body's own centre: a hand-written probe point only lands on
+	# the body for one particular camera framing, and the framing is not what
+	# this test is about.
+	var at := _root.rig.camera.unproject_position(
+		_root.world.feature_bounds(body).get_center())
 	var mm := InputEventMouseMotion.new()
 	mm.position = at
 	_root._on_viewport_input(mm)

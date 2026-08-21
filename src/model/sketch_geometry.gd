@@ -160,6 +160,58 @@ static func entity_polyline(sk: Sketch, e: SketchEntity, segs := 32) -> PackedVe
 	return out
 
 
+## Bounding rect of a sketch's drawn geometry, sketch mm. `ids` restricts it
+## to a selection (empty = the whole sketch). Returns {"ok": false} when there
+## is nothing to bound — a LONE origin point is not geometry, so a brand-new
+## sketch reports "nothing to frame" rather than a zero-size rect at the
+## origin that a fit would zoom into forever.
+##
+## CONSTRUCTION geometry is left out unless it is all there is. It is drawing
+## aid, not drawing: centrelines and the origin axes the dimension tool mints
+## reach far past the part on purpose, and framing on them would pull the view
+## out to nothing (they are what an auto-fit would otherwise chase).
+##
+## Framing is what this is for, so it walks the render polylines: a circle
+## contributes its rim, an arc its true bulge, not just the points the solver
+## sees.
+static func bounds(sk: Sketch, ids: Array = [],
+		include_construction := false) -> Dictionary:
+	var r := _bounds_of(sk, ids, include_construction)
+	if not bool(r["ok"]) and not include_construction:
+		r = _bounds_of(sk, ids, true)
+	return r
+
+
+static func _bounds_of(sk: Sketch, ids: Array, construction: bool) -> Dictionary:
+	var lo := Vector2.INF
+	var hi := -Vector2.INF
+	var any := false
+	# Points held by construction geometry go out with it: the far end of a
+	# minted origin axis is a plain SketchPoint, and on its own it would drag
+	# the bounds out to the axis's reach anyway. A point a real entity also
+	# uses still counts — that entity's own polyline covers it.
+	var held_by_cons := {}
+	if not construction:
+		for e in sk.entities():
+			if e.construction:
+				for pid in e.point_refs():
+					held_by_cons[pid] = true
+	for e in sk.entities():
+		if not ids.is_empty() and not ids.has(e.id):
+			continue
+		if e.construction and not construction:
+			continue
+		if e.kind() == "point" and (sk.is_origin(e.id) or held_by_cons.has(e.id)):
+			continue
+		for p in entity_polyline(sk, e):
+			lo = lo.min(p)
+			hi = hi.max(p)
+			any = true
+	if not any:
+		return {"ok": false, "rect": Rect2()}
+	return {"ok": true, "rect": Rect2(lo, hi - lo)}
+
+
 ## Marquee hit test (M20). `crossing` false = window select: the entity must
 ## lie ENTIRELY inside `rect`. `crossing` true = crossing select: touching
 ## the rect anywhere is enough.

@@ -47,10 +47,18 @@ the bottom and can be edited or undone later.
   tools in them. A narrow window folds a group's trailing tools into `»`.
 - **Browser** (left) — origin planes, construction planes, sketches and
   bodies with eye toggles; right-click rows for their menus.
-- **Viewport** — middle-drag pans, Shift + middle-drag orbits, wheel
-  zooms, `F` fits, `P` toggles orthographic. The view cube snaps to faces,
-  the house returns home. HUD pills: orbit pivot mode, Look At, Fit,
-  ORTHO, saved Views, Preferences.
+- **Viewport** — middle-drag pans, Shift + middle-drag orbits, the wheel
+  zooms towards the cursor (whatever is under the pointer stays under it),
+  `P` toggles orthographic. The view cube snaps to faces, the house returns
+  home. HUD pills: orbit pivot mode, Look At, Fit, ORTHO, saved Views,
+  Preferences.
+- **Framing** — `Home` fits the work in any mode (`F` does the same in
+  model mode; inside a sketch `F` is the fillet tool). With a body selected
+  it fits that body; inside a sketch, the selected geometry. The view also
+  frames itself at the moments you would otherwise have to: a document's
+  first sketch when you finish it, its first body when it appears, and a
+  sketch whose dimensions have just pushed it off screen or shrunk it to a
+  speck.
 - **Timeline** — one chip per feature in order. Double-click to edit,
   right-click for Edit / Rename / Suppress / Delete, drag the red marker
   to roll the model back in time. A red chip failed (hover for the
@@ -127,8 +135,8 @@ the user themes folder (Preferences ▸ Open themes folder). See
 ## Keyboard
 
 `F1` or `?` shows the full sheet. Essentials: `Ctrl+N/O/S`, `Ctrl+Z` /
-`Ctrl+Shift+Z`, `F` fit, `P` ortho, `N` new sketch, `Esc` cancel, `Enter`
-confirm, `Delete` in sketches.
+`Ctrl+Shift+Z`, `Home` fit (`F` too, in model mode), `P` ortho, `N` new
+sketch, `Esc` cancel, `Enter` confirm, `Delete` in sketches.
 
 ## Known limitations (alpha)
 

@@ -17,6 +17,21 @@ signal moved
 
 const PITCH_LIMIT := PI / 2.0 - 0.01
 const ANIM_TIME := 0.25
+## Vertical field of view for the perspective camera, degrees. Godot's default
+## (75°) is a wide-angle lens: on a 40 mm part it splays the near corners and
+## makes every zoom feel like it overshoots. CAD packages sit near 35°, where
+## a box still reads as a box (QA §M38.2 "the camera doesn't know how to treat
+## this"). Everything that converts between distance and apparent size —
+## `distance_for_height`, `view_height_mm`, `to_perspective_preserving` —
+## reads `camera.fov`, so the whole rig follows this one number.
+const FOV_DEG := 35.0
+## How much world the camera shows on an empty document, mm. Sized for a
+## desktop-3D-print part (a 200 mm cube fills the view) rather than the 1.2 m
+## span the old 800 mm / 75° default worked out to.
+const HOME_VIEW_MM := 200.0
+## The eye may come this close to the target, mm. Small enough to inspect a
+## 1 mm feature; the near plane scales with the distance so it never clips.
+const MIN_DISTANCE := 0.5
 ## Model-mode ortho: keep the eye at least this many view-heights back from
 ## the target. Ortho apparent size ignores distance, but the NEAR PLANE does
 ## not — with the eye close, a grazing view of the ground grid crosses the
@@ -50,9 +65,9 @@ var bounds_provider: Callable = Callable()
 ## Takes a screen Vector2, returns {"ok": bool, "pos": Vector3}.
 var orbit_point_provider: Callable = Callable()
 
-var distance := 800.0:                # mm
+var distance := 320.0:                # mm — HOME_VIEW_MM at FOV_DEG
 	set(v):
-		distance = clampf(v, 10.0, 100000.0)
+		distance = clampf(v, MIN_DISTANCE, 100000.0)
 		_apply()
 var target := Vector3.ZERO:
 	set(v):
@@ -75,12 +90,14 @@ var _orbit_arm := Vector3.ZERO
 func _ready() -> void:
 	camera = Camera3D.new()
 	camera.name = "Camera"
-	camera.far = 1000000.0
+	camera.fov = FOV_DEG
 	# An orthographic camera projects from -size/2, so anything nearer than
 	# `near` in front of the eye is clipped. Keeping `near` at 1 mm would slice
-	# through geometry when the eye sits close to the sketch plane.
+	# through geometry when the eye sits close to the sketch plane. Both planes
+	# are re-derived from the framing on every move — see `_update_clip`.
 	camera.near = 0.05
 	add_child(camera)
+	distance = distance_for_height(HOME_VIEW_MM)
 	# Home view: Fusion-like 3/4 view onto the XY ground plane, from above.
 	yaw = HOME_YAW
 	pitch = HOME_PITCH
@@ -121,7 +138,29 @@ func _apply() -> void:
 	position = target
 	if camera != null:
 		camera.position = Vector3(0, 0, distance)
+		_update_clip()
 	moved.emit()
+
+
+## Re-derive the near/far planes from the current framing.
+##
+## Fixed planes cannot serve a model that is millimetres across AND one that
+## is metres across. The old pair (0.05 mm .. 1 km) spent its whole depth
+## budget on the first metre: at alpha part sizes the buffer had so few bits
+## left that coplanar faces z-fought, and zooming in on a 40 mm part still
+## clipped it (QA §M38.2). Scaling both planes with the eye distance keeps the
+## far/near ratio near 1e5 — precise everywhere, clipping nowhere.
+##
+## Perspective only for the near plane: under an orthographic projection depth
+## is linear (precision does not care) and the eye is parked ORTHO_STANDOFF
+## view-heights back, so a small fixed near plane is exactly right there.
+func _update_clip() -> void:
+	if camera.projection == Camera3D.PROJECTION_ORTHOGONAL:
+		camera.near = 0.05
+		camera.far = maxf(distance + camera.size * 50.0, 20000.0)
+	else:
+		camera.near = clampf(distance * 0.002, 0.005, 20.0)
+		camera.far = maxf(distance * 200.0, 20000.0)
 
 
 ## Begin an orbit gesture. `screen` is the cursor position, used only by
@@ -208,6 +247,46 @@ func zoom(factor: float) -> void:
 		distance = maxf(distance * factor, camera.size * ORTHO_STANDOFF)
 		return
 	distance *= factor
+
+
+## Zoom keeping the world point under `screen` where it is on screen — the
+## wheel behaviour every other 3D app has, and the reason Fusion never makes
+## you hunt for the part you were pointing at.
+##
+## Zooming about the view CENTRE (what this rig did before) is only equivalent
+## when the target already sits under the cursor. Off-centre it walks the
+## thing you are zooming towards out of frame, which is what forced the
+## "zoom out, find the middle, zoom back in" dance in QA §M38.2.
+##
+## The anchor is taken on the plane through `target` facing the camera: the
+## depth of what is under the cursor does not matter to where it lands on
+## screen under an orthographic projection, and under perspective the focal
+## plane is the one the user is judging the zoom against anyway.
+func zoom_at(factor: float, screen: Vector2) -> void:
+	var anchor: Variant = _focal_point(screen)
+	zoom(factor)
+	if anchor == null:
+		return
+	var p: Vector3 = anchor
+	# Apparent size just scaled by `factor`; the screen offset of a point is
+	# (p - target) / view_height, so scaling the offset by the same factor
+	# pins it to its pixel.
+	target = p + (target - p) * factor
+
+
+## Where the ray through pixel `screen` meets the plane through `target`
+## facing the camera. Null when there is no viewport to project through
+## (headless before the first frame) or the ray runs parallel to the plane.
+func _focal_point(screen: Vector2) -> Variant:
+	if camera == null or not camera.is_inside_tree():
+		return null
+	var n := -(basis_for(yaw, pitch) * Vector3(0, 0, 1))   # view direction
+	var o := camera.project_ray_origin(screen)
+	var d := camera.project_ray_normal(screen)
+	var denom := d.dot(n)
+	if absf(denom) < 1e-6:
+		return null
+	return o + d * ((target - o).dot(n) / denom)
 
 
 ## Animate so the camera looks along `-normal` with `up_hint` upward, framing
@@ -314,11 +393,13 @@ func pixel_ray(screen: Vector2) -> Array:
 func set_orthographic(height_mm: float) -> void:
 	camera.projection = Camera3D.PROJECTION_ORTHOGONAL
 	camera.size = maxf(height_mm, 0.001)
+	_update_clip()
 
 
 ## Back to the perspective projection model mode uses, where depth cues matter.
 func set_perspective() -> void:
 	camera.projection = Camera3D.PROJECTION_PERSPECTIVE
+	_update_clip()
 
 
 ## Leave orthographic for perspective without an apparent-size jump: the eye
@@ -330,6 +411,7 @@ func to_perspective_preserving() -> void:
 	if camera.projection == Camera3D.PROJECTION_ORTHOGONAL:
 		distance = camera.size / (2.0 * tan(deg_to_rad(camera.fov) * 0.5))
 	camera.projection = Camera3D.PROJECTION_PERSPECTIVE
+	_update_clip()
 
 
 func is_orthographic() -> bool:
@@ -360,18 +442,19 @@ func set_projection_ortho(on: bool) -> void:
 ## moves to its center and the view height grows to hold its bounding sphere
 ## plus margin. Works under either projection.
 func fit_bounds(aabb: AABB) -> void:
-	var radius := aabb.size.length() * 0.5
-	if radius < 1e-6:
-		radius = 100.0   # empty model: settle on a sane default framing
-	var vh := radius * 2.0 * 1.15
+	var vh := aabb.size.length() * 1.15   # bounding-sphere diameter + margin
+	if vh < 1e-6:
+		vh = HOME_VIEW_MM   # empty model: the standard working volume
 	target = aabb.get_center()
 	if is_orthographic():
 		camera.size = maxf(vh, 0.001)
-		# Keep the eye parked far back so near-plane clipping cannot eat the
-		# model or the grid — see ORTHO_STANDOFF.
-		distance = maxf(distance, vh * ORTHO_STANDOFF)
+		# Park the eye a fixed number of view-heights back rather than keeping
+		# whatever it was: near-plane safety wants it far (see ORTHO_STANDOFF),
+		# but inheriting a stale kilometre-scale standoff after fitting a 40 mm
+		# part left the depth buffer nothing to work with.
+		distance = vh * ORTHO_STANDOFF
 	else:
-		distance = vh / (2.0 * tan(deg_to_rad(camera.fov) * 0.5))
+		distance = distance_for_height(vh)
 	_apply()
 
 

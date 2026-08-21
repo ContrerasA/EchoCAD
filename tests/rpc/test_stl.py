@@ -83,6 +83,11 @@ def main():
     # Per-body filter.
     app.call("action.enter_sketch", {"plane": "XY"})
     s2 = app.call("query.mode")["active_sketch"]
+    # Frame where this rect goes: entering a sketch now opens on the model
+    # (or the face) rather than on a kilometre-wide default view, so a rect
+    # drawn 100 mm away from the first box needs the view moved there first
+    # -- exactly what the first sketch above does.
+    app.call("action.set_view", {"pan": [105, 5], "zoom": 4.0})
     app.click_control("RectToolBtn")
     app.click_world([100, 0], steps=5)
     app.click_world([110, 10], steps=5)

@@ -77,9 +77,17 @@ var _plane_dialog_base := ""    # base plane ref while creating
 var _plane_dialog_edit := ""    # plane feature id while editing (else "")
 ## Pending extrude target set by the profile click: {sketch_id, at}.
 var _pending_extrude := {}
+## Has this document ever shown a solid? The FIRST one frames itself — see
+## `_frame_first_body`. Loaded documents start true: their camera is their own.
+var _had_bodies := false
 ## Camera state captured on entering sketch mode, so Finish Sketch animates
 ## back to the model view the user left rather than to a canned angle.
 var _model_view_before_sketch := {}
+## Was there anything to look at when this sketch was opened? A document that
+## had NOTHING and now has its first geometry frames itself on Finish Sketch,
+## which is how Fusion introduces a part rather than leaving it a speck in a
+## metre-wide view (QA §M38.2).
+var _model_empty_before_sketch := false
 
 var world: CadWorld
 var rig: OrbitCamera
@@ -411,6 +419,8 @@ func add_constraint(c: SketchConstraint) -> void:
 			demoted = SketchConstraint.Type.keys()[c.type]
 	solve_followers_prefer_points(_pins_outside_components(sk, [c]))
 	batch.seal()
+	if c.is_dimensional():
+		reframe_sketch_if_lost()
 	if demoted != "":
 		_status_hint.text = ("%s is redundant here — kept as a DRIVEN "
 			+ "reference dimension (it measures, it does not drive). Remove "
@@ -490,6 +500,7 @@ func set_dimension_value(index: int, text: String) -> String:
 			after[i] = mate
 	stack.push(CmdSetConstraints.new(active_sketch_id, sk.constraints, after))
 	solve_followers(_pins_outside_components(sk, [c]))
+	reframe_sketch_if_lost()
 	return ""
 
 
@@ -779,6 +790,9 @@ func load_document(new_doc: CadDocument) -> void:
 	world.set_grid_plane("XY")
 	world.set_grid_unit(doc.display_unit)
 	world.rebuild_sketches(doc)
+	# An opened file brings its own camera (or deserves the default one) — it
+	# is never the "here is your first part" moment `_frame_first_body` is for.
+	_had_bodies = not world.bodies().is_empty() or not doc.camera.is_empty()
 	timeline.refresh()
 	browser.refresh()
 	_refresh_views_pick()
@@ -948,7 +962,10 @@ func _build_ui() -> void:
 	world.bodies_rebuilt.connect(func() -> void:
 		browser.refresh.call_deferred()
 		# Rebuild errors (M38) live on the features — repaint the chips.
-		timeline.refresh.call_deferred())
+		timeline.refresh.call_deferred()
+		# Deferred like the others: the signal fires BEFORE the new body
+		# meshes are in the tree, and framing reads the tree.
+		_frame_first_body.call_deferred())
 	# The rig emitted `moved` from its own _ready, before the connect above.
 	world.set_grid_unit(doc.display_unit)
 	world.update_grid(rig.view_height_mm(), rig.target)
@@ -1597,7 +1614,7 @@ func _build_hud(parent: Control) -> void:
 	lookb.tooltip_text = "Look At: square the view to a plane or flat face"
 	var fitb := _hud_button(nav, "Fit", fit_view, "fit_view")
 	fitb.name = "FitBtn"
-	fitb.tooltip_text = "Fit the model in view (F)"
+	fitb.tooltip_text = "Fit the model in view (F, or Home inside a sketch)"
 
 	var proj := _hud_pill(hud, "ProjectionPill")
 	_btn_ortho = _hud_button(proj, "ORTHO", func() -> void:
@@ -2427,10 +2444,128 @@ func look_at_normal(normal: Vector3, up_hint := Vector3(0, 0, 1)) -> void:
 	rig.frame_view(normal, up_hint)
 
 
+## What a "pick a plane or a flat face" click would take under a ray, as
+## {"plane": String, "face": Dictionary} with at most one filled.
+##
+## The rule, in order:
+##  - a body FACE beats an ORIGIN plane quad, wherever the two overlap. The
+##    origin quads are translucent scenery a metre wide, and from any 3/4
+##    view one of them hangs between the camera and the part: preferring the
+##    quad meant that clicking a plate's top face started a sketch on XZ
+##    instead (QA §M38.2). Solid geometry beats the ghost; the quads are
+##    still pickable everywhere they are not over a body.
+##  - a CONSTRUCTION plane wins when it is nearer than the face. Those are
+##    placed by hand, usually right against the body they are meant for, so
+##    depth is the honest answer there.
+func _plane_or_face_under(ray: Array) -> Dictionary:
+	var hit := world.pick_plane_hit(ray[0], ray[1])
+	var plane := String(hit["plane"])
+	var face := world.pick_face(ray[0], ray[1])
+	if face.is_empty() or plane == "":
+		return {"plane": plane, "face": face}
+	if SketchFeature.PLANES.has(plane):
+		return {"plane": "", "face": face}
+	var face_t := (face["point"] as Vector3).distance_to(ray[0] as Vector3)
+	if float(hit["t"]) <= face_t:
+		return {"plane": plane, "face": {}}
+	return {"plane": "", "face": face}
+
+
+## Canvas size in pixels. The 2D canvas and the 3D viewport cover the same
+## area in the running app, but a headless test drives the canvas control
+## directly and leaves the SubViewport at 2x2 — anything measuring the CANVAS
+## has to ask the canvas.
+func _canvas_px() -> Vector2:
+	if sketch_view != null and sketch_view.size.y > 1.0:
+		return sketch_view.size
+	return Vector2(_viewport.size) if _viewport != null else Vector2.ZERO
+
+
+## The first solid a document ever grows frames itself, at whatever angle the
+## user is looking from.
+##
+## The sketch that precedes it framed a FLAT outline (see
+## `_model_empty_before_sketch`); the body that rises out of it is the first
+## thing with height, and from a 3/4 view its top face would otherwise sit
+## above the frame. After that the camera is the user's business.
+func _frame_first_body() -> void:
+	var has := not world.bodies().is_empty()
+	if has and not _had_bodies and mode == Mode.MODEL:
+		fit_view()
+	_had_bodies = has
+
+
+## Is there anything on screen to frame — a body, a sketch line, an imported
+## mesh? (Zero-size bounds is what CadWorld reports for "nothing".)
+func _has_model_geometry() -> bool:
+	return world.model_bounds().size.length_squared() > 1e-12
+
+
+## Frame the work — the one key that always gets you back to something you
+## can see (Blender's Home, Fusion's Zoom Fit), whichever mode you are in.
+## A selection narrows it: a selected body, or selected sketch entities, are
+## framed on their own; otherwise it is everything.
 func fit_view() -> void:
-	if mode != Mode.MODEL:
+	if mode == Mode.SKETCH and not sketch_orbit:
+		_fit_sketch_view()
 		return
-	rig.fit_bounds(world.model_bounds())
+	var box := world.feature_bounds(world.selected_body())
+	if box.size.length_squared() <= 1e-12:
+		box = world.model_bounds()
+	rig.fit_bounds(box)
+
+
+## Re-fit the canvas when a dimension has just moved the sketch out of sight.
+##
+## Typing a dimension is how a sketch gets its real size, and it is routinely
+## a hundredfold change: a rectangle dragged out at eyeball size and then
+## dimensioned 400 mm walks off every edge of the screen, and one dimensioned
+## 2 mm shrinks to a dot. Fusion re-frames at exactly this moment, and it is
+## the reason a first part never leaves you hunting for it.
+##
+## Deliberately conservative — a sketch that still reads at the current zoom
+## is left ALONE. Re-framing on every dimension would fight anyone who has
+## zoomed into a corner on purpose.
+func reframe_sketch_if_lost() -> void:
+	if mode != Mode.SKETCH or sketch_orbit or _viewport == null:
+		return
+	var sk := active_sketch()
+	if sk == null:
+		return
+	var b := SketchGeometry.bounds(sk)
+	if not bool(b["ok"]):
+		return
+	var r: Rect2 = b["rect"]
+	var view := sketch_view.view_rect()
+	var fills := maxf(r.size.x / maxf(view.size.x, 1e-6),
+		r.size.y / maxf(view.size.y, 1e-6))
+	# Off the screen entirely, bigger than the screen, or a speck on it.
+	# (Centre-in-view rather than rect overlap: a straight line dimensioned
+	# on its own has a zero-height rect, which no overlap test likes.)
+	if view.has_point(r.get_center()) and fills <= 1.0 and fills >= 0.08:
+		return
+	_fit_sketch_view(false)
+
+
+## Fit inside the 2D canvas: the selected entities, else the whole sketch,
+## else — an empty sketch — the standard working span around its origin.
+func _fit_sketch_view(use_selection := true) -> void:
+	var sk := active_sketch()
+	if sk == null or _viewport == null:
+		return
+	var vp := _canvas_px()
+	var b := SketchGeometry.bounds(sk, selection if use_selection else [])
+	if not bool(b["ok"]):
+		b = SketchGeometry.bounds(sk)
+	var pan := Vector2.ZERO
+	var zoom := vp.y / OrbitCamera.HOME_VIEW_MM if vp.y > 0.0 else 4.0
+	if bool(b["ok"]):
+		var r: Rect2 = b["rect"]
+		pan = r.get_center()
+		var fit := _fit_zoom(r.size, vp)
+		if fit > 0.0:
+			zoom = fit
+	sketch_view.set_view(pan, zoom)
 
 
 func _plane_transform_for(key: String) -> Transform3D:
@@ -2836,6 +2971,7 @@ func edit_sketch(feature_id: String) -> void:
 		return
 	if mode == Mode.MODEL:
 		_model_view_before_sketch = rig.capture_view()
+		_model_empty_before_sketch = not _has_model_geometry()
 	active_sketch_id = feature_id
 	picking_plane = false
 	picking_offset_base = false
@@ -2845,11 +2981,11 @@ func edit_sketch(feature_id: String) -> void:
 	sketch_orbit = false
 	timeline.refresh()   # the active sketch's chip lights up (M36)
 	sketch_view.grid_unit = doc.display_unit
-	# Carry the 3D framing into the sketch (CHANGES #3): the canvas opens
-	# centred on where the camera was looking, at the zoom the model view
-	# had, instead of snapping to origin @ 4 px/mm every time.
+	# Open the canvas on what the sketch is about — its geometry, or the face
+	# it sits on — carrying the model view's zoom when that already frames it
+	# (CHANGES #3, QA §M38.2). See `_sketch_entry_view`.
 	var xf := feat.plane_transform()
-	var entry := _sketch_entry_view(xf)
+	var entry := _sketch_entry_view(xf, feat)
 	sketch_view.set_view(entry["pan"], entry["zoom"])
 	sketch_view.show_sketch(feat.sketch, reference_sketches())
 	# Fly the 3D camera square onto the plane FIRST, then swap in the 2D
@@ -2882,23 +3018,92 @@ func edit_sketch(feature_id: String) -> void:
 	_refresh_ui()
 
 
-## Where the canvas should open so the sketch matches the 3D view the user
-## was just in: pan = the camera target dropped onto the plane, zoom = the
-## px/mm the model view showed, distance = the eye standoff that keeps that
-## height under the current projection. Falls back to origin @ 4 px/mm when
-## the viewport has no size yet (headless before the first frame).
-func _sketch_entry_view(xf: Transform3D) -> Dictionary:
+## Where the canvas should open: centred on what the sketch is ABOUT, at a
+## zoom that shows it whole. Returns {pan, zoom, distance} — distance is the
+## eye standoff that keeps `zoom` under the current projection.
+##
+## The subject is the sketch's own geometry when it has any (re-opening a
+## sketch shows you the sketch), else the FACE the sketch sits on, else the
+## camera target dropped onto the plane (an origin plane on an empty document
+## — nothing better to say). Before M38's QA the target was the only rule,
+## so "sketch on this face" opened the canvas wherever the model camera had
+## been pointing: on a 40 mm plate seen from across the document that is
+## somewhere off-screen, and the user had to zoom out, find the face and zoom
+## back in before drawing a line.
+##
+## The zoom the user already had is KEPT whenever it frames the subject
+## sensibly (between a quarter of the view and the whole of it). Only a view
+## that would open on a speck or on a crop gets overridden, so entering a
+## sketch stays predictable for anyone who has already framed their work.
+func _sketch_entry_view(xf: Transform3D, feat: SketchFeature) -> Dictionary:
 	var local := xf.affine_inverse() * rig.target
 	var pan := Vector2(local.x, local.y)
 	var vh_mm := rig.view_height_mm()
-	var vp_h := float(_viewport.size.y) if _viewport != null else 0.0
+	var vp := _canvas_px()
 	var zoom := 4.0
-	if vp_h > 0.0 and vh_mm > 0.0:
-		zoom = vp_h / vh_mm
-	var dist := rig.distance
+	if vp.y > 0.0 and vh_mm > 0.0:
+		zoom = vp.y / vh_mm
+	var subject := _sketch_subject_rect(xf, feat)
+	if bool(subject["ok"]) and vp.y > 0.0:
+		var r: Rect2 = subject["rect"]
+		pan = r.get_center()
+		var fit := _fit_zoom(r.size, vp)
+		if fit > 0.0 and (zoom > fit or zoom < fit * 0.25):
+			zoom = fit
+	var height := vp.y / zoom if vp.y > 0.0 and zoom > 0.0 else vh_mm
+	var dist := height * OrbitCamera.ORTHO_STANDOFF
 	if not rig.is_orthographic():
-		dist = rig.distance_for_height(vh_mm)
+		dist = rig.distance_for_height(height)
 	return {"pan": pan, "zoom": zoom, "distance": dist}
+
+
+## px/mm at which a `size_mm` box fills a `vp_px` viewport with a margin
+## around it. 0 when the box has no extent in either axis.
+func _fit_zoom(size_mm: Vector2, vp_px: Vector2) -> float:
+	const MARGIN := 1.25
+	var z := 0.0
+	if size_mm.x > 1e-6 and vp_px.x > 0.0:
+		z = vp_px.x / (size_mm.x * MARGIN)
+	if size_mm.y > 1e-6 and vp_px.y > 0.0:
+		var zy := vp_px.y / (size_mm.y * MARGIN)
+		z = zy if z <= 0.0 else minf(z, zy)
+	return z
+
+
+## What a sketch is about, in its own plane coordinates: its geometry, or
+## failing that the face it was drawn on. {"ok": false} when neither exists.
+func _sketch_subject_rect(xf: Transform3D, feat: SketchFeature) -> Dictionary:
+	if feat != null and feat.sketch != null:
+		var b := SketchGeometry.bounds(feat.sketch)
+		if bool(b["ok"]):
+			return b
+	return _face_plane_rect(xf, feat.plane if feat != null else "")
+
+
+## The face a FACE plane is bound to, projected into that plane's own 2D
+## frame. {"ok": false} for origin/offset planes, for a face whose body is
+## gone, and before the first body rebuild.
+func _face_plane_rect(xf: Transform3D, plane_key: String) -> Dictionary:
+	var pf := doc.plane_feature(plane_key)
+	if pf == null or pf.plane_kind != PlaneFeature.KIND_FACE or pf.ref == null:
+		return {"ok": false, "rect": Rect2()}
+	var entry := world.body_entry(pf.ref.body)
+	if entry.is_empty():
+		return {"ok": false, "rect": Rect2()}
+	var inv := xf.affine_inverse()
+	var lo := Vector2.INF
+	var hi := -Vector2.INF
+	var any := false
+	for loop: PackedVector3Array in TopoRef.face_loops(entry, pf.ref.face):
+		for v in loop:
+			var l := inv * v
+			var p := Vector2(l.x, l.y)
+			lo = lo.min(p)
+			hi = hi.max(p)
+			any = true
+	if not any:
+		return {"ok": false, "rect": Rect2()}
+	return {"ok": true, "rect": Rect2(lo, hi - lo)}
 
 
 ## Run `done` when the rig's current move finishes — right away when there is
@@ -2914,6 +3119,9 @@ func _after_camera_move(done: Callable) -> void:
 func finish_sketch() -> void:
 	if mode != Mode.SKETCH:
 		return
+	# Was the user looking at the plane square-on, or had they orbited off it?
+	# It decides where Finish Sketch leaves the camera — see below.
+	var orbited := sketch_orbit
 	tools.set_active("")
 	set_selection([])
 	active_sketch_id = ""
@@ -2932,11 +3140,30 @@ func finish_sketch() -> void:
 	# Back to the ground plane: the grid is XY whenever no sketch is open.
 	world.set_grid_plane("XY")
 	world.rebuild_sketches(doc)
-	if _model_view_before_sketch.is_empty():
-		rig.frame_home()
-	else:
-		rig.restore_view(_model_view_before_sketch)
+	# Where to leave the camera, in Fusion's order of preference:
+	#  - the document's FIRST geometry frames itself (see
+	#    `_model_empty_before_sketch`) — nothing worth going back to;
+	#  - having ORBITED off the plane, the user is already looking at the
+	#    model in 3D and expects to stay there. Yanking the view back to the
+	#    pose from before the sketch threw away the orbit they had just done;
+	#  - still square-on to the plane, they never chose this view — the sketch
+	#    did — so hand back the one they left.
+	if _model_empty_before_sketch and _has_model_geometry():
+		# Orientation first, framing second: the sketch camera is square onto
+		# the plane, and fitting from there would leave the user staring at
+		# their first part face-on (a plate looks like a rectangle). Unless
+		# they orbited — then the angle is theirs and only the framing is ours.
+		if not orbited and not _model_view_before_sketch.is_empty():
+			rig.yaw = float(_model_view_before_sketch["yaw"])
+			rig.pitch = float(_model_view_before_sketch["pitch"])
+		fit_view()
+	elif not orbited:
+		if _model_view_before_sketch.is_empty():
+			rig.frame_home()
+		else:
+			rig.restore_view(_model_view_before_sketch)
 	_model_view_before_sketch = {}
+	_model_empty_before_sketch = false
 	mode_changed.emit(mode)
 	_refresh_ui()
 
@@ -5656,7 +5883,9 @@ func show_shortcuts() -> void:
 			"",
 			"VIEW (model and sketch)",
 			"  Middle drag                                pan        Shift + middle drag   orbit",
-			"  Wheel                                      zoom       F                     fit",
+			"  Wheel                                      zoom towards the cursor",
+			"  Home                                       fit (the selection, else everything)",
+			"  F                                          fit — model mode (in a sketch F is fillet)",
 			"  P                                          orthographic / perspective",
 			"  View cube faces / house                    snap views / home",
 			"",
@@ -7708,9 +7937,11 @@ func _on_viewport_input(event: InputEvent) -> void:
 			elif not mb.pressed:
 				rig.end_orbit()
 		elif mb.pressed and mb.button_index == MOUSE_BUTTON_WHEEL_UP:
-			rig.zoom(1.0 / 1.1)
+			# Towards the cursor, like the 2D canvas and every other 3D app —
+			# see OrbitCamera.zoom_at.
+			rig.zoom_at(1.0 / 1.1, mb.position)
 		elif mb.pressed and mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:
-			rig.zoom(1.1)
+			rig.zoom_at(1.1, mb.position)
 		elif nav_only:
 			# Off-axis sketching: clicks ray-cast onto the sketch plane and
 			# feed the active tool exactly as locked-2D clicks do.
@@ -7719,23 +7950,21 @@ func _on_viewport_input(event: InputEvent) -> void:
 					mb.position, mb)
 		elif mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT \
 				and picking_look_at:
-			var rayl := rig.pixel_ray(mb.position)
-			var lplane := world.pick_plane(rayl[0], rayl[1])
-			if lplane != "":
+			var lpick := _plane_or_face_under(rig.pixel_ray(mb.position))
+			var lface: Dictionary = lpick["face"]
+			if String(lpick["plane"]) != "":
 				picking_look_at = false
 				world.set_plane_hover("")
 				world.set_planes_visible(false)
-				var xf := _plane_transform_for(lplane)
+				var xf := _plane_transform_for(String(lpick["plane"]))
 				look_at_normal(xf.basis.z, xf.basis.y)
 				_refresh_ui()
-			else:
-				var lface := world.pick_face(rayl[0], rayl[1])
-				if not lface.is_empty():
-					picking_look_at = false
-					world.clear_face_hover()
-					world.set_planes_visible(false)
-					look_at_normal(lface["normal"])
-					_refresh_ui()
+			elif not lface.is_empty():
+				picking_look_at = false
+				world.clear_face_hover()
+				world.set_planes_visible(false)
+				look_at_normal(lface["normal"])
+				_refresh_ui()
 		elif mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT \
 				and picking_mirror_plane:
 			var raym2 := rig.pixel_ray(mb.position)
@@ -7747,19 +7976,17 @@ func _on_viewport_input(event: InputEvent) -> void:
 				_mirror_plane_picked(mplane)
 				_refresh_ui()
 		elif mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT and picking_plane:
-			var ray := rig.pixel_ray(mb.position)
-			var plane := world.pick_plane(ray[0], ray[1])
-			if plane != "":
+			# Whichever is nearer: an origin/construction quad, or a flat body
+			# face (M22) — the face mints a snapshot plane to sketch on.
+			var pick := _plane_or_face_under(rig.pixel_ray(mb.position))
+			if String(pick["plane"]) != "":
 				world.clear_face_hover()
-				create_sketch(plane)
-			else:
-				# No quad under the click — a flat body face will do (M22):
-				# mint a snapshot plane on it and sketch there.
-				var face := world.pick_face(ray[0], ray[1])
-				if not face.is_empty():
-					world.clear_face_hover()
-					create_sketch_on_face(face["point"], face["normal"],
-						String(face.get("body", "")), int(face.get("face", -1)))
+				create_sketch(String(pick["plane"]))
+			elif not (pick["face"] as Dictionary).is_empty():
+				var face: Dictionary = pick["face"]
+				world.clear_face_hover()
+				create_sketch_on_face(face["point"], face["normal"],
+					String(face.get("body", "")), int(face.get("face", -1)))
 		elif mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT \
 				and picking_offset_base:
 			var rayo := rig.pixel_ray(mb.position)
@@ -8005,20 +8232,16 @@ func _on_viewport_input(event: InputEvent) -> void:
 			_on_tool_input(sketch_view.screen_to_world(mm.position),
 				mm.position, mm)
 		elif picking_plane or picking_look_at or picking_mirror_plane:
-			var ray := rig.pixel_ray(mm.position)
-			var hov := world.pick_plane(ray[0], ray[1])
-			world.set_plane_hover(hov)
-			# A flat body face is a sketch target too (M22) — highlight it
-			# whenever no plane quad is in the way.
-			if hov == "":
-				var face := world.pick_face(ray[0], ray[1])
-				if face.is_empty():
-					world.clear_face_hover()
-				else:
-					world.set_face_hover(String(face["body"]),
-						face["point"], face["normal"])
-			else:
+			# Pre-highlight whichever the click would take — plane quad or
+			# flat body face, nearest wins (`_plane_or_face_under`).
+			var pick := _plane_or_face_under(rig.pixel_ray(mm.position))
+			world.set_plane_hover(String(pick["plane"]))
+			var hface: Dictionary = pick["face"]
+			if hface.is_empty():
 				world.clear_face_hover()
+			else:
+				world.set_face_hover(String(hface["body"]),
+					hface["point"], hface["normal"])
 		elif picking_offset_base:
 			var rayb := rig.pixel_ray(mm.position)
 			world.set_plane_hover(world.pick_plane(rayb[0], rayb[1]))
@@ -8168,6 +8391,12 @@ func handle_app_key(k: InputEventKey) -> bool:
 		return true
 	if k.keycode == KEY_F1 or (k.keycode == KEY_SLASH and k.shift_pressed) or k.keycode == KEY_QUESTION:
 		show_shortcuts()
+		return true
+	# Home = frame the work, in EVERY mode (Blender's Home / Fusion's Zoom
+	# Fit). Model mode also has F, but inside a sketch F is the fillet tool —
+	# and getting un-lost matters most exactly where the letters are taken.
+	if k.keycode == KEY_HOME and not k.ctrl_pressed:
+		fit_view()
 		return true
 	if k.keycode == KEY_N and k.ctrl_pressed and mode == Mode.MODEL:
 		new_document_interactive()

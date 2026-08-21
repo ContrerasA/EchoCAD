@@ -145,6 +145,10 @@ func _run() -> bool:
 	_root.finish_sketch()
 	_root.extrude(sid, Vector2(150, 130), 40.0)
 	_root.world.rebuild_sketches(_root.doc)
+	# Let the document's one-shot "first body frames itself" pass run before
+	# posing the camera by hand — it is deferred, and it would otherwise land
+	# in the middle of the orbit readings below.
+	await _idle()
 
 	var bounds := _root.world.model_bounds()
 	if bounds.size.length_squared() <= 1e-12:
