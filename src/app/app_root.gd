@@ -139,6 +139,12 @@ var _status_panel: PanelContainer = null
 ## under the icon only when ThemeService.show_tool_names is on.
 var _ribbon_buttons: Array = []      # [{btn, title}]
 var _ribbon_grids: Array = []        # [{grid, columns}]
+## Collapsible tool strips (CHANGES #1): when the window is too narrow for
+## every group, strips give up their trailing tools into a "more" flyout
+## instead of wrapping the ribbon onto a second row.
+## [{host: GridContainer, flow: Control, more: Button, popup, col}]
+var _overflow_groups: Array = []
+var _ribbon_layout_pending := false
 ## Flyout stacks (Fusion-style): one ribbon button fronting several related
 ## tools; right-click or long-press opens the list, the pick becomes the
 ## button's face. [{btn, popup, mark, variants: [{id, title, icon, handler,
@@ -1113,6 +1119,7 @@ func _build_ribbon(parent: Control) -> void:
 	# their wrapped height — track it so a narrow window grows the ribbon
 	# instead of clipping the second row of groups.
 	rows.resized.connect(_fit_ribbon_height)
+	rows.resized.connect(request_ribbon_layout)
 	_flyout_timer = Timer.new()
 	_flyout_timer.name = "FlyoutTimer"
 	_flyout_timer.one_shot = true
@@ -1121,11 +1128,12 @@ func _build_ribbon(parent: Control) -> void:
 	add_child(_flyout_timer)
 
 	# --- model mode ----------------------------------------------------------
-	var model := HFlowContainer.new()
+	# One row, never wrapping: groups that do not fit collapse their trailing
+	# tools into a "more" flyout (see _layout_ribbon).
+	var model := HBoxContainer.new()
 	model.name = "TopBar"
 	model.set_anchors_preset(Control.PRESET_FULL_RECT)
-	model.add_theme_constant_override("h_separation", 0)
-	model.add_theme_constant_override("v_separation", 0)
+	model.add_theme_constant_override("separation", 0)
 	rows.add_child(model)
 	_model_ribbon = model
 	model.minimum_size_changed.connect(_fit_ribbon_height)
@@ -1216,11 +1224,10 @@ func _build_ribbon(parent: Control) -> void:
 	_btn_open.visible = false
 
 	# --- sketch mode --------------------------------------------------------
-	var sketch := HFlowContainer.new()
+	var sketch := HBoxContainer.new()
 	sketch.name = "ToolBar"
 	sketch.set_anchors_preset(Control.PRESET_FULL_RECT)
-	sketch.add_theme_constant_override("h_separation", 0)
-	sketch.add_theme_constant_override("v_separation", 0)
+	sketch.add_theme_constant_override("separation", 0)
 	rows.add_child(sketch)
 	_tool_bar = sketch
 	sketch.minimum_size_changed.connect(_fit_ribbon_height)
@@ -1627,7 +1634,178 @@ func _tool_grid(row: Control, columns: int) -> GridContainer:
 	g.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	row.add_child(g)
 	_ribbon_grids.append({"grid": g, "columns": columns})
+	_make_overflow(g, row)
 	return g
+
+
+## The "more" button + flyout a tool strip collapses into. Built hidden at
+## the end of `host`; _layout_ribbon moves tools in and out of the flyout.
+func _make_overflow(host: GridContainer, row: Control) -> void:
+	var more := _tool_button(host, "More", Callable(), "more")
+	# Unique per group ("SketchCreateMoreBtn") so RPC clients can find the
+	# owner of a collapsed tool's flyout.
+	var panel := row.get_parent().get_parent() as Control
+	more.name = String(panel.name).trim_suffix("Group") + "MoreBtn"
+	more.tooltip_text = "More tools (not enough room in the ribbon)"
+	more.visible = false
+	var popup := PopupPanel.new()
+	popup.name = "Flyout"
+	var col := GridContainer.new()
+	col.name = "Overflow"
+	col.columns = 6
+	col.add_theme_constant_override("h_separation", 1)
+	col.add_theme_constant_override("v_separation", 1)
+	popup.add_child(col)
+	more.add_child(popup)
+	var g := {"host": host, "row": row, "more": more, "popup": popup, "col": col}
+	more.pressed.connect(func() -> void: _open_overflow(g))
+	more.gui_input.connect(func(ev: InputEvent) -> void:
+		var mb := ev as InputEventMouseButton
+		if mb != null and mb.pressed and mb.button_index == MOUSE_BUTTON_RIGHT:
+			more.accept_event()
+			_open_overflow(g))
+	_overflow_groups.append(g)
+
+
+func _open_overflow(g: Dictionary) -> void:
+	var more := g["more"] as Button
+	var popup := g["popup"] as PopupPanel
+	var col := g["col"] as GridContainer
+	col.columns = clampi(col.get_child_count(), 1, 6)
+	popup.position = Vector2i(more.get_screen_position() + Vector2(0, more.size.y + 2))
+	popup.popup()
+
+
+## The mode flow a ribbon control lives in (TopBar or ToolBar).
+func _flow_of(c: Node) -> Control:
+	while c != null and c != _ribbon_rows:
+		if c == _model_ribbon or c == _tool_bar:
+			return c
+		c = c.get_parent()
+	return null
+
+
+## Re-layout on the next idle frame (coalesces resize bursts).
+func request_ribbon_layout() -> void:
+	if _ribbon_layout_pending:
+		return
+	_ribbon_layout_pending = true
+	_layout_ribbon.call_deferred()
+
+
+## Fit the visible mode row into the ribbon's width WITHOUT wrapping: start
+## from every tool shown, then while the row overflows take the last tool
+## of the fullest strip into its "more" flyout — so every shelf keeps as
+## many tools as the window allows and the widest shelves give first.
+func _layout_ribbon() -> void:
+	_ribbon_layout_pending = false
+	if _ribbon_rows == null:
+		return
+	var flow: Control = _tool_bar if mode == Mode.SKETCH else _model_ribbon
+	if flow == null:
+		return
+	var avail := _ribbon_rows.size.x
+	if avail <= 0.0:
+		return
+	var groups: Array = []
+	for g: Dictionary in _overflow_groups:
+		if _flow_of(g["host"]) == flow:
+			groups.append(g)
+			_overflow_restore(g)
+	var guard := 0
+	while _flow_width(flow) > avail and guard < 256:
+		guard += 1
+		var best: Dictionary = {}
+		var best_n := 1
+		for g: Dictionary in groups:
+			var n := _overflow_shown(g).size()
+			if n > best_n:
+				best_n = n
+				best = g
+		if best.is_empty():
+			break
+		_overflow_take_last(best)
+	_fit_ribbon_height.call_deferred()
+
+
+## Tools currently on the strip (visible ones, minus the "more" button).
+func _overflow_shown(g: Dictionary) -> Array:
+	var out: Array = []
+	for c in (g["host"] as Control).get_children():
+		if c != g["more"] and (c as Control).visible:
+			out.append(c)
+	return out
+
+
+func _overflow_restore(g: Dictionary) -> void:
+	var host := g["host"] as Control
+	var col := g["col"] as Control
+	var more := g["more"] as Button
+	(g["popup"] as PopupPanel).hide()
+	for c in col.get_children():
+		col.remove_child(c)
+		host.add_child(c)
+	host.move_child(more, -1)
+	more.visible = false
+
+
+func _overflow_take_last(g: Dictionary) -> void:
+	var shown := _overflow_shown(g)
+	if shown.size() <= 1:
+		return
+	var b := shown[-1] as Control
+	var host := g["host"] as Control
+	var col := g["col"] as Control
+	host.remove_child(b)
+	col.add_child(b)
+	col.move_child(b, 0)   # flyout keeps the strip's order
+	(g["more"] as Button).visible = true
+
+
+## Width the flow needs for its visible children, from their minimum sizes
+## (layout has not run yet when this is asked, so measure by hand).
+func _flow_width(flow: Control) -> float:
+	var w := 0.0
+	for c in flow.get_children():
+		var ctl := c as Control
+		if ctl == null or not ctl.visible:
+			continue
+		if ctl is MarginContainer and ctl.name.ends_with("Group"):
+			w += _group_width(ctl)
+		else:
+			w += ctl.get_combined_minimum_size().x
+	return w
+
+
+func _group_width(panel: Control) -> float:
+	var v := panel.get_child(0) as Control
+	var row := v.get_node_or_null("Buttons") as Control
+	var cap := v.get_node_or_null("Caption") as Control
+	var margins := 20.0
+	if row == null:
+		return margins + panel.get_combined_minimum_size().x
+	var row_w := 0.0
+	var n := 0
+	for c in row.get_children():
+		var ctl := c as Control
+		if ctl == null or not ctl.visible:
+			continue
+		n += 1
+		if ctl is GridContainer:
+			var gw := 0.0
+			var gn := 0
+			for b in ctl.get_children():
+				var bc := b as Control
+				if bc == null or not bc.visible:
+					continue
+				gn += 1
+				gw += bc.get_combined_minimum_size().x
+			row_w += gw + maxf(gn - 1, 0) * 1.0
+		else:
+			row_w += ctl.get_combined_minimum_size().x
+	row_w += maxf(n - 1, 0) * 2.0
+	var cap_w := cap.get_combined_minimum_size().x if cap != null else 0.0
+	return margins + maxf(row_w, cap_w)
 
 
 ## Push the "Show tool names" preference into every ribbon button: titles
@@ -1651,7 +1829,7 @@ func _apply_tool_labels() -> void:
 		_stack_show(st, String(st["current"]))
 	if _tool_names_check != null:
 		_tool_names_check.set_pressed_no_signal(show)
-	_fit_ribbon_height.call_deferred()
+	request_ribbon_layout()
 
 
 func set_show_tool_names(on: bool) -> void:
@@ -5649,7 +5827,7 @@ func _refresh_ui() -> void:
 	# M36 ribbon: the model row and the sketch row swap with the mode.
 	_model_ribbon.visible = not in_sketch
 	_tool_bar.visible = in_sketch
-	_fit_ribbon_height.call_deferred()
+	request_ribbon_layout()
 	if in_sketch and not dof.is_empty():
 		var sk := active_sketch()
 		_status_dof.text = DofAnalyzer.summary(sk) if sk != null else ""

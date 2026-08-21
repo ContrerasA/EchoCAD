@@ -69,8 +69,11 @@ func _run() -> bool:
 		if b.text != String(e["title"]) or b.custom_minimum_size != big:
 			return _fail("B: %s not labelled (%s)" % [b.name, b.text])
 	await _idle()
-	if _root._ribbon.custom_minimum_size.y <= ThemeService.metric("ribbon_height"):
-		return _fail("B: ribbon did not grow for labelled buttons")
+	# The ribbon never wraps (CHANGES #1) — it only grows as tall as the
+	# labelled row needs, never shorter.
+	if _root._ribbon.custom_minimum_size.y \
+			< _root._model_ribbon.get_combined_minimum_size().y + 6.0:
+		return _fail("B: ribbon too short for labelled buttons")
 	if not ThemeService.show_tool_names:
 		return _fail("B: preference not stored")
 	ThemeService.load_settings()
@@ -80,7 +83,7 @@ func _run() -> bool:
 	await _idle()
 	var cons_grid: GridContainer = null
 	for g: Dictionary in _root._ribbon_grids:
-		if (g["grid"] as Control).get_child_count() == 14:
+		if (g["grid"] as Control).get_child_count() == 15:   # 14 + MoreBtn
 			cons_grid = g["grid"]
 	# Round 2: every group is a single row — the 14 constraint tools never
 	# wrap (columns is set past any group's tool count).

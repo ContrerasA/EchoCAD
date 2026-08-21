@@ -93,19 +93,28 @@ class EchoCad:
     def click_world(self, p, **kw):
         return self.call("input.click", {"at": self.world_to_screen(p), **kw})
 
-    def click_control(self, name):
+    def _reveal(self, name, depth=0):
+        """Make `name` visible by opening the flyouts that hide it, outermost
+        first: a tool inside a ribbon stack sits behind the stack's face, and
+        a collapsed ribbon strip hides whole buttons (stack faces included)
+        behind its group's "more" button. Right-click opens either, exactly
+        as a user would."""
         r = self.call("query.control", {"name": name})
-        if not r["visible"] and r.get("flyout_owner"):
-            # A tool inside a ribbon stack: right-click the stack's face to
-            # open its flyout, exactly as a user would, then hit the entry.
-            o = self.call("query.control", {"name": r["flyout_owner"]})
-            if not o["visible"]:
-                raise RpcError("bad_state",
-                               f"stack {r['flyout_owner']} for {name} not visible")
-            x, y, w, h = o["rect"]
-            self.call("input.click", {"at": [x + w / 2, y + h / 2],
-                                      "button": "right"})
-            r = self.call("query.control", {"name": name})
+        if r["visible"] or depth > 3:
+            return r
+        owner = r.get("flyout_owner")
+        if not owner:
+            return r
+        o = self._reveal(owner, depth + 1)
+        if not o["visible"]:
+            raise RpcError("bad_state", f"stack {owner} for {name} not visible")
+        x, y, w, h = o["rect"]
+        self.call("input.click", {"at": [x + w / 2, y + h / 2],
+                                  "button": "right"})
+        return self.call("query.control", {"name": name})
+
+    def click_control(self, name):
+        r = self._reveal(name)
         if not r["visible"]:
             raise RpcError("bad_state", f"control {name} not visible")
         x, y, w, h = r["rect"]
