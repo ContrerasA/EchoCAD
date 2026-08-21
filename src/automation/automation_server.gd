@@ -974,6 +974,7 @@ func _cmd_action_save(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
 	if not a.has("path"):
 		_reply_err(p, id, "bad_args", "missing path")
 		return null
+	app.stash_camera()
 	if not Serializer.save(app.doc, String(a["path"])):
 		_reply_err(p, id, "io", "save failed")
 		return null

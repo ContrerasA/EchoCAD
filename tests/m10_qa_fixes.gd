@@ -386,9 +386,9 @@ func _run() -> bool:
 	# --- SAVE / OPEN round trip through the app.
 	var path := "user://m10_qa_roundtrip.ecad"
 	_root.finish_sketch()
-	var saved_json := Serializer.to_json(_root.doc)
 	if not _root.save_to(path):
 		return _fail("save_to failed")
+	var saved_json := Serializer.to_json(_root.doc)   # after the camera stash
 	if not _root.open_from(path):
 		return _fail("open_from failed")
 	if Serializer.to_json(_root.doc) != saved_json:

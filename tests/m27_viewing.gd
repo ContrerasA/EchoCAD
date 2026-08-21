@@ -189,6 +189,27 @@ func _run() -> bool:
 			or String(doc2.named_views[0]["name"]) != "QA":
 		return _fail("named views lost in serialization")
 
+	# --- document camera (CHANGES #4): save stashes it, open restores it ---
+	rig.yaw = 0.4
+	rig.pitch = -0.9
+	rig.distance = 1234.0
+	rig.target = Vector3(5, 6, 7)
+	var cam_path := "user://m27_camera.ecad"
+	if not _root.save_to(cam_path):
+		return _fail("camera save failed")
+	if _root.doc.camera.is_empty():
+		return _fail("save did not stash the camera on the document")
+	rig.frame_view(Vector3(0, 0, 1), Vector3(0, 1, 0), Vector3.ZERO, 300.0)
+	await _idle()
+	if not _root.open_from(cam_path):
+		return _fail("camera open failed")
+	await _idle()
+	if absf(rig.yaw - 0.4) > 1e-3 or absf(rig.pitch + 0.9) > 1e-3 \
+			or absf(rig.distance - 1234.0) > 1.0 \
+			or rig.target.distance_to(Vector3(5, 6, 7)) > 0.01:
+		return _fail("open did not restore the saved camera")
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(cam_path))
+
 	# Leave settings as found.
 	_root.set_model_projection(initial_ortho)
 	ThemeService.model_ortho = initial_ortho

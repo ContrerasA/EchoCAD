@@ -735,6 +735,9 @@ func load_document(new_doc: CadDocument) -> void:
 	_refresh_views_pick()
 	if _unit_pick != null:
 		_unit_pick.select(_unit_pick.get_item_index(doc.display_unit))
+	# A file that remembers its camera reopens exactly where it was left.
+	if not doc.camera.is_empty():
+		apply_named_view(doc.camera, false)
 	mode_changed.emit(mode)
 	_refresh_ui()
 
@@ -2129,19 +2132,16 @@ func _on_views_pick(index: int) -> void:
 ## Camera bookmarks live in the document (outside the command stack, like
 ## display_unit — they are viewport state that rides along in the file).
 func save_named_view(view_name := "") -> Dictionary:
-	var v := rig.capture_view()
-	var d := {"name": view_name if view_name != ""
-			else "View%d" % (doc.named_views.size() + 1),
-		"yaw": v["yaw"], "pitch": v["pitch"],
-		"target": [v["target"].x, v["target"].y, v["target"].z],
-		"distance": v["distance"], "ortho": rig.is_orthographic()}
+	var d := camera_dict()
+	d["name"] = view_name if view_name != "" \
+		else "View%d" % (doc.named_views.size() + 1)
 	doc.named_views.append(d)
 	_refresh_views_pick()
 	set_status_hint("Saved %s" % d["name"])
 	return d
 
 
-func apply_named_view(d: Dictionary) -> void:
+func apply_named_view(d: Dictionary, animate := true) -> void:
 	var t: Array = d.get("target", [0, 0, 0])
 	rig.set_projection_ortho(bool(d.get("ortho", false)))
 	if _btn_ortho != null:
@@ -2149,7 +2149,26 @@ func apply_named_view(d: Dictionary) -> void:
 	rig.restore_view({"yaw": float(d.get("yaw", 0.0)),
 		"pitch": float(d.get("pitch", 0.0)),
 		"target": Vector3(float(t[0]), float(t[1]), float(t[2])),
-		"distance": float(d.get("distance", 800.0))})
+		"distance": float(d.get("distance", 800.0))}, animate)
+
+
+## The MODEL-mode camera as a plain dictionary (file-ready). Inside a sketch
+## that is the view the user left behind, not the square-on sketch camera.
+func camera_dict() -> Dictionary:
+	var v := rig.capture_view()
+	var ortho := rig.is_orthographic()
+	if mode == Mode.SKETCH and not _model_view_before_sketch.is_empty():
+		v = _model_view_before_sketch
+		ortho = ThemeService.model_ortho
+	return {"yaw": v["yaw"], "pitch": v["pitch"],
+		"target": [v["target"].x, v["target"].y, v["target"].z],
+		"distance": v["distance"], "ortho": ortho}
+
+
+## Stash the current camera on the document so it rides along in the file
+## (CHANGES #4). Called by every save path (UI + RPC) right before writing.
+func stash_camera() -> void:
+	doc.camera = camera_dict()
 
 
 ## Display unit (M27): UI-boundary only — model/solver/RPC stay mm. Reaches
@@ -3170,6 +3189,7 @@ func _delete_param() -> void:
 func save_to(path: String) -> bool:
 	if not path.to_lower().ends_with(".ecad"):
 		path += ".ecad"
+	stash_camera()
 	if not Serializer.save(doc, path):
 		set_status_hint("Save failed: " + path)
 		return false
