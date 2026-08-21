@@ -63,218 +63,103 @@ static func build_before(doc: CadDocument, stop_id: String) -> Array:
 ## patterns happen at their own position, so a later cut targets a moved
 ## body where it now is; a pattern or mirror of a CUT/JOIN feature replays
 ## that feature's tool at every instance.
+## M47 incremental rebuild: per document, the key of every live feature
+## as last built and a snapshot of the body list after it. A rebuild
+## resumes from the first feature whose key changed; everything before it
+## is restored (solids are immutable kernel objects, meshes ride along).
+static var _cache := {}       # doc instance id -> {keys: Array, snaps: Array, errors: Array}
+const CACHE_MAX_DOCS := 4
+
+
+static func invalidate(doc: CadDocument) -> void:
+	if doc != null:
+		_cache.erase(doc.get_instance_id())
+
+
+## Everything this feature's result depends on that is not already implied
+## by the features before it: its own state plus the sketches / planes it
+## references (by id, found in its serialized form).
+static func _feature_key(doc: CadDocument, f: Feature) -> String:
+	var d := f.to_dict()
+	var parts: Array = [JSON.stringify(d)]
+	var seen := {}
+	var stack: Array = [d]
+	while not stack.is_empty():
+		var v: Variant = stack.pop_back()
+		if v is Dictionary:
+			for k in (v as Dictionary):
+				stack.append((v as Dictionary)[k])
+		elif v is Array:
+			for x in (v as Array):
+				stack.append(x)
+		elif v is String:
+			var sv := v as String
+			if sv.begins_with("f") and not seen.has(sv) and sv != f.id:
+				var ref := doc.feature_by_id(sv)
+				if ref is SketchFeature or ref is PlaneFeature:
+					seen[sv] = true
+					parts.append(sv + ":" + JSON.stringify(ref.to_dict()))
+					if ref is SketchFeature:
+						var xf := (ref as SketchFeature).plane_transform()
+						parts.append(str(xf))
+	return str(hash("|".join(PackedStringArray(parts))))
+
+
+static func _snapshot(bodies: Array, part_solids: Dictionary, treated: Dictionary, doc: CadDocument) -> Dictionary:
+	var copy: Array = []
+	for b: Dictionary in bodies:
+		var c := b.duplicate()
+		c["feature_ids"] = (b["feature_ids"] as Array).duplicate()
+		copy.append(c)
+	var errs := {}
+	for f in doc.features:
+		if (f as Feature).rebuild_error != "":
+			errs[(f as Feature).id] = [(f as Feature).rebuild_error, (f as Feature).rebuild_level]
+	return {"bodies": copy, "parts": part_solids.duplicate(), "treated": treated.duplicate(),
+		"errors": errs}
+
+
 static func _build_kernel(doc: CadDocument, stop_id: String) -> Array:
 	var bodies: Array = []        # [{id, name, feature_ids, solid, color}]
 	var part_solids := {}         # feature id -> its own kernel solid
 	var treated := {}
-	for f in doc.live_features():
+	var live := doc.live_features()
+	var keys: Array = []
+	for f in live:
+		keys.append(_feature_key(doc, f))
+	var did := doc.get_instance_id()
+	var cached: Dictionary = _cache.get(did, {})
+	var start := 0
+	if stop_id == "" and not cached.is_empty():
+		var ckeys: Array = cached["keys"]
+		while start < live.size() and start < ckeys.size() and keys[start] == ckeys[start]:
+			start += 1
+		if start > 0:
+			var snap: Dictionary = (cached["snaps"] as Array)[start - 1]
+			var restored := _snapshot(snap["bodies"], snap["parts"], snap["treated"], doc)
+			bodies = restored["bodies"]
+			part_solids = snap["parts"]
+			treated = snap["treated"]
+			for fid in (snap["errors"] as Dictionary):
+				var ff := doc.feature_by_id(String(fid))
+				if ff != null:
+					ff.rebuild_error = (snap["errors"][fid] as Array)[0]
+					ff.rebuild_level = (snap["errors"][fid] as Array)[1]
+	var snaps: Array = []
+	if start > 0:
+		snaps = (cached["snaps"] as Array).slice(0, start)
+	for fi in range(start, live.size()):
+		var f: Feature = live[fi]
 		if stop_id != "" and (f as Feature).id == stop_id:
 			break
-		if f is PlaneFeature:
-			var pf := f as PlaneFeature
-			if pf.plane_kind == PlaneFeature.KIND_FACE:
-				if not pf.resolve_face(_entries(bodies)):
-					if pf.ref != null and pf.ref.body != "":
-						pf.rebuild_error = "face reference lost — the last position stands; re-pick the face"
-						pf.rebuild_level = "warning"
-		elif f is SolidFeature:
-			var ef := f as SolidFeature
-			if ef.needs_bodies():
-				var perr := ef.prepare(doc, _entries(bodies))
-				if perr != "":
-					ef.rebuild_error = perr
-					continue
-			var part := ef.solid_part(doc)
-			if part.is_empty():
-				ef.rebuild_error = "profile no longer resolves"
-				continue
-			var ps := SolidKernel.from_mesh(ef.kernel_mesh(doc, part),
-				SolidKernel.ordinal_of(ef.id))
-			if ps == null:
-				if ef is MeshBodyFeature:
-					# M44: an open mesh still shows — reference only, no
-					# booleans, amber chip.
-					ef.rebuild_error = "mesh is not a closed solid — shown for reference, excluded from booleans"
-					ef.rebuild_level = "warning"
-					var ref_entry := _new_entry(ef.id, ef.name, null, ef.color)
-					ref_entry["mesh"] = part["mesh"]
-					ref_entry["dirty"] = false
-					ref_entry["reference_only"] = true
-					bodies.append(ref_entry)
-					continue
-				ef.rebuild_error = SolidKernel.last_error
-				continue
-			part_solids[ef.id] = ps
-			_apply_tool(bodies, ef, ef, ps, ef.operation, ef.id, ef.name, ef.color)
-		elif f is EdgeTreatFeature:
-			# M35 treatments rebuild a plain single-extrude body's mesh with
-			# every live treatment on it baked in, then the body continues
-			# through the kernel (later cuts apply to the rounded body).
-			var et := f as EdgeTreatFeature
-			if treated.has(et.body):
-				continue
-			var bt := _entry_by_id(bodies, et.body)
-			if bt.is_empty() or (bt["feature_ids"] as Array).size() != 1:
-				if not bt.is_empty():
-					et.rebuild_error = "only a plain single-extrude body can be treated"
-				else:
-					et.rebuild_error = "its body no longer exists"
-				continue
-			var root_ef := doc.feature_by_id(et.body) as ExtrudeFeature
-			if root_ef == null:
-				et.rebuild_error = "its body is not an extrude"
-				continue
-			var ets: Array = []
-			for g in doc.live_features():
-				if g is EdgeTreatFeature and (g as EdgeTreatFeature).body == et.body:
-					ets.append(g)
-			var tm := EdgeTreatFeature.build_combined(doc, root_ef, ets)
-			if tm == null:
-				et.rebuild_error = EdgeTreatFeature.build_error \
-					if EdgeTreatFeature.build_error != "" else "treatment failed"
-				continue
-			var ts := SolidKernel.from_mesh(tm, SolidKernel.ordinal_of(et.body))
-			if ts == null:
-				et.rebuild_error = SolidKernel.last_error
-				continue
-			bt["solid"] = ts
-			bt["dirty"] = true
-			for g in ets:
-				(bt["feature_ids"] as Array).append((g as Feature).id)
-			treated[et.body] = true
-		elif f is EdgeFilletFeature:
-			# M41: rounds/chamfers any edge chain of its body, in order.
-			var ff := f as EdgeFilletFeature
-			var bf := _entry_by_id(bodies, ff.body)
-			if bf.is_empty():
-				ff.rebuild_error = "its body no longer exists"
-				continue
-			if ff.edges.is_empty():
-				ff.rebuild_error = "no edges picked"
-				continue
-			bf["solid"] = ff.apply(bf)
-			bf["dirty"] = true
-			(bf["feature_ids"] as Array).append(ff.id)
-		elif f is CombineFeature:
-			var cbf := f as CombineFeature
-			var tgt := _entry_by_id(bodies, cbf.target)
-			if tgt.is_empty():
-				cbf.rebuild_error = "its target body no longer exists"
-				continue
-			var any := false
-			for tid in cbf.tools:
-				var te := _entry_by_id(bodies, String(tid))
-				if te.is_empty() or te == tgt:
-					continue
-				var before := SolidKernel.volume(tgt["solid"])
-				var res := SolidKernel.boolean(tgt["solid"], te["solid"], cbf.operation)
-				if not SolidKernel.is_valid(res):
-					if cbf.operation == SolidFeature.OP_INTERSECT:
-						cbf.rebuild_error = "no overlap with %s" % te["name"]
-						continue
-					if cbf.operation == SolidFeature.OP_CUT:
-						bodies.erase(tgt)   # consumed
-						any = true
-						break
-					continue
-				if cbf.operation == SolidFeature.OP_CUT \
-						and absf(SolidKernel.volume(res) - before) < 1e-9:
-					cbf.rebuild_error = "%s does not touch the target" % te["name"]
-				tgt["solid"] = res
-				tgt["dirty"] = true
-				any = true
-				if not cbf.keep_tools:
-					bodies.erase(te)
-			if not any and cbf.rebuild_error == "":
-				cbf.rebuild_error = "no tool bodies — pick at least one"
-			elif bodies.has(tgt):
-				(tgt["feature_ids"] as Array).append(cbf.id)
-		elif f is SplitBodyFeature:
-			var spf := f as SplitBodyFeature
-			var sb := _entry_by_id(bodies, spf.body)
-			if sb.is_empty():
-				spf.rebuild_error = "its body no longer exists"
-				continue
-			var perr := spf.resolve_plane(doc, _entries(bodies))
-			if perr != "":
-				spf.rebuild_error = perr
-				continue
-			var halves: Array = (sb["solid"] as RefCounted).call("split_by_plane",
-				spf.plane_normal, spf.plane_offset)
-			var kept: RefCounted = halves[0]
-			var other: RefCounted = halves[1]
-			if not SolidKernel.is_valid(kept) or not SolidKernel.is_valid(other):
-				spf.rebuild_error = "the plane does not pass through the body"
-				continue
-			sb["solid"] = kept
-			sb["dirty"] = true
-			(sb["feature_ids"] as Array).append(spf.id)
-			var half := _new_entry(spf.id, spf.name, other, sb.get("color", Color(0, 0, 0, 0)))
-			bodies.insert(bodies.find(sb) + 1, half)
-		elif f is ShellFeature:
-			var shf := f as ShellFeature
-			var she := _entry_by_id(bodies, shf.body)
-			if she.is_empty():
-				shf.rebuild_error = "its body no longer exists"
-				continue
-			_entries([she])
-			she["solid"] = shf.apply(she)
-			she["dirty"] = true
-			(she["feature_ids"] as Array).append(shf.id)
-		elif f is FaceOffsetFeature:
-			var fof := f as FaceOffsetFeature
-			var fe := _entry_by_id(bodies, fof.body)
-			if fe.is_empty():
-				fof.rebuild_error = "its body no longer exists"
-				continue
-			_entries([fe])
-			var r3 := fof.apply(fe)
-			if not SolidKernel.is_valid(r3):
-				bodies.erase(fe)
-				continue
-			fe["solid"] = r3
-			fe["dirty"] = true
-			(fe["feature_ids"] as Array).append(fof.id)
-		elif f is TransformFeature:
-			var tf := f as TransformFeature
-			var b2 := _entry_by_id(bodies, tf.body)
-			if b2.is_empty():
-				tf.rebuild_error = "its body no longer exists"
-				continue
-			var center := SolidKernel.aabb(b2["solid"]).get_center()
-			b2["solid"] = SolidKernel.transformed(b2["solid"], tf.transform3d(center))
-			b2["dirty"] = true
-			(b2["feature_ids"] as Array).append(tf.id)
-		elif f is CopyBodyFeature:
-			var cf := f as CopyBodyFeature
-			var b3 := _entry_by_id(bodies, cf.source)
-			if b3.is_empty():
-				cf.rebuild_error = "its source body no longer exists"
-				continue
-			# Copies inherit the source color until given one (QA §M32.5).
-			bodies.append(_derived_entry(b3, cf.id, cf.name,
-				Transform3D(Basis.IDENTITY, cf.translation),
-				cf.color if cf.color.a > 0.0 else b3.get("color", Color(0, 0, 0, 0))))
-		elif f is MirrorBodyFeature:
-			var mf := f as MirrorBodyFeature
-			var b4 := _entry_by_id(bodies, mf.source)
-			if not b4.is_empty():
-				bodies.append(_derived_entry(b4, mf.id, mf.name,
-					mf.mirror_transform(), b4.get("color", Color(0, 0, 0, 0))))
-			else:
-				_replay_feature(doc, bodies, part_solids, mf, mf.source,
-					[mf.mirror_transform()])
-		elif f is PatternBodyFeature:
-			var pf2 := f as PatternBodyFeature
-			var b5 := _entry_by_id(bodies, pf2.source)
-			var xfs := pf2.instance_transforms()
-			if not b5.is_empty():
-				for k in xfs.size():
-					bodies.append(_derived_entry(b5, "%s:%d" % [pf2.id, k + 1],
-						"%s %d" % [pf2.name, k + 1], xfs[k],
-						b5.get("color", Color(0, 0, 0, 0))))
-			else:
-				_replay_feature(doc, bodies, part_solids, pf2, pf2.source, xfs)
+		_build_step(doc, f, bodies, part_solids, treated)
+		if stop_id == "":
+			_entries(bodies)   # mesh now so the snapshot carries meshes
+			snaps.append(_snapshot(bodies, part_solids, treated, doc))
+	if stop_id == "":
+		if _cache.size() >= CACHE_MAX_DOCS and not _cache.has(did):
+			_cache.clear()
+		_cache[did] = {"keys": keys, "snaps": snaps}
 	var out: Array = []
 	for e: Dictionary in _entries(bodies):
 		if e.get("mesh") == null \
@@ -282,6 +167,222 @@ static func _build_kernel(doc: CadDocument, stop_id: String) -> Array:
 			continue
 		out.append(e)
 	return out
+
+
+## One feature of the ordered pass.
+static func _build_step(doc: CadDocument, f: Feature, bodies: Array, part_solids: Dictionary,
+		treated: Dictionary) -> void:
+	if f is PlaneFeature:
+		var pf := f as PlaneFeature
+		if pf.plane_kind == PlaneFeature.KIND_FACE:
+			if not pf.resolve_face(_entries(bodies)):
+				if pf.ref != null and pf.ref.body != "":
+					pf.rebuild_error = "face reference lost — the last position stands; re-pick the face"
+					pf.rebuild_level = "warning"
+	elif f is SolidFeature:
+		var ef := f as SolidFeature
+		if ef.needs_bodies():
+			var perr := ef.prepare(doc, _entries(bodies))
+			if perr != "":
+				ef.rebuild_error = perr
+				return
+		var part := ef.solid_part(doc)
+		if part.is_empty():
+			ef.rebuild_error = "profile no longer resolves"
+			return
+		var ps := SolidKernel.from_mesh(ef.kernel_mesh(doc, part),
+			SolidKernel.ordinal_of(ef.id))
+		if ps == null:
+			if ef is MeshBodyFeature:
+				# M44: an open mesh still shows — reference only, no
+				# booleans, amber chip.
+				ef.rebuild_error = "mesh is not a closed solid — shown for reference, excluded from booleans"
+				ef.rebuild_level = "warning"
+				var ref_entry := _new_entry(ef.id, ef.name, null, ef.color)
+				ref_entry["mesh"] = part["mesh"]
+				ref_entry["dirty"] = false
+				ref_entry["reference_only"] = true
+				bodies.append(ref_entry)
+				return
+			ef.rebuild_error = SolidKernel.last_error
+			return
+		part_solids[ef.id] = ps
+		_apply_tool(bodies, ef, ef, ps, ef.operation, ef.id, ef.name, ef.color)
+	elif f is EdgeTreatFeature:
+		# M35 treatments rebuild a plain single-extrude body's mesh with
+		# every live treatment on it baked in, then the body continues
+		# through the kernel (later cuts apply to the rounded body).
+		var et := f as EdgeTreatFeature
+		var bt := _entry_by_id(bodies, et.body)
+		if bt.is_empty():
+			et.rebuild_error = "its body no longer exists"
+			return
+		# The body may carry only its root extrude and earlier treatments
+		# (build_combined regenerates the prism from the profile).
+		for fid in (bt["feature_ids"] as Array):
+			if String(fid) == et.body:
+				continue
+			if not (doc.feature_by_id(String(fid)) is EdgeTreatFeature):
+				et.rebuild_error = "only a plain single-extrude body can be treated"
+				return
+		var root_ef := doc.feature_by_id(et.body) as ExtrudeFeature
+		if root_ef == null:
+			et.rebuild_error = "its body is not an extrude"
+			return
+		# Every treatment on this body up to and including this one (never a
+		# later one: the incremental rebuild must not look ahead).
+		var ets: Array = []
+		for g in doc.live_features():
+			if g is EdgeTreatFeature and (g as EdgeTreatFeature).body == et.body:
+				ets.append(g)
+			if g == f:
+				break
+		var tm := EdgeTreatFeature.build_combined(doc, root_ef, ets)
+		if tm == null:
+			et.rebuild_error = EdgeTreatFeature.build_error \
+				if EdgeTreatFeature.build_error != "" else "treatment failed"
+			return
+		var ts := SolidKernel.from_mesh(tm, SolidKernel.ordinal_of(et.body))
+		if ts == null:
+			et.rebuild_error = SolidKernel.last_error
+			return
+		bt["solid"] = ts
+		bt["dirty"] = true
+		(bt["feature_ids"] as Array).append(et.id)
+		treated[et.body] = true
+	elif f is EdgeFilletFeature:
+		# M41: rounds/chamfers any edge chain of its body, in order.
+		var ff := f as EdgeFilletFeature
+		var bf := _entry_by_id(bodies, ff.body)
+		if bf.is_empty():
+			ff.rebuild_error = "its body no longer exists"
+			return
+		if ff.edges.is_empty():
+			ff.rebuild_error = "no edges picked"
+			return
+		bf["solid"] = ff.apply(bf)
+		bf["dirty"] = true
+		(bf["feature_ids"] as Array).append(ff.id)
+	elif f is CombineFeature:
+		var cbf := f as CombineFeature
+		var tgt := _entry_by_id(bodies, cbf.target)
+		if tgt.is_empty():
+			cbf.rebuild_error = "its target body no longer exists"
+			return
+		var any := false
+		for tid in cbf.tools:
+			var te := _entry_by_id(bodies, String(tid))
+			if te.is_empty() or te == tgt:
+				continue
+			var before := SolidKernel.volume(tgt["solid"])
+			var res := SolidKernel.boolean(tgt["solid"], te["solid"], cbf.operation)
+			if not SolidKernel.is_valid(res):
+				if cbf.operation == SolidFeature.OP_INTERSECT:
+					cbf.rebuild_error = "no overlap with %s" % te["name"]
+					continue
+				if cbf.operation == SolidFeature.OP_CUT:
+					bodies.erase(tgt)   # consumed
+					any = true
+					break
+				continue
+			if cbf.operation == SolidFeature.OP_CUT \
+					and absf(SolidKernel.volume(res) - before) < 1e-9:
+				cbf.rebuild_error = "%s does not touch the target" % te["name"]
+			tgt["solid"] = res
+			tgt["dirty"] = true
+			any = true
+			if not cbf.keep_tools:
+				bodies.erase(te)
+		if not any and cbf.rebuild_error == "":
+			cbf.rebuild_error = "no tool bodies — pick at least one"
+		elif bodies.has(tgt):
+			(tgt["feature_ids"] as Array).append(cbf.id)
+	elif f is SplitBodyFeature:
+		var spf := f as SplitBodyFeature
+		var sb := _entry_by_id(bodies, spf.body)
+		if sb.is_empty():
+			spf.rebuild_error = "its body no longer exists"
+			return
+		var perr := spf.resolve_plane(doc, _entries(bodies))
+		if perr != "":
+			spf.rebuild_error = perr
+			return
+		var halves: Array = (sb["solid"] as RefCounted).call("split_by_plane",
+			spf.plane_normal, spf.plane_offset)
+		var kept: RefCounted = halves[0]
+		var other: RefCounted = halves[1]
+		if not SolidKernel.is_valid(kept) or not SolidKernel.is_valid(other):
+			spf.rebuild_error = "the plane does not pass through the body"
+			return
+		sb["solid"] = kept
+		sb["dirty"] = true
+		(sb["feature_ids"] as Array).append(spf.id)
+		var half := _new_entry(spf.id, spf.name, other, sb.get("color", Color(0, 0, 0, 0)))
+		bodies.insert(bodies.find(sb) + 1, half)
+	elif f is ShellFeature:
+		var shf := f as ShellFeature
+		var she := _entry_by_id(bodies, shf.body)
+		if she.is_empty():
+			shf.rebuild_error = "its body no longer exists"
+			return
+		_entries([she])
+		she["solid"] = shf.apply(she)
+		she["dirty"] = true
+		(she["feature_ids"] as Array).append(shf.id)
+	elif f is FaceOffsetFeature:
+		var fof := f as FaceOffsetFeature
+		var fe := _entry_by_id(bodies, fof.body)
+		if fe.is_empty():
+			fof.rebuild_error = "its body no longer exists"
+			return
+		_entries([fe])
+		var r3 := fof.apply(fe)
+		if not SolidKernel.is_valid(r3):
+			bodies.erase(fe)
+			return
+		fe["solid"] = r3
+		fe["dirty"] = true
+		(fe["feature_ids"] as Array).append(fof.id)
+	elif f is TransformFeature:
+		var tf := f as TransformFeature
+		var b2 := _entry_by_id(bodies, tf.body)
+		if b2.is_empty():
+			tf.rebuild_error = "its body no longer exists"
+			return
+		var center := SolidKernel.aabb(b2["solid"]).get_center()
+		b2["solid"] = SolidKernel.transformed(b2["solid"], tf.transform3d(center))
+		b2["dirty"] = true
+		(b2["feature_ids"] as Array).append(tf.id)
+	elif f is CopyBodyFeature:
+		var cf := f as CopyBodyFeature
+		var b3 := _entry_by_id(bodies, cf.source)
+		if b3.is_empty():
+			cf.rebuild_error = "its source body no longer exists"
+			return
+		# Copies inherit the source color until given one (QA §M32.5).
+		bodies.append(_derived_entry(b3, cf.id, cf.name,
+			Transform3D(Basis.IDENTITY, cf.translation),
+			cf.color if cf.color.a > 0.0 else b3.get("color", Color(0, 0, 0, 0))))
+	elif f is MirrorBodyFeature:
+		var mf := f as MirrorBodyFeature
+		var b4 := _entry_by_id(bodies, mf.source)
+		if not b4.is_empty():
+			bodies.append(_derived_entry(b4, mf.id, mf.name,
+				mf.mirror_transform(), b4.get("color", Color(0, 0, 0, 0))))
+		else:
+			_replay_feature(doc, bodies, part_solids, mf, mf.source,
+				[mf.mirror_transform()])
+	elif f is PatternBodyFeature:
+		var pf2 := f as PatternBodyFeature
+		var b5 := _entry_by_id(bodies, pf2.source)
+		var xfs := pf2.instance_transforms()
+		if not b5.is_empty():
+			for k in xfs.size():
+				bodies.append(_derived_entry(b5, "%s:%d" % [pf2.id, k + 1],
+					"%s %d" % [pf2.name, k + 1], xfs[k],
+					b5.get("color", Color(0, 0, 0, 0))))
+		else:
+			_replay_feature(doc, bodies, part_solids, pf2, pf2.source, xfs)
 
 
 ## Apply a tool solid to the body list with Fusion's operation semantics.

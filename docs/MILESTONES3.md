@@ -517,6 +517,16 @@ leftovers; release engineering (M49) last, alpha gate (M50).
   `ThemeService.get_pref/set_pref` durability. Document tabs were not
   built. RPC: `action.autosave`, `action.show_start_panel`, `query.recent`.
 
+- **M47** (2026-08-20): incremental rebuild — BodyBuilder keeps, per
+  document, the key of every live feature (its serialized form + the
+  sketches/planes it references) and a snapshot of the body list (with
+  meshes and error state) after each; a build resumes from the first
+  changed key. M35 treatments were made look-ahead-free for it. Measured:
+  unchanged document 2 ms, last-feature edit = that feature's cost only.
+  Threaded rebuild and the 500-entity sketch spatial index were not
+  built (the kernel path is synchronous and fast enough for alpha-size
+  parts). `tests/m47_perf_fuzz.gd` = correctness under edits + seeded fuzz.
+
 ## Deferred past alpha (beta backlog)
 
 - STEP import/export (B-rep kernel decision: OpenCascade-lite via

@@ -457,3 +457,28 @@ Status: PENDING
 ### Fix log
 
 (none yet)
+
+---
+
+## §M47 — Performance + robustness
+
+Status: PENDING
+
+- [ ] 1. **Incremental rebuild.** Build a plate with 10+ cuts, four modelled-
+   thread holes and a fillet (a model that takes noticeable time to
+   rebuild from scratch). Edit the LAST feature: the update is near
+   instant; edit the FIRST (plate height): everything downstream rebuilds
+   (slower, as expected). Undo/redo, suppress, delete, rollback marker: the
+   result always equals a fresh rebuild (File ▸ Open of the saved file
+   shows the same bodies).
+- [ ] 2. **Feel.** Dragging a dimension in a sketch with an extrude on it:
+   the 3D body follows on release with no lag; orbiting never stutters
+   during rebuilds of alpha-sized models.
+- [ ] 3. **Fuzz.** `tools/run_tests.sh m47` passes (60-step random chain,
+   every body watertight, cached == fresh, serializer round trip).
+- [ ] 4. Open every sample/test .ecad: none takes more than a second to
+   appear; none leaves a red chip that was not red before.
+
+### Fix log
+
+(none yet)

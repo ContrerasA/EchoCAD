@@ -3,7 +3,7 @@
 Updated: 2026-08-20. M0–M36 + the CHANGES round + **M38 (Manifold kernel)**
 + **M39 (face identity, explicit targets, feature dialogs)** + **M40
 (extrude extents/taper, chip editing, hole wizard)** + **M41 (fillet /
-chamfer on any edge)** + **M42 (shell, combine, split, press-pull)** + **M43 (inspection)** + **M44 (3MF / mesh import / OBJ / SVG)** + **M46 (document safety)** on
+chamfer on any edge)** + **M42 (shell, combine, split, press-pull)** + **M43 (inspection)** + **M44 (3MF / mesh import / OBJ / SVG)** + **M46 (document safety)** + **M47 (incremental rebuild + fuzz)** on
 `main`; M45 (components) deferred past the alpha. Volume 3 (`docs/MILESTONES3.md`, M38–M50 + polish rounds) is the
 alpha plan; manual QA for it lives in `docs/MANUAL_QA3.md`. Solids are now
 computed by Manifold (`MeshSolid` in `addons/geometry`): exact booleans
@@ -24,7 +24,8 @@ edges, ball corners), edit from the chip. M42: shell (inside/outside, open faces
 press-pull. M43: mass properties + materials, section analysis,
 interference, print check, model-mode measure. M44: 3MF + OBJ export, STL/OBJ/3MF import as bodies, SVG sketch export.
 M46: autosave + crash recovery, unsaved guard, recent files, start panel,
-newer-schema refusal. 71 headless tests + 35 RPC suites green.
+newer-schema refusal. M47: incremental rebuild from per-feature
+snapshots. 72 headless tests + 35 RPC suites green.
 
 Earlier history: M0–M25 implemented and merged to `main`.
 Volume 2 (M26–M35, `docs/MILESTONES2.md`) is IMPLEMENTED on a chain of
