@@ -60,6 +60,8 @@ static func icon_for(f: Feature) -> String:
 		return "extrude"
 	if f is RevolveFeature:
 		return "revolve"
+	if f is HoleFeature:
+		return "hole"
 	if f is SweepFeature:
 		return "sweep"
 	if f is LoftFeature:
@@ -117,26 +119,13 @@ func _on_chip_input(fid: String, ev: InputEvent) -> void:
 		return
 	var mb := ev as InputEventMouseButton
 	if mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT and mb.double_click:
-		var f := app.doc.feature_by_id(fid)
-		if f is SketchFeature and app.doc.features.find(f) < app.doc.timeline_marker:
-			app.edit_sketch(fid)
-		elif f is PlaneFeature:
-			app.edit_plane_offset(fid)
-		elif f is CanvasFeature:
-			app.open_canvas_dialog(fid)
-		elif f is TransformFeature:
-			app.open_move_dialog(fid)
-		elif f is CopyBodyFeature:
-			app.open_copy_dialog(fid)
-		elif f is PatternBodyFeature:
-			app.open_pattern_dialog(fid)
-		elif f is EdgeTreatFeature:
-			app.open_edge_treat_dialog(fid)
+		app.edit_feature(fid)
 	elif mb.pressed and mb.button_index == MOUSE_BUTTON_RIGHT:
 		_menu_feature = fid
 		_menu.clear()
-		_menu.add_item("Edit Sketch", 0)
 		var f := app.doc.feature_by_id(fid)
+		_menu.add_item("Edit Sketch" if f is SketchFeature else "Edit…", 0)
+		_menu.set_item_disabled(0, not app.can_edit_feature(fid))
 		_menu.add_item("Unsuppress" if f != null and f.suppressed else "Suppress", 1)
 		_menu.add_item("Delete", 2)
 		_menu.position = Vector2i(get_viewport().get_mouse_position()) \
@@ -148,13 +137,7 @@ func _on_menu(id: int) -> void:
 	var fid := _menu_feature
 	match id:
 		0:
-			var f := app.doc.feature_by_id(fid)
-			if f is SketchFeature:
-				app.edit_sketch(fid)
-			elif f is PlaneFeature:
-				app.edit_plane_offset(fid)
-			elif f is CanvasFeature:
-				app.open_canvas_dialog(fid)
+			app.edit_feature(fid)
 		1:
 			var f := app.doc.feature_by_id(fid)
 			if f != null:

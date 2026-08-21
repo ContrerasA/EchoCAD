@@ -44,6 +44,20 @@ func _read_base(d: Dictionary) -> void:
 		targets.append(String(t))
 
 
+## M40: features whose extent depends on other bodies (to next, through
+## all, to object) return true; BodyBuilder then hands them the bodies
+## built so far through prepare() before asking for the part.
+func needs_bodies() -> bool:
+	return false
+
+
+## M40: resolve body-dependent inputs against the bodies built so far
+## (BodyBuilder entries: {id, name, mesh, face_ids, solid}). Return "" or
+## an error message (the feature is skipped and flagged with it).
+func prepare(_doc: CadDocument, _bodies: Array) -> String:
+	return ""
+
+
 ## Exact watertight mesh of this feature's own solid (surface 0 = shaded
 ## triangles, surface 1 = edge-line overlay). null when the profile/axis no
 ## longer resolves.

@@ -158,3 +158,76 @@ share one shell (rows, inline errors, Enter/Esc, Pick… buttons).
 ### Fix log
 
 (none yet)
+
+---
+
+## §M40 — Extents, draft, hole wizard
+
+Status: PENDING
+
+Extrude grew the Fusion extent set and a taper; every extrude can be
+edited from its chip; the Hole wizard drills standard holes on a face.
+
+- [ ] 1. **Edit an extrude.** Double-click any Extrude chip (or right-click
+   ▸ Edit…). **Expect:** the same dialog as creation, titled "Edit
+   ExtrudeN", every field prefilled EXACTLY (a 10 mm extrude in inch display
+   reads "0.393701 in", not "0.394 in" — confirming untouched must not
+   change the model). Change the distance; OK; the body updates; undo is
+   one step.
+- [ ] 2. **Symmetric.** Extent ▸ Symmetric, distance 10. **Expect:** the body
+   spans −10..+10 around the sketch plane; tick "distance is the whole
+   length" → −5..+5.
+- [ ] 3. **Two Sided.** Distance 5, Distance 2 = 3. **Expect:** 5 one way, 3
+   the other, whichever sign the first has.
+- [ ] 4. **Through All.** Plate 10 mm on a 20 mm block (step). From a plane
+   under both, a cut Extent ▸ Through All. **Expect:** both steps are cut
+   the whole way; the Distance field reads "direction only" and its sign
+   flips the direction.
+- [ ] 5. **To Next.** New body from an offset plane below the block, Extent ▸
+   To Next. **Expect:** the pillar stops exactly at the block's underside.
+- [ ] 6. **To Object.** Extent ▸ To Object arms the Pick… automatically; hover
+   faces (they glow), click the block's top. **Expect:** the dialog shows
+   "face of ExtrudeN"; OK; the pillar reaches that face. Edit the block
+   height: the pillar follows. Suppress the block: the pillar's chip turns
+   red ("to object: its body no longer exists").
+- [ ] 7. **Taper.** 10×10 square, 10 mm, Taper 10°. **Expect:** a frustum that
+   grows outward; −10° shrinks; walls are flat quads, edges drawn; holes
+   in the profile taper the other way (material thickens). Esc in the
+   dialog cancels without a feature.
+- [ ] 8. **Hole wizard — arm first.** Press Hole with nothing selected.
+   **Expect:** the dialog docks top-right with Face ▸ Pick… armed; hovering
+   flat faces highlights them; click the plate top — "face of ExtrudeN",
+   and placement is armed at once (status bar: "click centres on the face
+   … Enter or right-click when done"). Moving over the face shows a ring
+   of the current diameter under the cursor; over a circular edge's centre
+   or a sketch point/circle centre on that plane it snaps (a small cross,
+   status bar names the snap). Click three places; the rings stay; the
+   Positions row says "3 placed"; Clear empties them.
+- [ ] 9. **Presets.** Size ▸ M6, Fit ▸ Normal clearance → Diameter 6.6 mm;
+   Close → 6.4; Loose → 7.0; Tap drill → 4.917 and Thread flips to
+   Modelled. Type ▸ Counterbore shows C'bore Ø 11 / depth 6.5 (ISO 4762);
+   Countersink shows 12.6 / 90°; a unified size (1/4-20) gives 82°. Size ▸
+   Custom leaves the fields alone.
+- [ ] 10. **Through / blind.** Depth ▸ Through All hides Distance and Tip; OK.
+   **Expect:** clean through holes, exact diameter, edges drawn around each
+   rim. Edit the hole (double-click its chip), Depth ▸ Distance 6, Tip 118°:
+   blind holes with a drill-point cone; Flat: flat bottoms.
+- [ ] 11. **Counterbore / countersink.** Visibly stepped / chamfered entries
+   of the preset sizes; a counterbore smaller than the hole is refused
+   inline ("Counterbore diameter must exceed the hole diameter").
+- [ ] 12. **Modelled thread.** M6 tap drill + Thread ▸ Modelled, Through All.
+   **Expect:** a helical ridge inside the hole (orbit close; it is real
+   geometry); export STL → the slicer shows threads and reports no repair.
+   Cosmetic: plain tap-drill hole, no geometry.
+- [ ] 13. **Holes follow the face.** Edit the plate's extrude height.
+   **Expect:** the holes still start at the (new) top face. Suppress the
+   plate: the hole chip turns amber (warning) and the holes stay put.
+- [ ] 14. **Hole on a tilted face** (sketch-on-face plane or a revolved body's
+   flat end): the wizard's rings lie in that face and the holes bore along
+   its normal.
+- [ ] 15. Both themes: preview rings (placed = selection colour, hover =
+   hover colour), dialog rows, inline errors.
+
+### Fix log
+
+(none yet)

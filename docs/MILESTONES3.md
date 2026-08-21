@@ -443,6 +443,19 @@ leftovers; release engineering (M49) last, alpha gate (M50).
   `action.select_option`, `query.project`, `targets` on the four solid
   actions.
 
+- **M40** (2026-08-20): extrude extents (symmetric/two-sided/to object/to
+  next/through all) resolve in `prepare(doc, bodies)` during the ordered
+  build; taper = per-vertex miter offset of the far cap (vertex count
+  preserved, quads between). `edit_feature()` + "Edit…" in the chip menu;
+  extrude and hole dialogs edit in place. Hole wizard: `HoleFeature`
+  (lathe profile per hole, kernel-unioned; modelled thread = major-bore
+  minus a helical ridge), `HoleTable` from `data/holes.json` (+
+  `user://holes/*.json`), face pick + click placement with snaps to
+  circle centres / sketch points, preview rings. Edit fields prefill with
+  `UnitConverter.format_exact` (round-trip safe). RPC: `action.hole`,
+  `query.bodies {faces}`, extent args on `action.extrude`, `input.click
+  {double}`.
+
 ## Deferred past alpha (beta backlog)
 
 - STEP import/export (B-rep kernel decision: OpenCascade-lite via

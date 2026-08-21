@@ -129,3 +129,87 @@ static func face_planes(entry: Dictionary) -> Dictionary:
 			"point": (rec["c_sum"] as Vector3) / float(rec["area"]),
 			"area": float(rec["area"])}
 	return out
+
+
+## Boundary loops of one face (world vertices, in order): the face's
+## triangle edges that are not shared with another triangle of the same
+## face, chained. -> Array[PackedVector3Array]
+static func face_loops(entry: Dictionary, face_id: int) -> Array:
+	var out: Array = []
+	var mesh: ArrayMesh = entry.get("mesh")
+	var fids: PackedInt32Array = entry.get("face_ids", PackedInt32Array())
+	if mesh == null or mesh.get_surface_count() == 0:
+		return out
+	var verts: PackedVector3Array = mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]
+	var vid := {}
+	var pos: Array = []
+	var count := {}       # directed edge key -> count (undirected)
+	var nxt := {}         # directed edge a->b stored for boundary walk
+	var nt := mini(verts.size() / 3, fids.size())
+	var key := func(v: Vector3) -> Vector3i:
+		return Vector3i(roundi(v.x * 1000.0), roundi(v.y * 1000.0), roundi(v.z * 1000.0))
+	for t in nt:
+		if fids[t] != face_id:
+			continue
+		var ids := [0, 0, 0]
+		for e in 3:
+			var k: Vector3i = key.call(verts[t * 3 + e])
+			if not vid.has(k):
+				vid[k] = pos.size()
+				pos.append(verts[t * 3 + e])
+			ids[e] = vid[k]
+		for e in 3:
+			var a: int = ids[e]
+			var b: int = ids[(e + 1) % 3]
+			var uk := Vector2i(mini(a, b), maxi(a, b))
+			count[uk] = int(count.get(uk, 0)) + 1
+			nxt[Vector2i(a, b)] = true
+	# Boundary directed edges: undirected count == 1.
+	var succ := {}
+	for dk in nxt:
+		var d := dk as Vector2i
+		if int(count.get(Vector2i(mini(d.x, d.y), maxi(d.x, d.y)), 0)) == 1:
+			succ[d.x] = d.y
+	var used := {}
+	for start in succ:
+		if used.has(start):
+			continue
+		var loop := PackedVector3Array()
+		var cur: int = start
+		var guard := 0
+		while not used.has(cur) and succ.has(cur) and guard < 100000:
+			used[cur] = true
+			loop.append(pos[cur])
+			cur = succ[cur]
+			guard += 1
+		if loop.size() >= 3:
+			out.append(loop)
+	return out
+
+
+## Centres of the circular loops among a face's boundaries (holes, bosses,
+## round outlines): loops of 12+ vertices all within 2 % of one radius.
+## -> Array of {center: Vector3, radius: float}
+static func face_circles(entry: Dictionary, face_id: int) -> Array:
+	var out: Array = []
+	for loop: PackedVector3Array in face_loops(entry, face_id):
+		if loop.size() < 12:
+			continue
+		var c := Vector3.ZERO
+		for p in loop:
+			c += p
+		c /= loop.size()
+		var r := 0.0
+		for p in loop:
+			r += p.distance_to(c)
+		r /= loop.size()
+		if r < 1e-6:
+			continue
+		var ok := true
+		for p in loop:
+			if absf(p.distance_to(c) - r) > r * 0.02:
+				ok = false
+				break
+		if ok:
+			out.append({"center": c, "radius": r})
+	return out

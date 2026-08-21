@@ -463,6 +463,40 @@ func _edge_treat(a: Dictionary, p: StreamPeerTCP, id: Variant,
 	return {"feature": fid}
 
 
+## --- M40 holes -----------------------------------------------------------------
+
+## args: {body, face, uv: [[u,v],...], diameter?, depth?, extent?
+## (distance|through_all), hole_type? (simple|counterbore|countersink),
+## cb_diameter?, cb_depth?, cs_diameter?, cs_angle?, tip_angle?,
+## thread_mode? (none|cosmetic|modeled), thread_id?, targets?}
+func _cmd_action_hole(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
+	var uvs: Array = []
+	for pt in (a.get("uv", []) as Array):
+		uvs.append(_vec2(pt))
+	if uvs.is_empty():
+		_reply_err(p, id, "bad_args", "uv: at least one [u, v] position")
+		return null
+	var props := {}
+	for k in ["diameter", "depth", "extent", "hole_type", "cb_diameter", "cb_depth",
+			"cs_diameter", "cs_angle", "tip_angle", "thread_mode", "thread_id", "thread_depth"]:
+		if a.has(k):
+			props[k] = a[k]
+	if a.has("targets"):
+		props["targets"] = _str_list(a["targets"])
+	var fid := app.add_holes(String(a.get("body", "")), int(a.get("face", -1)), uvs, props)
+	if fid == "":
+		_reply_err(p, id, "bad_args", "no such planar face on that body")
+		return null
+	var body_volume := 0.0
+	for b: Dictionary in await BodyBuilder.build(app.doc, app):
+		if String(b["id"]) == String(a.get("body", "")):
+			body_volume = BodyBuilder.mesh_volume(b["mesh"])
+	var f := app.doc.feature_by_id(fid) as Feature
+	_reply(p, id, {"feature": fid, "name": f.name, "body_volume": body_volume,
+		"error": f.rebuild_error})
+	return null
+
+
 ## --- M34 sweep + loft --------------------------------------------------------
 
 static func _str_list(v: Variant) -> Array:
@@ -835,7 +869,23 @@ func _cmd_action_extrude(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Varian
 			ExtrudeFeature.OP_CUT, SolidFeature.OP_INTERSECT]:
 		_reply_err(p, id, "bad_args", "unknown operation %s" % op)
 		return null
-	var eid := app.extrude(fid, at, dist, op, _str_list(a.get("targets", [])))
+	# M40: extent fields ride along: extent (distance|symmetric|two_sided|
+	# to_next|through_all|to_object), distance2, symmetric_whole, taper_deg,
+	# to_face {body, face} (a TopoRef by body id + kernel face id).
+	var props := {}
+	for k in ["extent", "distance2", "symmetric_whole", "taper_deg"]:
+		if a.has(k):
+			props[k] = a[k]
+	if a.get("to_face") is Dictionary:
+		var tf: Dictionary = a["to_face"]
+		var entry := app.world.body_entry(String(tf.get("body", "")))
+		var fp: Dictionary = TopoRef.face_planes(entry).get(int(tf.get("face", -1)), {})
+		if fp.is_empty():
+			_reply_err(p, id, "bad_args", "to_face: no such face on that body")
+			return null
+		props["to_ref"] = TopoRef.make(String(tf["body"]), int(tf["face"]),
+			fp["normal"], fp["point"])
+	var eid := app.extrude(fid, at, dist, op, _str_list(a.get("targets", [])), props)
 	if eid == "":
 		_reply_err(p, id, "invalid", "no closed profile at that point")
 		return null
@@ -886,7 +936,7 @@ func _cmd_action_revolve(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Varian
 
 
 ## Boolean-resolved solid bodies (M18): id/name/features/volume/aabb each.
-func _cmd_query_bodies(_a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
+func _cmd_query_bodies(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
 	var out: Array = []
 	for b: Dictionary in await BodyBuilder.build(app.doc, app):
 		var mesh: ArrayMesh = b["mesh"]
@@ -896,6 +946,16 @@ func _cmd_query_bodies(_a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant
 			"volume": BodyBuilder.mesh_volume(mesh),
 			"aabb": [box.position.x, box.position.y, box.position.z,
 				box.size.x, box.size.y, box.size.z]}
+		# M40: planar faces with their kernel ids (for to_face / holes).
+		if a.get("faces", false):
+			var faces: Array = []
+			for fid in TopoRef.face_planes(b):
+				var fp: Dictionary = TopoRef.face_planes(b)[fid]
+				var n: Vector3 = fp["normal"]
+				var pt: Vector3 = fp["point"]
+				faces.append({"face": int(fid), "normal": [n.x, n.y, n.z],
+					"point": [pt.x, pt.y, pt.z], "area": float(fp["area"])})
+			row["faces"] = faces
 		# M38: kernel facts — watertightness is the kernel's guarantee, the
 		# face census tells a test which features' faces survived.
 		var solid: Variant = b.get("solid")
@@ -1202,6 +1262,9 @@ func _button_event(pressed: bool, button: int, a: Dictionary) -> InputEventMouse
 		else:
 			_button_mask &= ~(1 << (button - 1))
 	ev.button_mask = _button_mask
+	# M40: {"double": true} marks the press as a double-click (timeline chip
+	# editing); the engine's own detection needs real timing.
+	ev.double_click = pressed and bool(a.get("double", false))
 	_apply_mods(ev, a)
 	return ev
 

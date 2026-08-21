@@ -71,6 +71,14 @@ fixture sketch quickly).
   `action.load_fixture {path}`, `action.set_theme {theme}` (M36)
 - `query.theme` — active theme id, appearance, catalog of available themes,
   user theme dir (M36)
+- `action.hole {body, face, uv:[[u,v]…], diameter?, depth?, extent?,
+  hole_type?, cb_*?, cs_*?, tip_angle?, thread_mode?, thread_id?,
+  targets?}` — hole wizard feature on a planar face (M40); `query.bodies
+  {faces: true}` lists each body's planar faces `{face, normal, point,
+  area}` (kernel face ids for `to_face` / holes); `action.extrude` takes
+  `extent`, `distance2`, `symmetric_whole`, `taper_deg`, `to_face {body,
+  face}`; `action.select_option {name, index}` drives OptionButtons;
+  `query.project {p:[x,y,z]}` gives the window pixel of a world point.
 - `query.kernel` — `{kernel, manifold, errors}`: kernel name, whether the
   Manifold binary loaded, and `{feature_id: reason}` for every feature
   whose last rebuild failed (M38). `query.bodies` rows additionally carry

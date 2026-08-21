@@ -59,6 +59,11 @@ static func _build_kernel(doc: CadDocument) -> Array:
 						pf.rebuild_level = "warning"
 		elif f is SolidFeature:
 			var ef := f as SolidFeature
+			if ef.needs_bodies():
+				var perr := ef.prepare(doc, _entries(bodies))
+				if perr != "":
+					ef.rebuild_error = perr
+					continue
 			var part := ef.solid_part(doc)
 			if part.is_empty():
 				ef.rebuild_error = "profile no longer resolves"
@@ -251,6 +256,40 @@ static func _replay_feature(doc: CadDocument, bodies: Array, part_solids: Dictio
 		_apply_tool(bodies, owner, src, SolidKernel.transformed(ps, xfs[k]),
 			src.operation, "%s:%d" % [owner.id, k + 1],
 			"%s %d" % [owner.name, k + 1], Color(0, 0, 0, 0))
+
+
+## First hit of a ray against the bodies' meshes (flat surface-0
+## triangles). -> {t, body, face, point, normal} or {} when nothing is hit
+## beyond `min_t`.
+static func ray_hit(entries: Array, origin: Vector3, dir: Vector3, min_t := 1e-4,
+		only_bodies: Array = []) -> Dictionary:
+	var best := {}
+	var best_t := INF
+	for b: Dictionary in entries:
+		if not only_bodies.is_empty() and not only_bodies.has(String(b["id"])):
+			continue
+		var mesh: ArrayMesh = b.get("mesh")
+		if mesh == null or mesh.get_surface_count() == 0:
+			continue
+		if not mesh.get_aabb().grow(0.01).intersects_ray(origin, dir):
+			continue
+		var verts: PackedVector3Array = mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX]
+		var fids: PackedInt32Array = b.get("face_ids", PackedInt32Array())
+		var nt := verts.size() / 3
+		for t in nt:
+			var hit = Geometry3D.ray_intersects_triangle(origin, dir, verts[t * 3],
+				verts[t * 3 + 1], verts[t * 3 + 2])
+			if hit == null:
+				continue
+			var tt := (hit as Vector3 - origin).dot(dir)
+			if tt < min_t or tt >= best_t:
+				continue
+			best_t = tt
+			best = {"t": tt, "body": String(b["id"]),
+				"face": fids[t] if t < fids.size() else -1, "point": hit,
+				"normal": (verts[t * 3 + 1] - verts[t * 3]).cross(
+					verts[t * 3 + 2] - verts[t * 3]).normalized()}
+	return best
 
 
 static func _new_entry(id: String, name: String, solid: RefCounted, color: Color) -> Dictionary:

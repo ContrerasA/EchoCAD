@@ -1174,6 +1174,10 @@ func _build_ribbon(parent: Control) -> void:
 	_btn_extrude.name = "ExtrudeBtn"
 	_btn_revolve = _tool_button(g_create, "Revolve", _on_revolve_pressed, "revolve")
 	_btn_revolve.name = "RevolveBtn"
+	var holeb := _tool_button(g_create, "Hole", func() -> void: open_hole_dialog(""), "hole")
+	holeb.name = "HoleBtn"
+	holeb.tooltip_text = ("Hole wizard: simple / counterbore / countersink, "
+		+ "standard sizes, optional modelled thread — pick a face, click positions")
 	var sweepb := _tool_button(g_create, "Sweep", _on_sweep_pressed, "sweep")
 	sweepb.name = "SweepBtn"
 	sweepb.tooltip_text = "Sweep a profile along a sketch path"
@@ -2541,9 +2545,9 @@ func open_canvas_dialog(fid: String) -> void:
 		add_child(_canvas_dialog)
 	_canvas_dialog.title = cf.name
 	var u := doc.display_unit
-	(_canvas_fields["cx"] as LineEdit).text = UnitConverter.format(cf.center.x, u)
-	(_canvas_fields["cy"] as LineEdit).text = UnitConverter.format(cf.center.y, u)
-	(_canvas_fields["w"] as LineEdit).text = UnitConverter.format(cf.width_mm, u)
+	(_canvas_fields["cx"] as LineEdit).text = UnitConverter.format_exact(cf.center.x, u)
+	(_canvas_fields["cy"] as LineEdit).text = UnitConverter.format_exact(cf.center.y, u)
+	(_canvas_fields["w"] as LineEdit).text = UnitConverter.format_exact(cf.width_mm, u)
 	(_canvas_fields["rot"] as LineEdit).text = "%.1f" % rad_to_deg(cf.rotation)
 	(_canvas_fields["op"] as LineEdit).text = "%.2f" % cf.opacity
 	(_canvas_fields["lock"] as CheckBox).set_pressed_no_signal(cf.locked)
@@ -2950,7 +2954,8 @@ func revolve(sketch_id: String, at: Vector2, axis: String, angle: float,
 ## feature id or "" when no profile encloses `at`. `operation` is the
 ## boolean role (M18): new_body / join / cut.
 func extrude(sketch_id: String, at: Vector2, dist: float,
-		operation := ExtrudeFeature.OP_NEW_BODY, targets: Array = []) -> String:
+		operation := ExtrudeFeature.OP_NEW_BODY, targets: Array = [],
+		props: Dictionary = {}) -> String:
 	var sf := doc.sketch_feature(sketch_id)
 	if sf == null:
 		return ""
@@ -2958,6 +2963,10 @@ func extrude(sketch_id: String, at: Vector2, dist: float,
 		return ""
 	var f := ExtrudeFeature.make(sketch_id, at, dist, operation)
 	f.targets = targets.duplicate()
+	# M40 extents / taper ride along in the same creation step.
+	for k in props:
+		if k in ["extent", "distance2", "symmetric_whole", "taper_deg", "to_ref"]:
+			f.set(k, props[k])
 	f.name = doc.auto_name("Extrude")
 	f.id = doc.next_feature_id()
 	stack.push_no_merge(CmdAddFeature.new(f))
@@ -3004,47 +3013,196 @@ const _OP_VALUES := [SolidFeature.OP_NEW_BODY, SolidFeature.OP_JOIN,
 	SolidFeature.OP_CUT, SolidFeature.OP_INTERSECT]
 
 
+const _EXT_ITEMS := ["Distance", "Symmetric", "Two Sided", "To Object", "To Next", "Through All"]
+
+var _extrude_edit_fid := ""
+var _extrude_to_ref: TopoRef = null
+var picking_to_face := false
+
+
 func _open_extrude_dialog() -> void:
+	open_extrude_dialog("")
+
+
+## Create (edit_fid == "", after a profile pick) or edit an extrude.
+func open_extrude_dialog(edit_fid: String) -> void:
+	var ef := doc.feature_by_id(edit_fid) as ExtrudeFeature
+	_extrude_edit_fid = edit_fid if ef != null else ""
 	if _extrude_dialog == null:
 		_extrude_dialog = FeatureDialog.create(self, "ExtrudeDialog", "Extrude")
 		_extrude_dialog.set_ok_name("ExtrudeOkBtn")
 		_extrude_dialog.add_info("profile", "Profile")
+		var ext := _extrude_dialog.add_option("extent", "Extent", "ExtrudeExtentPick", _EXT_ITEMS)
+		ext.item_selected.connect(func(_i: int) -> void: _sync_extrude_rows())
 		_extrude_dialog.add_field("distance", "Distance", "ExtrudeDistEdit",
 			"e.g. 10mm, 0.5in, -5")
+		_extrude_dialog.add_field("distance2", "Distance 2", "ExtrudeDist2Edit",
+			"the other way")
+		_extrude_dialog.add_check("whole", "Symmetric", "ExtrudeWholeCheck",
+			"distance is the whole length")
+		var frow := _extrude_dialog.add_info("to_face", "To face", "— pick a face —")
+		var fpick := Button.new()
+		fpick.name = "ExtrudeToFaceBtn"
+		fpick.text = "Pick…"
+		fpick.toggle_mode = true
+		fpick.focus_mode = Control.FOCUS_NONE
+		fpick.tooltip_text = "Click the body face the extrusion should stop at"
+		fpick.toggled.connect(func(on: bool) -> void:
+			picking_to_face = on
+			if not on:
+				world.clear_face_hover()
+			_refresh_ui())
+		frow.get_parent().add_child(fpick)
+		_extrude_dialog.add_field("taper", "Taper °", "ExtrudeTaperEdit",
+			"0 = straight walls; + grows outward")
 		var op := _extrude_dialog.add_option("op", "Operation", "ExtrudeOpPick", _OP_ITEMS)
 		op.item_selected.connect(func(_i: int) -> void: _sync_solid_dialog(_extrude_dialog))
 		_extrude_dialog.add_targets("targets", "Targets", "ExtrudeTargetsBtn")
 		_extrude_dialog.confirmed.connect(_commit_extrude)
 		_extrude_dialog.cancelled.connect(func() -> void:
 			_pending_extrude = {}
-			world.clear_profile_hover())
+			_extrude_edit_fid = ""
+			picking_to_face = false
+			world.clear_profile_hover()
+			world.clear_face_hover()
+			_refresh_ui())
 		add_child(_extrude_dialog)
-	(_extrude_dialog.field("distance") as LineEdit).text = ""
-	var sfp := doc.sketch_feature(String(_pending_extrude.get("sketch_id", "")))
+	var u := doc.display_unit
+	var sid := ef.sketch_id if ef != null else String(_pending_extrude.get("sketch_id", ""))
+	var sfp := doc.sketch_feature(sid)
 	(_extrude_dialog.field("profile") as Label).text = sfp.name if sfp != null else ""
-	_extrude_dialog.set_targets("targets", [])
-	_sync_solid_dialog(_extrude_dialog)
+	var dist := _extrude_dialog.field("distance") as LineEdit
+	var dist2 := _extrude_dialog.field("distance2") as LineEdit
+	var taper := _extrude_dialog.field("taper") as LineEdit
+	var whole := _extrude_dialog.field("whole") as CheckBox
+	var extp := _extrude_dialog.field("extent") as OptionButton
+	var opp := _extrude_dialog.field("op") as OptionButton
+	_extrude_to_ref = null
+	if ef != null:
+		_extrude_dialog.title = "Edit %s" % ef.name
+		extp.select(ExtrudeFeature.EXTENTS.find(ef.extent))
+		dist.text = UnitConverter.format_exact(ef.distance, u)
+		dist2.text = UnitConverter.format_exact(ef.distance2, u)
+		taper.text = "%.1f" % ef.taper_deg if ef.taper_deg != 0.0 else ""
+		whole.button_pressed = ef.symmetric_whole
+		opp.select(maxi(_OP_VALUES.find(ef.operation), 0))
+		_extrude_dialog.set_targets("targets", ef.targets)
+		_extrude_to_ref = ef.to_ref
+	else:
+		_extrude_dialog.title = "Extrude"
+		extp.select(0)
+		dist.text = ""
+		dist2.text = ""
+		taper.text = ""
+		whole.button_pressed = false
+		opp.select(0)
+		_extrude_dialog.set_targets("targets", [])
+	_sync_extrude_to_face()
+	_sync_extrude_rows()
 	_extrude_dialog.open()
+
+
+func _sync_extrude_to_face() -> void:
+	var lab := _extrude_dialog.field("to_face") as Label
+	if _extrude_to_ref == null:
+		lab.text = "— pick a face —"
+	else:
+		lab.text = "face of %s" % body_display_name(_extrude_to_ref.body)
+
+
+## Rows per extent kind (+ targets per operation).
+func _sync_extrude_rows() -> void:
+	var ext: String = ExtrudeFeature.EXTENTS[maxi(_extrude_dialog.selected("extent"), 0)]
+	var d := _extrude_dialog
+	d.set_row_visible("distance", ext in [ExtrudeFeature.EXT_DISTANCE,
+		ExtrudeFeature.EXT_SYMMETRIC, ExtrudeFeature.EXT_TWO_SIDED])
+	d.set_row_visible("distance2", ext == ExtrudeFeature.EXT_TWO_SIDED)
+	d.set_row_visible("whole", ext == ExtrudeFeature.EXT_SYMMETRIC)
+	d.set_row_visible("to_face", ext == ExtrudeFeature.EXT_TO_OBJECT)
+	# Direction for the body-dependent kinds: a "Flip" is the sign of the
+	# distance field, so keep it visible there too with a hint.
+	(d.field("distance") as LineEdit).placeholder_text = \
+		"e.g. 10mm, 0.5in, -5" if ext != ExtrudeFeature.EXT_TO_NEXT \
+		and ext != ExtrudeFeature.EXT_THROUGH_ALL and ext != ExtrudeFeature.EXT_TO_OBJECT \
+		else "direction only: 1 or -1"
+	if ext in [ExtrudeFeature.EXT_TO_NEXT, ExtrudeFeature.EXT_THROUGH_ALL, ExtrudeFeature.EXT_TO_OBJECT]:
+		d.set_row_visible("distance", true)
+	_sync_solid_dialog(d)
+	# To-object pick arms itself when the kind is chosen and no face is set.
+	var fpick := d.find_child("ExtrudeToFaceBtn", true, false) as Button
+	if ext == ExtrudeFeature.EXT_TO_OBJECT and _extrude_to_ref == null and d.visible:
+		fpick.button_pressed = true
+	elif ext != ExtrudeFeature.EXT_TO_OBJECT and fpick.button_pressed:
+		fpick.button_pressed = false
+
+
+## A face click while the extrude dialog's To-face pick is armed.
+func _extrude_face_picked(face: Dictionary) -> void:
+	_extrude_to_ref = TopoRef.make(String(face["body"]), int(face["face"]),
+		face["normal"], face["point"])
+	_sync_extrude_to_face()
+	(_extrude_dialog.find_child("ExtrudeToFaceBtn", true, false) as Button).button_pressed = false
+
+
+func _commit_extrude() -> void:
+	var d := _extrude_dialog
+	var ext: String = ExtrudeFeature.EXTENTS[maxi(d.selected("extent"), 0)]
+	var r := UnitConverter.parse(d.text_of("distance"), doc.display_unit)
+	var dist_mm := 0.0
+	if ext in [ExtrudeFeature.EXT_TO_NEXT, ExtrudeFeature.EXT_THROUGH_ALL, ExtrudeFeature.EXT_TO_OBJECT]:
+		# Only the sign matters; empty = positive.
+		dist_mm = 1.0
+		if r["ok"] and float(r["mm"]) < 0.0:
+			dist_mm = -1.0
+	else:
+		if not r["ok"] or absf(float(r["mm"])) < 1e-6:
+			d.set_error("Enter a non-zero distance (unit suffix optional)")
+			return
+		dist_mm = float(r["mm"])
+	var dist2_mm := 0.0
+	if ext == ExtrudeFeature.EXT_TWO_SIDED:
+		var r2 := UnitConverter.parse(d.text_of("distance2"), doc.display_unit)
+		if not r2["ok"] or absf(float(r2["mm"])) < 1e-6:
+			d.set_error("Enter the second distance (the other way)")
+			return
+		dist2_mm = absf(float(r2["mm"]))
+	if ext == ExtrudeFeature.EXT_TO_OBJECT and _extrude_to_ref == null:
+		d.set_error("Pick the face to extrude to")
+		return
+	var taper := 0.0
+	var tt := d.text_of("taper")
+	if tt != "":
+		if not tt.is_valid_float() or absf(tt.to_float()) >= 80.0:
+			d.set_error("Taper must be an angle between -80 and 80 degrees")
+			return
+		taper = tt.to_float()
+	var op: String = _OP_VALUES[maxi(d.selected("op"), 0)]
+	var targets := d.targets("targets") if op != SolidFeature.OP_NEW_BODY else []
+	var props := {"extent": ext, "distance": dist_mm, "distance2": dist2_mm,
+		"symmetric_whole": d.checked("whole"), "taper_deg": taper,
+		"to_ref": _extrude_to_ref if ext == ExtrudeFeature.EXT_TO_OBJECT else null,
+		"operation": op, "targets": targets}
+	d.close()
+	picking_to_face = false
+	world.clear_profile_hover()
+	world.clear_face_hover()
+	if _extrude_edit_fid != "":
+		var batch := CmdMergeBatch.new("Edit Extrude", [])
+		stack.push_no_merge(batch)
+		for k in props:
+			stack.push(CmdSetFeatureFlag.new(_extrude_edit_fid, k, props[k]))
+		batch.seal()
+		_extrude_edit_fid = ""
+	elif not _pending_extrude.is_empty():
+		extrude(_pending_extrude["sketch_id"], _pending_extrude["at"],
+			dist_mm, op, targets, props)
+	_pending_extrude = {}
+	_refresh_ui()
 
 
 ## Targets only matter for join/cut/intersect — hide the row for New Body.
 func _sync_solid_dialog(d: FeatureDialog) -> void:
 	d.set_row_visible("targets", d.selected("op") != 0)
-
-
-func _commit_extrude() -> void:
-	var r := UnitConverter.parse(_extrude_dialog.text_of("distance"), doc.display_unit)
-	if not r["ok"] or absf(float(r["mm"])) < 1e-6:
-		_extrude_dialog.set_error("Enter a non-zero distance (unit suffix optional)")
-		return
-	var op: String = _OP_VALUES[maxi(_extrude_dialog.selected("op"), 0)]
-	var targets := _extrude_dialog.targets("targets") if op != SolidFeature.OP_NEW_BODY else []
-	_extrude_dialog.close()
-	world.clear_profile_hover()
-	if not _pending_extrude.is_empty():
-		extrude(_pending_extrude["sketch_id"], _pending_extrude["at"],
-			float(r["mm"]), op, targets)
-	_pending_extrude = {}
 
 
 func _on_finish_sketch() -> void:
@@ -3163,6 +3321,416 @@ func _commit_revolve() -> void:
 	_revolve_axis = ""
 
 
+
+## --- M40 hole wizard -----------------------------------------------------------
+
+var _hole_dialog: FeatureDialog = null
+var _hole_edit_fid := ""
+var _hole_ref: TopoRef = null
+var _hole_xf := Transform3D.IDENTITY
+var _hole_uv: Array = []
+var _hole_snaps: Array = []        # [{pos: Vector3, label}]
+var picking_hole_face := false
+var picking_hole_points := false
+var _hole_hover: Variant = null
+var _hole_hover_snapped := false
+
+const _HOLE_TYPES := ["Simple", "Counterbore", "Countersink"]
+const _HOLE_TYPE_VALUES := [HoleFeature.TYPE_SIMPLE, HoleFeature.TYPE_COUNTERBORE,
+	HoleFeature.TYPE_COUNTERSINK]
+const _HOLE_FITS := ["Normal clearance", "Close clearance", "Loose clearance", "Tap drill"]
+const _HOLE_THREADS := ["None", "Cosmetic", "Modelled"]
+const _HOLE_THREAD_VALUES := [HoleFeature.THREAD_NONE, HoleFeature.THREAD_COSMETIC,
+	HoleFeature.THREAD_MODELED]
+
+
+func open_hole_dialog(edit_fid: String) -> void:
+	if mode != Mode.MODEL:
+		return
+	var hf := doc.feature_by_id(edit_fid) as HoleFeature
+	_hole_edit_fid = edit_fid if hf != null else ""
+	if hf == null and world.body_ids().is_empty():
+		set_status_hint("Hole: no bodies to drill yet")
+		return
+	if _hole_dialog == null:
+		_hole_dialog = FeatureDialog.create(self, "HoleDialog", "Hole")
+		_hole_dialog.set_ok_name("HoleOkBtn")
+		var frow := _hole_dialog.add_info("face", "Face", "— pick a face —")
+		var fpick := Button.new()
+		fpick.name = "HoleFaceBtn"
+		fpick.text = "Pick…"
+		fpick.toggle_mode = true
+		fpick.focus_mode = Control.FOCUS_NONE
+		fpick.tooltip_text = "Click the flat body face to drill into"
+		fpick.toggled.connect(func(on: bool) -> void:
+			picking_hole_face = on
+			if on:
+				(_hole_dialog.find_child("HolePlaceBtn", true, false) as Button).set_pressed_no_signal(false)
+				picking_hole_points = false
+			else:
+				world.clear_face_hover()
+			_refresh_ui())
+		frow.get_parent().add_child(fpick)
+		var prow := _hole_dialog.add_info("positions", "Positions", "none")
+		var ppick := Button.new()
+		ppick.name = "HolePlaceBtn"
+		ppick.text = "Place…"
+		ppick.toggle_mode = true
+		ppick.focus_mode = Control.FOCUS_NONE
+		ppick.tooltip_text = ("Click hole centres on the face (snaps to circle centres "
+			+ "and sketch points); Enter or right-click when done")
+		ppick.toggled.connect(func(on: bool) -> void:
+			if on and _hole_ref == null:
+				ppick.set_pressed_no_signal(false)
+				_hole_dialog.set_error("Pick the face first")
+				return
+			picking_hole_points = on
+			if on:
+				(_hole_dialog.find_child("HoleFaceBtn", true, false) as Button).set_pressed_no_signal(false)
+				picking_hole_face = false
+				_hole_refresh_preview()
+			else:
+				world.hide_hole_preview()
+			_refresh_ui())
+		prow.get_parent().add_child(ppick)
+		var pclear := Button.new()
+		pclear.name = "HoleClearBtn"
+		pclear.text = "Clear"
+		pclear.focus_mode = Control.FOCUS_NONE
+		pclear.pressed.connect(func() -> void:
+			_hole_uv = []
+			_hole_sync_positions()
+			_hole_refresh_preview())
+		prow.get_parent().add_child(pclear)
+		var typ := _hole_dialog.add_option("type", "Type", "HoleTypePick", _HOLE_TYPES)
+		typ.item_selected.connect(func(_i: int) -> void: _hole_sync_rows())
+		var presets: Array = ["Custom"]
+		presets.append_array(HoleTable.preset_labels())
+		var size := _hole_dialog.add_option("size", "Size", "HoleSizePick", presets)
+		size.item_selected.connect(func(_i: int) -> void: _hole_apply_preset())
+		var fit := _hole_dialog.add_option("fit", "Fit", "HoleFitPick", _HOLE_FITS)
+		fit.item_selected.connect(func(_i: int) -> void: _hole_apply_preset())
+		_hole_dialog.add_field("diameter", "Diameter", "HoleDiaEdit", "e.g. 6.6mm, 0.26in")
+		var ext := _hole_dialog.add_option("extent", "Depth", "HoleExtentPick",
+			["Distance", "Through All"])
+		ext.item_selected.connect(func(_i: int) -> void: _hole_sync_rows())
+		_hole_dialog.add_field("depth", "Distance", "HoleDepthEdit", "depth of the bore")
+		_hole_dialog.add_option("tip", "Tip", "HoleTipPick", ["118° drill point", "Flat"])
+		_hole_dialog.add_field("cb_dia", "C'bore Ø", "HoleCbDiaEdit", "counterbore diameter")
+		_hole_dialog.add_field("cb_depth", "C'bore depth", "HoleCbDepthEdit", "counterbore depth")
+		_hole_dialog.add_field("cs_dia", "C'sink Ø", "HoleCsDiaEdit", "countersink diameter at the face")
+		_hole_dialog.add_field("cs_angle", "C'sink °", "HoleCsAngleEdit", "90 (metric), 82 (unified)")
+		var thr := _hole_dialog.add_option("thread", "Thread", "HoleThreadPick", _HOLE_THREADS)
+		thr.item_selected.connect(func(_i: int) -> void: _hole_sync_rows())
+		_hole_dialog.add_targets("targets", "Targets", "HoleTargetsBtn")
+		_hole_dialog.confirmed.connect(_commit_hole)
+		_hole_dialog.cancelled.connect(_hole_end_picks)
+		add_child(_hole_dialog)
+	var u := doc.display_unit
+	var d := _hole_dialog
+	_hole_uv = []
+	_hole_ref = null
+	_hole_xf = Transform3D.IDENTITY
+	if hf != null:
+		d.title = "Edit %s" % hf.name
+		_hole_ref = hf.ref
+		_hole_xf = hf.plane_xf
+		_hole_uv = hf.uv.duplicate()
+		(d.field("type") as OptionButton).select(maxi(_HOLE_TYPE_VALUES.find(hf.hole_type), 0))
+		(d.field("size") as OptionButton).select(0)
+		(d.field("diameter") as LineEdit).text = UnitConverter.format_exact(hf.diameter, u)
+		(d.field("extent") as OptionButton).select(1 if hf.extent == HoleFeature.EXT_THROUGH_ALL else 0)
+		(d.field("depth") as LineEdit).text = UnitConverter.format_exact(hf.depth, u)
+		(d.field("tip") as OptionButton).select(1 if hf.tip_angle <= 0.0 else 0)
+		(d.field("cb_dia") as LineEdit).text = UnitConverter.format_exact(hf.cb_diameter, u)
+		(d.field("cb_depth") as LineEdit).text = UnitConverter.format_exact(hf.cb_depth, u)
+		(d.field("cs_dia") as LineEdit).text = UnitConverter.format_exact(hf.cs_diameter, u)
+		(d.field("cs_angle") as LineEdit).text = "%.0f" % hf.cs_angle
+		(d.field("thread") as OptionButton).select(maxi(_HOLE_THREAD_VALUES.find(hf.thread_mode), 0))
+		if hf.thread_id != "":
+			var sp := d.field("size") as OptionButton
+			for i in sp.item_count:
+				if sp.get_item_text(i) == hf.thread_id:
+					sp.select(i)
+		d.set_targets("targets", hf.targets)
+	else:
+		d.title = "Hole"
+		(d.field("type") as OptionButton).select(0)
+		var sp := d.field("size") as OptionButton
+		sp.select(0)
+		for i in sp.item_count:
+			if sp.get_item_text(i) == "M6":
+				sp.select(i)
+		(d.field("fit") as OptionButton).select(0)
+		(d.field("extent") as OptionButton).select(1)
+		(d.field("depth") as LineEdit).text = UnitConverter.format_exact(10.0, u)
+		(d.field("tip") as OptionButton).select(0)
+		(d.field("cs_angle") as LineEdit).text = "90"
+		(d.field("thread") as OptionButton).select(0)
+		d.set_targets("targets", [])
+		_hole_apply_preset()
+	_hole_sync_face()
+	_hole_sync_positions()
+	_hole_sync_rows()
+	d.open()
+	# Arm-first: new hole → face pick armed immediately; editing → nothing armed.
+	if hf == null:
+		(d.find_child("HoleFaceBtn", true, false) as Button).button_pressed = true
+
+
+func _hole_end_picks() -> void:
+	picking_hole_face = false
+	picking_hole_points = false
+	_hole_hover = null
+	world.clear_face_hover()
+	world.hide_hole_preview()
+	_refresh_ui()
+
+
+func _hole_sync_face() -> void:
+	var lab := _hole_dialog.field("face") as Label
+	lab.text = "— pick a face —" if _hole_ref == null \
+		else "face of %s" % body_display_name(_hole_ref.body)
+
+
+func _hole_sync_positions() -> void:
+	var lab := _hole_dialog.field("positions") as Label
+	lab.text = "none" if _hole_uv.is_empty() else "%d placed" % _hole_uv.size()
+
+
+## Fill diameter / counterbore / countersink / thread from the chosen
+## standard size and fit; Custom leaves the fields alone.
+func _hole_apply_preset() -> void:
+	var d := _hole_dialog
+	var sp := d.field("size") as OptionButton
+	var fit := d.field("fit") as OptionButton
+	var u := doc.display_unit
+	if sp.selected <= 0:
+		d.set_row_visible("fit", false)
+		return
+	d.set_row_visible("fit", true)
+	var e := HoleTable.find(sp.get_item_text(sp.selected))
+	if e.is_empty():
+		return
+	var dia := float(e["normal"])
+	match fit.selected:
+		1:
+			dia = float(e["close"])
+		2:
+			dia = float(e["loose"])
+		3:
+			dia = HoleTable.tap_drill(e)
+	(d.field("diameter") as LineEdit).text = UnitConverter.format_exact(dia, u)
+	var cb: Array = e.get("cbore", [dia * 1.7, dia])
+	(d.field("cb_dia") as LineEdit).text = UnitConverter.format_exact(float(cb[0]), u)
+	(d.field("cb_depth") as LineEdit).text = UnitConverter.format_exact(float(cb[1]), u)
+	(d.field("cs_dia") as LineEdit).text = UnitConverter.format_exact(float(e.get("csink", dia * 2.0)), u)
+	(d.field("cs_angle") as LineEdit).text = "82" if String(e["family"]) == "unified" else "90"
+	var thr := d.field("thread") as OptionButton
+	if fit.selected == 3 and thr.selected == 0:
+		thr.select(2)
+	elif fit.selected != 3:
+		thr.select(0)
+	_hole_sync_rows()
+
+
+func _hole_sync_rows() -> void:
+	var d := _hole_dialog
+	var t := d.selected("type")
+	d.set_row_visible("cb_dia", t == 1)
+	d.set_row_visible("cb_depth", t == 1)
+	d.set_row_visible("cs_dia", t == 2)
+	d.set_row_visible("cs_angle", t == 2)
+	var through := d.selected("extent") == 1
+	d.set_row_visible("depth", not through)
+	d.set_row_visible("tip", not through)
+	d.set_row_visible("fit", d.selected("size") > 0)
+	_hole_refresh_preview()
+
+
+func _hole_radius_fields() -> Array:
+	var d := _hole_dialog
+	var r := UnitConverter.parse(d.text_of("diameter"), doc.display_unit)
+	var inner := float(r["mm"]) * 0.5 if r["ok"] else 3.0
+	var outer := inner
+	if d.selected("type") == 1:
+		var rc := UnitConverter.parse(d.text_of("cb_dia"), doc.display_unit)
+		outer = float(rc["mm"]) * 0.5 if rc["ok"] else inner
+	elif d.selected("type") == 2:
+		var rs := UnitConverter.parse(d.text_of("cs_dia"), doc.display_unit)
+		outer = float(rs["mm"]) * 0.5 if rs["ok"] else inner
+	return [inner, outer]
+
+
+func _hole_refresh_preview() -> void:
+	if _hole_dialog == null or not _hole_dialog.visible or _hole_ref == null:
+		world.hide_hole_preview()
+		return
+	var rr := _hole_radius_fields()
+	var centers: Array = []
+	for p: Vector2 in _hole_uv:
+		centers.append(_hole_xf * Vector3(p.x, p.y, 0.0))
+	world.show_hole_preview(centers, _hole_xf.basis.z, rr[0], rr[1],
+		_hole_hover if picking_hole_points else null, _hole_hover_snapped)
+
+
+## Face chosen for the holes: bind the ref, cache the plane, collect snap
+## candidates (circle centres on the face + sketch points on its plane).
+func _hole_face_picked(face: Dictionary) -> void:
+	_hole_ref = TopoRef.make(String(face["body"]), int(face["face"]), face["normal"], face["point"])
+	_hole_xf = PlaneFeature.face_transform(face["point"], face["normal"])
+	_hole_uv = []
+	_hole_snaps = []
+	var entry := world.body_entry(String(face["body"]))
+	for c: Dictionary in TopoRef.face_circles(entry, int(face["face"])):
+		_hole_snaps.append({"pos": c["center"], "label": "circle centre"})
+	var n: Vector3 = _hole_xf.basis.z
+	var off := _hole_xf.origin.dot(n)
+	for f in doc.live_features():
+		if not (f is SketchFeature):
+			continue
+		var sf := f as SketchFeature
+		var xf := sf.plane_transform()
+		if absf(xf.basis.z.dot(n)) < 0.999 or absf(xf.origin.dot(n) - off) > 0.05:
+			continue
+		for e in sf.sketch.entities():
+			if e.kind() == "point":
+				_hole_snaps.append({"pos": sf.to_world((e as SketchPoint).pos),
+					"label": "sketch point"})
+			elif e.kind() == "circle":
+				var cc := sf.sketch.point((e as SketchCircle).center)
+				if cc != null:
+					_hole_snaps.append({"pos": sf.to_world(cc.pos), "label": "circle centre"})
+			elif e.kind() == "arc":
+				var ca := sf.sketch.point((e as SketchArc).center)
+				if ca != null:
+					_hole_snaps.append({"pos": sf.to_world(ca.pos), "label": "arc centre"})
+	_hole_sync_face()
+	_hole_sync_positions()
+	(_hole_dialog.find_child("HoleFaceBtn", true, false) as Button).set_pressed_no_signal(false)
+	picking_hole_face = false
+	world.clear_face_hover()
+	# Straight on to placing.
+	(_hole_dialog.find_child("HolePlaceBtn", true, false) as Button).button_pressed = true
+
+
+## Pointer ray -> candidate hole centre on the face plane (snapped when a
+## candidate is within ~8 px). {} when the ray misses the plane.
+func _hole_candidate(origin: Vector3, dir: Vector3) -> Dictionary:
+	var n: Vector3 = _hole_xf.basis.z
+	var denom := dir.dot(n)
+	if absf(denom) < 1e-9:
+		return {}
+	var t := (_hole_xf.origin - origin).dot(n) / denom
+	if t <= 0.0:
+		return {}
+	var p := origin + dir * t
+	var tol := rig.view_height_mm() * 8.0 / maxf(float(_viewport.size.y), 1.0)
+	var best := {}
+	var best_d := tol
+	for sn: Dictionary in _hole_snaps:
+		var dd := (sn["pos"] as Vector3).distance_to(p)
+		if dd < best_d:
+			best_d = dd
+			best = sn
+	if not best.is_empty():
+		return {"pos": best["pos"], "snapped": true, "label": best["label"]}
+	return {"pos": p, "snapped": false, "label": ""}
+
+
+func _hole_place(pos: Vector3) -> void:
+	var local := _hole_xf.affine_inverse() * pos
+	_hole_uv.append(Vector2(local.x, local.y))
+	_hole_sync_positions()
+	_hole_refresh_preview()
+
+
+func _commit_hole() -> void:
+	var d := _hole_dialog
+	var u := doc.display_unit
+	if _hole_ref == null:
+		d.set_error("Pick the face to drill")
+		return
+	if _hole_uv.is_empty():
+		d.set_error("Place at least one hole (Place… then click the face)")
+		return
+	var dia := UnitConverter.parse(d.text_of("diameter"), u)
+	if not dia["ok"] or float(dia["mm"]) <= 0.0:
+		d.set_error("Enter a positive diameter")
+		return
+	var through := d.selected("extent") == 1
+	var dep := UnitConverter.parse(d.text_of("depth"), u)
+	if not through and (not dep["ok"] or float(dep["mm"]) <= 0.0):
+		d.set_error("Enter a positive depth (or choose Through All)")
+		return
+	var props := {
+		"ref": _hole_ref, "plane_xf": _hole_xf, "uv": _hole_uv.duplicate(),
+		"hole_type": _HOLE_TYPE_VALUES[maxi(d.selected("type"), 0)],
+		"diameter": float(dia["mm"]),
+		"extent": HoleFeature.EXT_THROUGH_ALL if through else HoleFeature.EXT_DISTANCE,
+		"depth": float(dep["mm"]) if dep["ok"] else 10.0,
+		"tip_angle": 0.0 if d.selected("tip") == 1 else 118.0,
+		"thread_mode": _HOLE_THREAD_VALUES[maxi(d.selected("thread"), 0)],
+		"targets": d.targets("targets"),
+	}
+	var sp := d.field("size") as OptionButton
+	props["thread_id"] = sp.get_item_text(sp.selected) if sp.selected > 0 else ""
+	if props["thread_mode"] != HoleFeature.THREAD_NONE and props["thread_id"] == "":
+		d.set_error("A thread needs a standard size (pick one under Size)")
+		return
+	for pair in [["cb_dia", "cb_diameter"], ["cb_depth", "cb_depth"], ["cs_dia", "cs_diameter"]]:
+		var r := UnitConverter.parse(d.text_of(pair[0]), u)
+		if r["ok"]:
+			props[pair[1]] = float(r["mm"])
+	var csa := d.text_of("cs_angle")
+	if csa.is_valid_float():
+		props["cs_angle"] = csa.to_float()
+	if props["hole_type"] == HoleFeature.TYPE_COUNTERBORE \
+			and float(props.get("cb_diameter", 0.0)) <= float(props["diameter"]):
+		d.set_error("Counterbore diameter must exceed the hole diameter")
+		return
+	if props["hole_type"] == HoleFeature.TYPE_COUNTERSINK \
+			and float(props.get("cs_diameter", 0.0)) <= float(props["diameter"]):
+		d.set_error("Countersink diameter must exceed the hole diameter")
+		return
+	d.close()
+	_hole_end_picks()
+	if _hole_edit_fid != "":
+		var batch := CmdMergeBatch.new("Edit Hole", [])
+		stack.push_no_merge(batch)
+		for k in props:
+			stack.push(CmdSetFeatureFlag.new(_hole_edit_fid, k, props[k]))
+		batch.seal()
+		_hole_edit_fid = ""
+		return
+	var h := HoleFeature.new()
+	h.id = doc.next_feature_id()
+	h.name = doc.auto_name("Hole")
+	for k in props:
+		h.set(k, props[k])
+	stack.push_no_merge(CmdAddFeature.new(h))
+	select_body("")
+
+
+## RPC / scripting entry: holes from explicit data (face by body + kernel
+## face id, positions in the face plane's uv). Returns the feature id.
+func add_holes(body: String, face_id: int, uvs: Array, props: Dictionary) -> String:
+	var entry := world.body_entry(body)
+	var fp: Dictionary = TopoRef.face_planes(entry).get(face_id, {})
+	if fp.is_empty():
+		return ""
+	var h := HoleFeature.new()
+	h.id = doc.next_feature_id()
+	h.name = doc.auto_name("Hole")
+	h.ref = TopoRef.make(body, face_id, fp["normal"], fp["point"])
+	h.plane_xf = PlaneFeature.face_transform(fp["point"], fp["normal"])
+	h.uv = uvs.duplicate()
+	for k in props:
+		h.set(k, props[k])
+	stack.push_no_merge(CmdAddFeature.new(h))
+	return h.id
+
+
 ## --- construction planes (M22) -------------------------------------------------
 
 ## Create an offset construction plane (undoable). `base` is an origin-plane
@@ -3196,6 +3764,46 @@ func create_sketch_on_face(point: Vector3, normal: Vector3, body := "",
 		[CmdAddFeature.new(pf), CmdAddFeature.new(sf)]))
 	edit_sketch(sf.id)
 	return sf.id
+
+
+## M40: one entry for "edit this feature" (timeline double-click, the
+## chip menu, the browser). Every editable feature kind routes to its
+## dialog in edit mode; others get a status hint instead of silence.
+func edit_feature(fid: String) -> void:
+	var f := doc.feature_by_id(fid)
+	if f == null:
+		return
+	if f is SketchFeature:
+		if doc.features.find(f) < doc.timeline_marker:
+			edit_sketch(fid)
+		else:
+			set_status_hint("%s is rolled back — move the marker past it to edit" % f.name)
+	elif f is ExtrudeFeature:
+		open_extrude_dialog(fid)
+	elif f is HoleFeature:
+		open_hole_dialog(fid)
+	elif f is PlaneFeature:
+		edit_plane_offset(fid)
+	elif f is CanvasFeature:
+		open_canvas_dialog(fid)
+	elif f is TransformFeature:
+		open_move_dialog(fid)
+	elif f is CopyBodyFeature:
+		open_copy_dialog(fid)
+	elif f is PatternBodyFeature:
+		open_pattern_dialog(fid)
+	elif f is EdgeTreatFeature:
+		open_edge_treat_dialog(fid)
+	else:
+		set_status_hint("%s: nothing to edit here yet — delete and recreate" % f.name)
+
+
+func can_edit_feature(fid: String) -> bool:
+	var f := doc.feature_by_id(fid)
+	return f is SketchFeature or f is ExtrudeFeature or f is HoleFeature \
+		or (f is PlaneFeature and (f as PlaneFeature).plane_kind == PlaneFeature.KIND_OFFSET) \
+		or f is CanvasFeature or f is TransformFeature or f is CopyBodyFeature \
+		or f is PatternBodyFeature or f is EdgeTreatFeature
 
 
 ## Open the offset editor for an existing plane (browser/timeline
@@ -3263,7 +3871,7 @@ func _open_plane_dialog(base: String, edit_fid: String) -> void:
 	else:
 		var pf := doc.plane_feature(edit_fid)
 		_plane_dialog.title = "Edit %s" % (pf.name if pf != null else "plane")
-		_plane_dist.text = UnitConverter.format(pf.offset, doc.display_unit) \
+		_plane_dist.text = UnitConverter.format_exact(pf.offset, doc.display_unit) \
 			if pf != null else ""
 	_plane_dialog.popup_centered()
 	_plane_dist.grab_focus()
@@ -3579,7 +4187,7 @@ func open_edge_treat_dialog(edit_fid: String, p_kind := "") -> void:
 	_treat_dialog.title = "Fillet Edges" \
 		if _treat_kind == EdgeTreatFeature.KIND_FILLET else "Chamfer Edges"
 	(_treat_fields["size"] as LineEdit).text = \
-		UnitConverter.format(et.size_mm, doc.display_unit)
+		UnitConverter.format_exact(et.size_mm, doc.display_unit)
 	(_treat_fields["desc"] as Label).text = _describe_treat_edges(et)
 	_treat_dialog.popup_centered()
 
@@ -3711,7 +4319,7 @@ func _open_treat_pick_dialog() -> void:
 		add_child(_treat_pick_dialog)
 	_treat_pick_dialog.title = "Fillet Edges" \
 		if _treat_kind == EdgeTreatFeature.KIND_FILLET else "Chamfer Edges"
-	_treat_pick_size.text = UnitConverter.format(3.0, doc.display_unit)
+	_treat_pick_size.text = UnitConverter.format_exact(3.0, doc.display_unit)
 	_update_treat_pick_count()
 	# Top-right corner, not centered: the user is about to click edges in
 	# the viewport and a centered window would sit right on top of the body.
@@ -4401,11 +5009,11 @@ func open_pattern_dialog(edit_fid: String) -> void:
 		_pattern_dialog.title = "Edit %s" % pf.name
 		mp.select(1 if pf.mode == PatternBodyFeature.MODE_CIRCULAR else 0)
 		f_n1.text = str(pf.count1)
-		f_o1.text = "%s, %s, %s" % [UnitConverter.format(pf.offset1.x, u),
-			UnitConverter.format(pf.offset1.y, u), UnitConverter.format(pf.offset1.z, u)]
+		f_o1.text = "%s, %s, %s" % [UnitConverter.format_exact(pf.offset1.x, u),
+			UnitConverter.format_exact(pf.offset1.y, u), UnitConverter.format_exact(pf.offset1.z, u)]
 		f_n2.text = str(pf.count2)
-		f_o2.text = "%s, %s, %s" % [UnitConverter.format(pf.offset2.x, u),
-			UnitConverter.format(pf.offset2.y, u), UnitConverter.format(pf.offset2.z, u)]
+		f_o2.text = "%s, %s, %s" % [UnitConverter.format_exact(pf.offset2.x, u),
+			UnitConverter.format_exact(pf.offset2.y, u), UnitConverter.format_exact(pf.offset2.z, u)]
 		f_total.text = "%.1f" % pf.total_deg
 		var want := 2
 		if absf(pf.axis_dir.x) > 0.5:
@@ -4421,11 +5029,11 @@ func open_pattern_dialog(edit_fid: String) -> void:
 		for b: Dictionary in world.bodies():
 			if String(b["id"]) == _pattern_source:
 				w = (b["mesh"] as ArrayMesh).get_aabb().size.x + 10.0
-		f_o1.text = "%s, %s, %s" % [UnitConverter.format(w, u),
-			UnitConverter.format(0, u), UnitConverter.format(0, u)]
+		f_o1.text = "%s, %s, %s" % [UnitConverter.format_exact(w, u),
+			UnitConverter.format_exact(0, u), UnitConverter.format_exact(0, u)]
 		f_n2.text = "1"
-		f_o2.text = "%s, %s, %s" % [UnitConverter.format(0, u),
-			UnitConverter.format(0, u), UnitConverter.format(0, u)]
+		f_o2.text = "%s, %s, %s" % [UnitConverter.format_exact(0, u),
+			UnitConverter.format_exact(0, u), UnitConverter.format_exact(0, u)]
 		f_total.text = "360"
 	_sync_pattern_rows()
 	_pattern_dialog.open()
@@ -4581,9 +5189,9 @@ func open_move_dialog(edit_fid: String) -> void:
 	var u := doc.display_unit
 	if tf != null:
 		_move_dialog.title = "Edit %s" % tf.name
-		(_move_fields["dx"] as LineEdit).text = UnitConverter.format(tf.translation.x, u)
-		(_move_fields["dy"] as LineEdit).text = UnitConverter.format(tf.translation.y, u)
-		(_move_fields["dz"] as LineEdit).text = UnitConverter.format(tf.translation.z, u)
+		(_move_fields["dx"] as LineEdit).text = UnitConverter.format_exact(tf.translation.x, u)
+		(_move_fields["dy"] as LineEdit).text = UnitConverter.format_exact(tf.translation.y, u)
+		(_move_fields["dz"] as LineEdit).text = UnitConverter.format_exact(tf.translation.z, u)
 		(_move_fields["ang"] as LineEdit).text = "%.1f" % tf.rot_deg
 		var ax: OptionButton = _move_fields["axis"]
 		var want := 2
@@ -4683,9 +5291,9 @@ func open_copy_dialog(edit_fid: String) -> void:
 	var u := doc.display_unit
 	if cf != null:
 		_copy_dialog.title = "Edit %s" % cf.name
-		(_copy_fields["dx"] as LineEdit).text = UnitConverter.format(cf.translation.x, u)
-		(_copy_fields["dy"] as LineEdit).text = UnitConverter.format(cf.translation.y, u)
-		(_copy_fields["dz"] as LineEdit).text = UnitConverter.format(cf.translation.z, u)
+		(_copy_fields["dx"] as LineEdit).text = UnitConverter.format_exact(cf.translation.x, u)
+		(_copy_fields["dy"] as LineEdit).text = UnitConverter.format_exact(cf.translation.y, u)
+		(_copy_fields["dz"] as LineEdit).text = UnitConverter.format_exact(cf.translation.z, u)
 	else:
 		_copy_dialog.title = "Copy Body"
 		# Default: one body-width to the +X so the copy is visibly its own.
@@ -4693,9 +5301,9 @@ func open_copy_dialog(edit_fid: String) -> void:
 		for b: Dictionary in world.bodies():
 			if String(b["id"]) == _copy_source_body:
 				w = (b["mesh"] as ArrayMesh).get_aabb().size.x + 10.0
-		(_copy_fields["dx"] as LineEdit).text = UnitConverter.format(w, u)
-		(_copy_fields["dy"] as LineEdit).text = UnitConverter.format(0, u)
-		(_copy_fields["dz"] as LineEdit).text = UnitConverter.format(0, u)
+		(_copy_fields["dx"] as LineEdit).text = UnitConverter.format_exact(w, u)
+		(_copy_fields["dy"] as LineEdit).text = UnitConverter.format_exact(0, u)
+		(_copy_fields["dz"] as LineEdit).text = UnitConverter.format_exact(0, u)
 	_copy_dialog.popup_centered()
 
 
@@ -5403,6 +6011,30 @@ func _on_viewport_input(event: InputEvent) -> void:
 				world.show_treat_edges(_treat_pick_edges, _treat_selected,
 					_axis_hover_width_mm())
 				_update_treat_pick_count()
+		elif mb.pressed and picking_hole_face and mb.button_index == MOUSE_BUTTON_LEFT:
+			var rayh := rig.pixel_ray(mb.position)
+			var faceh := world.pick_face(rayh[0], rayh[1])
+			if faceh.is_empty() or int(faceh.get("face", -1)) < 0:
+				set_status_hint("Hole: click a flat body face")
+			else:
+				_hole_face_picked(faceh)
+		elif mb.pressed and picking_hole_points and mb.button_index == MOUSE_BUTTON_RIGHT:
+			(_hole_dialog.find_child("HolePlaceBtn", true, false) as Button).button_pressed = false
+		elif mb.pressed and picking_hole_points and mb.button_index == MOUSE_BUTTON_LEFT:
+			var rayp := rig.pixel_ray(mb.position)
+			var cand := _hole_candidate(rayp[0], rayp[1])
+			if cand.is_empty():
+				set_status_hint("Hole: click on the face plane")
+			else:
+				_hole_place(cand["pos"])
+		elif mb.pressed and picking_to_face and mb.button_index == MOUSE_BUTTON_LEFT:
+			var rayf := rig.pixel_ray(mb.position)
+			var facef := world.pick_face(rayf[0], rayf[1])
+			if facef.is_empty() or int(facef.get("face", -1)) < 0:
+				set_status_hint("To face: click a flat body face")
+			else:
+				world.clear_face_hover()
+				_extrude_face_picked(facef)
 		elif mb.pressed and picking_source != "" \
 				and mb.button_index == MOUSE_BUTTON_LEFT:
 			var rays := rig.pixel_ray(mb.position)
@@ -5480,6 +6112,30 @@ func _on_viewport_input(event: InputEvent) -> void:
 		elif picking_offset_base:
 			var rayb := rig.pixel_ray(mm.position)
 			world.set_plane_hover(world.pick_plane(rayb[0], rayb[1]))
+		elif picking_hole_face:
+			var rayhf := rig.pixel_ray(mm.position)
+			var facehf := world.pick_face(rayhf[0], rayhf[1])
+			if facehf.is_empty():
+				world.clear_face_hover()
+			else:
+				world.set_face_hover(String(facehf["body"]), facehf["point"], facehf["normal"])
+		elif picking_hole_points:
+			var rayhp := rig.pixel_ray(mm.position)
+			var candp := _hole_candidate(rayhp[0], rayhp[1])
+			_hole_hover = candp["pos"] if not candp.is_empty() else null
+			_hole_hover_snapped = bool(candp.get("snapped", false)) if not candp.is_empty() else false
+			_hole_refresh_preview()
+			if not candp.is_empty() and bool(candp["snapped"]):
+				set_status_hint("Hole: snap to %s — click to place" % String(candp["label"]))
+			else:
+				_refresh_ui()
+		elif picking_to_face:
+			var rayt := rig.pixel_ray(mm.position)
+			var facet := world.pick_face(rayt[0], rayt[1])
+			if facet.is_empty():
+				world.clear_face_hover()
+			else:
+				world.set_face_hover(String(facet["body"]), facet["point"], facet["normal"])
 		elif picking_source == "feature":
 			# Pre-highlight every face of the feature the click would take.
 			var rayf := rig.pixel_ray(mm.position)
@@ -5533,6 +6189,18 @@ func _on_viewport_input(event: InputEvent) -> void:
 			var raye := rig.pixel_ray(mm.position)
 			world.set_treat_edge_hover(_treat_edge_under_ray(raye[0], raye[1]),
 				_treat_pick_edges, _axis_hover_width_mm())
+		elif _face_hover_stale():
+			# No pick stage wants a face highlight: never leave one behind
+			# (a pick that ended on a click could otherwise strand the hover
+			# of the face the pointer crossed on its way there).
+			world.clear_face_hover()
+
+
+## True when some earlier pick stage may have left a face highlight that
+## no active stage owns any more.
+func _face_hover_stale() -> bool:
+	return not (picking_plane or picking_look_at or picking_mirror_plane \
+		or picking_hole_face or picking_to_face or picking_source == "feature")
 
 
 func _unhandled_key_input(event: InputEvent) -> void:
@@ -5597,6 +6265,15 @@ func handle_app_key(k: InputEventKey) -> bool:
 			if sketch_orbit:
 				return_to_sketch_plane()
 				return true
+		if picking_hole_face:
+			(_hole_dialog.find_child("HoleFaceBtn", true, false) as Button).button_pressed = false
+			return true
+		if picking_hole_points:
+			(_hole_dialog.find_child("HolePlaceBtn", true, false) as Button).button_pressed = false
+			return true
+		if picking_to_face:
+			(_extrude_dialog.find_child("ExtrudeToFaceBtn", true, false) as Button).button_pressed = false
+			return true
 		if picking_source != "":
 			end_source_pick()
 			return true
@@ -5640,6 +6317,9 @@ func handle_app_key(k: InputEventKey) -> bool:
 		return false
 	if (k.keycode == KEY_ENTER or k.keycode == KEY_KP_ENTER) and picking_targets:
 		end_target_pick()
+		return true
+	if (k.keycode == KEY_ENTER or k.keycode == KEY_KP_ENTER) and picking_hole_points:
+		(_hole_dialog.find_child("HolePlaceBtn", true, false) as Button).button_pressed = false
 		return true
 	if (k.keycode == KEY_ENTER or k.keycode == KEY_KP_ENTER) and mode == Mode.SKETCH:
 		# Enter goes to the tool's TYPE-IN handler first, and only then counts
@@ -6131,6 +6811,13 @@ func _refresh_ui() -> void:
 	if picking_look_at:
 		_status_hint.text = ("Look At: select a plane or a flat body face "
 			+ "(Esc to cancel)")
+	elif picking_hole_face:
+		_status_hint.text = "Hole: click the flat face to drill into — Esc to cancel"
+	elif picking_hole_points:
+		_status_hint.text = ("Hole: click centres on the face (%d placed; snaps to circle "
+			+ "centres and sketch points) — Enter or right-click when done") % _hole_uv.size()
+	elif picking_to_face:
+		_status_hint.text = "To face: click the flat body face the extrusion stops at — Esc to cancel"
 	elif picking_source == "feature":
 		_status_hint.text = ("Source: click a face of the cut/join feature to "
 			+ "repeat (its faces light up) — Esc to cancel")

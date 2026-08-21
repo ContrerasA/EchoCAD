@@ -157,7 +157,8 @@ func add_option(name: String, label: String, control_name: String,
 	pick.focus_mode = Control.FOCUS_NONE
 	for i in items.size():
 		pick.add_item(String(items[i]), i)
-	pick.select(selected)
+	if pick.item_count > 0:
+		pick.select(clampi(selected, 0, pick.item_count - 1))
 	pick.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	pick.custom_minimum_size = Vector2(ThemeService.metric("dialog_field_w", 170.0), 0)
 	row.add_child(pick)
@@ -409,7 +410,7 @@ func open() -> void:
 	show()
 	var vr: Rect2 = app.viewport_rect() if app != null else get_parent().get_viewport().get_visible_rect()
 	var gap := int(ThemeService.metric("dialog_gap", 6.0)) * 2
-	position = Vector2i(int(vr.end.x) - size.x - gap, int(vr.position.y) + gap)
+	position = Vector2i(maxi(int(vr.end.x) - size.x - gap, 0), maxi(int(vr.position.y) + gap, 0))
 	if _first_field != null:
 		_first_field.grab_focus()
 		if _first_field is LineEdit:

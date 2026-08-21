@@ -370,3 +370,150 @@ static func aabb(solid: RefCounted) -> AABB:
 
 static func is_valid(solid: RefCounted) -> bool:
 	return solid != null and bool(solid.call("is_valid"))
+
+
+## M41 — EDGE CHAINS of a body: every mesh edge whose two triangles lie on
+## different faces (or meet at a crease) is grouped by its face pair and
+## chained by connectivity. Each chain is one pickable CAD edge — a
+## straight box edge is a 1-segment chain, a hole rim is a closed chain.
+## -> Array of {key: String ("fa|fb|k"), fa: int, fb: int,
+##      points: PackedVector3Array (ordered vertices),
+##      na: PackedVector3Array, nb: PackedVector3Array (face normals of fa /
+##      fb at each point — vary along curved faces), closed: bool,
+##      convex: bool (material inside the dihedral < 180°), length: float}
+static func edge_chains(entry: Dictionary) -> Array:
+	var out: Array = []
+	var solid: Variant = entry.get("solid")
+	if solid == null:
+		return out
+	var m: Dictionary = solid.call("to_mesh")
+	var verts: PackedVector3Array = m["vertices"]
+	var idx: PackedInt32Array = m["indices"]
+	var fids: PackedInt32Array = m["face_ids"]
+	var nt := idx.size() / 3
+	if nt == 0:
+		return out
+	var tri_n := PackedVector3Array()
+	tri_n.resize(nt)
+	for t in nt:
+		var a := verts[idx[t * 3]]
+		var b := verts[idx[t * 3 + 1]]
+		var c := verts[idx[t * 3 + 2]]
+		tri_n[t] = (b - a).cross(c - a).normalized()
+	# Directed edge -> triangle (each directed edge belongs to exactly one
+	# triangle of a closed manifold).
+	var owner := {}
+	for t in nt:
+		for e in 3:
+			owner[Vector2i(idx[t * 3 + e], idx[t * 3 + (e + 1) % 3])] = t
+	var flat_dot := cos(deg_to_rad(SMOOTH_DEG))
+	# Collect feature edges keyed by unordered face pair.
+	var groups := {}   # "fa|fb" -> Array of {a, b, ta, tb}
+	for dk in owner:
+		var d := dk as Vector2i
+		if d.x > d.y:
+			continue   # handle each undirected edge once
+		var t0: int = owner[d]
+		var rk := Vector2i(d.y, d.x)
+		if not owner.has(rk):
+			continue
+		var t1: int = owner[rk]
+		var f0 := fids[t0]
+		var f1 := fids[t1]
+		var crease := tri_n[t0].dot(tri_n[t1]) < flat_dot
+		if f0 == f1 and not crease:
+			continue
+		var fa := mini(f0, f1)
+		var fb := maxi(f0, f1)
+		var gk := "%d|%d" % [fa, fb]
+		if not groups.has(gk):
+			groups[gk] = []
+		# Orient so ta is the triangle on face fa.
+		var ta := t0 if f0 == fa else t1
+		var tb := t1 if f0 == fa else t0
+		if f0 == f1:
+			ta = t0
+			tb = t1
+		(groups[gk] as Array).append({"a": d.x, "b": d.y, "ta": ta, "tb": tb})
+	for gk in groups:
+		var segs: Array = groups[gk]
+		var parts: PackedStringArray = String(gk).split("|")
+		var fa := int(parts[0])
+		var fb := int(parts[1])
+		# Adjacency by vertex.
+		var adj := {}
+		for i in segs.size():
+			var sg: Dictionary = segs[i]
+			for v in [sg["a"], sg["b"]]:
+				if not adj.has(v):
+					adj[v] = []
+				(adj[v] as Array).append(i)
+		var used := {}
+		var k := 0
+		for i in segs.size():
+			if used.has(i):
+				continue
+			# Walk from this segment both ways.
+			var chain_v: Array = [segs[i]["a"], segs[i]["b"]]
+			var chain_s: Array = [i]
+			used[i] = true
+			for dir in [1, -1]:
+				while true:
+					var endv: int = chain_v[-1] if dir == 1 else chain_v[0]
+					var nxt := -1
+					for si in (adj.get(endv, []) as Array):
+						if not used.has(si):
+							nxt = si
+							break
+					if nxt < 0:
+						break
+					used[nxt] = true
+					var sg2: Dictionary = segs[nxt]
+					var other: int = sg2["b"] if sg2["a"] == endv else sg2["a"]
+					if dir == 1:
+						chain_v.append(other)
+						chain_s.append(nxt)
+					else:
+						chain_v.push_front(other)
+						chain_s.push_front(nxt)
+			var closed: bool = chain_v.size() > 2 and int(chain_v[0]) == int(chain_v[-1])
+			if closed:
+				chain_v.pop_back()
+			var pts := PackedVector3Array()
+			var na := PackedVector3Array()
+			var nb := PackedVector3Array()
+			# Per-vertex normals: average of the chain segments' face
+			# triangles touching the vertex.
+			var acc_a := {}
+			var acc_b := {}
+			for si in chain_s:
+				var sg3: Dictionary = segs[si]
+				for v in [sg3["a"], sg3["b"]]:
+					acc_a[v] = (acc_a.get(v, Vector3.ZERO) as Vector3) + tri_n[sg3["ta"]]
+					acc_b[v] = (acc_b.get(v, Vector3.ZERO) as Vector3) + tri_n[sg3["tb"]]
+			var length := 0.0
+			for vi in chain_v.size():
+				var v: int = chain_v[vi]
+				pts.append(verts[v])
+				na.append((acc_a[v] as Vector3).normalized())
+				nb.append((acc_b[v] as Vector3).normalized())
+				if vi > 0:
+					length += verts[v].distance_to(verts[chain_v[vi - 1]])
+			if closed and chain_v.size() > 1:
+				length += verts[chain_v[0]].distance_to(verts[chain_v[-1]])
+			# Convexity from the first segment: material lies inside the
+			# dihedral when the edge direction, taken on face a, turns
+			# toward face b's normal... equivalently (na x nb) · edge > 0
+			# for a convex edge with triangle-a to the left of a->b.
+			var sg0: Dictionary = segs[chain_s[0]]
+			# Edge direction with triangle `ta` on its LEFT (the triangle owns
+			# the directed edge a->b iff it was t0 of that pair).
+			var ea := verts[sg0["b"]] - verts[sg0["a"]]
+			if owner.get(Vector2i(sg0["a"], sg0["b"]), -1) != sg0["ta"]:
+				ea = -ea
+			var convex := tri_n[sg0["ta"]].cross(tri_n[sg0["tb"]]).dot(ea) > 0.0
+			out.append({"key": "%s|%d" % [gk, k], "fa": fa, "fb": fb, "points": pts,
+				"na": na, "nb": nb, "closed": closed, "convex": convex,
+				"length": length})
+			k += 1
+	return out

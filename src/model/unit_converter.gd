@@ -50,6 +50,19 @@ static func format(mm: float, u: Unit) -> String:
 	return ("%." + str(decimals(u)) + "f %s") % [from_mm(mm, u), suffix(u)]
 
 
+## M40: value for an EDIT field — enough digits to round-trip (a 10 mm
+## extrude shown as "0.394 in" would commit as 10.0076 mm when the dialog
+## is confirmed untouched). Up to 6 decimals, trailing zeros trimmed.
+static func format_exact(mm: float, u: Unit) -> String:
+	var v := from_mm(mm, u)
+	var txt := "%.6f" % v
+	if txt.contains("."):
+		txt = txt.rstrip("0").rstrip(".")
+	if txt == "-0":
+		txt = "0"
+	return "%s %s" % [txt, suffix(u)]
+
+
 static func unit_to_string(u: Unit) -> String:
 	return _SUFFIX[u]
 

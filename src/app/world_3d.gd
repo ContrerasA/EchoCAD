@@ -1286,8 +1286,7 @@ func show_loft_sections(sections: Array) -> void:
 		mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arrays)
 		var mi := MeshInstance3D.new()
 		mi.mesh = mesh
-		mi.material_override = _fill_material(
-			Color(1.0, 0.72, 0.25, 0.55), true)
+		mi.material_override = _fill_material(ThemeService.col("body_selected", Color(1, 0.72, 0.25)) * Color(1, 1, 1, 0.55), true)
 		_loft_sections_root.add_child(mi)
 
 
@@ -1295,6 +1294,68 @@ func hide_loft_sections() -> void:
 	if _loft_sections_root != null:
 		_loft_sections_root.queue_free()
 		_loft_sections_root = null
+
+
+var _hole_preview_root: Node3D = null
+
+
+## M40 hole wizard preview: rings of `radius` (and an optional outer ring
+## for counterbore/countersink) at each centre on the plane with `normal`;
+## `hover` is the cursor's candidate (drawn in the hover colour) and
+## `snapped` marks it as snapped (a small cross at the centre).
+func show_hole_preview(centers: Array, normal: Vector3, radius: float, outer_radius: float,
+		hover: Variant, snapped: bool) -> void:
+	hide_hole_preview()
+	_hole_preview_root = Node3D.new()
+	_hole_preview_root.name = "HolePreview"
+	add_child(_hole_preview_root)
+	var n := normal.normalized()
+	var u := n.cross(Vector3(0, 0, 1))
+	if u.length() < 1e-3:
+		u = n.cross(Vector3(0, 1, 0))
+	u = u.normalized()
+	var v := n.cross(u)
+	var ring := func(c: Vector3, r: float, color: Color) -> void:
+		var im := ImmediateMesh.new()
+		im.surface_begin(Mesh.PRIMITIVE_LINE_STRIP)
+		for i in 49:
+			var th := TAU * i / 48.0
+			im.surface_add_vertex(c + (u * cos(th) + v * sin(th)) * r + n * 0.05)
+		im.surface_end()
+		var mi := MeshInstance3D.new()
+		mi.mesh = im
+		mi.material_override = _line_material(color)
+		_hole_preview_root.add_child(mi)
+	var placed := ThemeService.col("body_selected")
+	var hov := ThemeService.col("hover", Color(1, 0.9, 0.5))
+	hov.a = 1.0
+	for c: Vector3 in centers:
+		ring.call(c, radius, placed)
+		if outer_radius > radius:
+			ring.call(c, outer_radius, placed)
+	if hover is Vector3:
+		ring.call(hover, radius, hov)
+		if outer_radius > radius:
+			ring.call(hover, outer_radius, hov)
+		if snapped:
+			var im := ImmediateMesh.new()
+			im.surface_begin(Mesh.PRIMITIVE_LINES)
+			var s := radius * 0.5
+			im.surface_add_vertex(hover - u * s + n * 0.05)
+			im.surface_add_vertex(hover + u * s + n * 0.05)
+			im.surface_add_vertex(hover - v * s + n * 0.05)
+			im.surface_add_vertex(hover + v * s + n * 0.05)
+			im.surface_end()
+			var mi := MeshInstance3D.new()
+			mi.mesh = im
+			mi.material_override = _line_material(hov)
+			_hole_preview_root.add_child(mi)
+
+
+func hide_hole_preview() -> void:
+	if _hole_preview_root != null:
+		_hole_preview_root.queue_free()
+		_hole_preview_root = null
 
 
 ## Revolve axis picking (M23): draw the sketch's own u/v axes through its

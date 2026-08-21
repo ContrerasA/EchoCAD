@@ -10,6 +10,34 @@ var sketch_id := ""
 var anchor := Vector2.ZERO
 var distance := 10.0
 
+## M40 extents. `distance` keeps its meaning (signed, along the plane
+## normal) for DISTANCE; the other kinds read it as the primary side:
+##   symmetric   — both ways; `symmetric_whole` = distance is the TOTAL
+##   two_sided   — distance one way, distance2 the other (both magnitudes
+##                 as entered; distance2 goes opposite to distance's sign)
+##   to_object   — up to the face in `to_ref` (planar) along the normal
+##   to_next     — up to the first body face the profile meets
+##   through_all — past every body in the direction of distance's sign
+## `taper_deg` drafts the walls (positive = grows with the extrusion).
+const EXT_DISTANCE := "distance"
+const EXT_SYMMETRIC := "symmetric"
+const EXT_TWO_SIDED := "two_sided"
+const EXT_TO_OBJECT := "to_object"
+const EXT_TO_NEXT := "to_next"
+const EXT_THROUGH_ALL := "through_all"
+const EXTENTS := [EXT_DISTANCE, EXT_SYMMETRIC, EXT_TWO_SIDED, EXT_TO_OBJECT,
+	EXT_TO_NEXT, EXT_THROUGH_ALL]
+
+var extent := EXT_DISTANCE
+var distance2 := 0.0
+var symmetric_whole := false
+var taper_deg := 0.0
+var to_ref: TopoRef = null
+## Resolved plane offsets of the two caps (mm along the plane normal),
+## refreshed by prepare() for body-dependent extents.
+var _lo := 0.0
+var _hi := 10.0
+
 
 static func make(p_sketch_id: String, p_anchor: Vector2,
 		p_distance: float, p_operation := OP_NEW_BODY) -> ExtrudeFeature:
@@ -31,6 +59,16 @@ func to_dict() -> Dictionary:
 	d["anchor"] = [anchor.x, anchor.y]
 	d["distance"] = distance
 	d["operation"] = operation
+	if extent != EXT_DISTANCE:
+		d["extent"] = extent
+	if distance2 != 0.0:
+		d["distance2"] = distance2
+	if symmetric_whole:
+		d["symmetric_whole"] = true
+	if taper_deg != 0.0:
+		d["taper_deg"] = taper_deg
+	if to_ref != null:
+		d["to_ref"] = to_ref.to_dict()
 	return d
 
 
@@ -43,13 +81,144 @@ static func from_dict(d: Dictionary) -> ExtrudeFeature:
 	f.distance = float(d.get("distance", 10.0))
 	# Documents from before M18 carry no operation: they were all new bodies.
 	f.operation = String(d.get("operation", OP_NEW_BODY))
+	f.extent = String(d.get("extent", EXT_DISTANCE))
+	if not EXTENTS.has(f.extent):
+		f.extent = EXT_DISTANCE
+	f.distance2 = float(d.get("distance2", 0.0))
+	f.symmetric_whole = bool(d.get("symmetric_whole", false))
+	f.taper_deg = float(d.get("taper_deg", 0.0))
+	if d.has("to_ref"):
+		f.to_ref = TopoRef.from_dict(d["to_ref"])
+	f._lo = 0.0
+	f._hi = f.distance
 	return f
+
+
+func needs_bodies() -> bool:
+	return extent in [EXT_TO_OBJECT, EXT_TO_NEXT, EXT_THROUGH_ALL]
+
+
+## Resolve the cap offsets. Distance-type extents need nothing; the body-
+## dependent ones measure against `bodies` (BodyBuilder entries).
+func prepare(doc: CadDocument, bodies: Array) -> String:
+	_lo = 0.0
+	_hi = distance
+	match extent:
+		EXT_SYMMETRIC:
+			var h := absf(distance) * (0.5 if symmetric_whole else 1.0)
+			_lo = -h
+			_hi = h
+		EXT_TWO_SIDED:
+			var s := 1.0 if distance >= 0.0 else -1.0
+			_lo = -absf(distance2) * s
+			_hi = distance
+		EXT_THROUGH_ALL, EXT_TO_NEXT, EXT_TO_OBJECT:
+			var sf := doc.sketch_feature(sketch_id)
+			if sf == null:
+				return "profile no longer resolves"
+			var healed := ProfileFinder.profile_at_healed(sf.sketch, anchor)
+			if healed.is_empty():
+				return "profile no longer resolves"
+			var xf := sf.plane_transform()
+			var n: Vector3 = xf.basis.z
+			var s2 := 1.0 if distance >= 0.0 else -1.0
+			var dir := n * s2
+			var poly: PackedVector2Array = healed["prof"]["polygon"]
+			var pool := targets if not targets.is_empty() else []
+			if extent == EXT_THROUGH_ALL:
+				var far := -INF
+				for b: Dictionary in bodies:
+					if not pool.is_empty() and not pool.has(String(b["id"])):
+						continue
+					var mesh: ArrayMesh = b.get("mesh")
+					if mesh == null:
+						continue
+					var box := mesh.get_aabb()
+					for i in 8:
+						var corner := box.get_endpoint(i)
+						far = maxf(far, (corner - xf.origin).dot(dir))
+				if far == -INF:
+					return "through all: no body to extrude through"
+				_hi = (far + 1.0) * s2
+			elif extent == EXT_TO_NEXT:
+				var reach := -INF
+				var samples: Array = []
+				var cen := Vector2.ZERO
+				for p in poly:
+					cen += p
+				cen /= maxf(poly.size(), 1)
+				samples.append(cen)
+				for p in poly:
+					samples.append(p.lerp(cen, 0.02))
+				for uv: Vector2 in samples:
+					var o: Vector3 = xf * Vector3(uv.x, uv.y, 0.0)
+					var hit := BodyBuilder.ray_hit(bodies, o, dir, 1e-3, pool)
+					if not hit.is_empty():
+						reach = maxf(reach, float(hit["t"]))
+				if reach == -INF:
+					return "to next: nothing in that direction to extrude to"
+				_hi = reach * s2
+			else:
+				if to_ref == null:
+					return "to object: pick a face"
+				var entry := {}
+				for b: Dictionary in bodies:
+					if String(b["id"]) == to_ref.body:
+						entry = b
+				if entry.is_empty():
+					return "to object: its body no longer exists"
+				var fp := to_ref.resolve_on(entry)
+				if fp.is_empty():
+					return "to object: the face no longer exists — re-pick"
+				var fn: Vector3 = fp["normal"]
+				var denom := dir.dot(fn)
+				if absf(denom) < 1e-6:
+					return "to object: the face is parallel to the extrusion"
+				var cen3: Vector2 = Vector2.ZERO
+				for p in poly:
+					cen3 += p
+				cen3 /= maxf(poly.size(), 1)
+				var o3: Vector3 = xf * Vector3(cen3.x, cen3.y, 0.0)
+				var t := ((fp["point"] as Vector3) - o3).dot(fn) / denom
+				if t <= 1e-6:
+					return "to object: the face is behind the profile"
+				_hi = t * s2
+	return ""
+
+
+## Per-vertex miter offset of a ring by `d` mm (positive = outward for a
+## ccw ring). Keeps the vertex count, so tapered walls stay quads between
+## matching cap vertices. Sharp spikes are clamped (miter limit 4).
+static func miter_offset(ring: PackedVector2Array, d: float) -> PackedVector2Array:
+	var n := ring.size()
+	var out := PackedVector2Array()
+	out.resize(n)
+	for i in n:
+		var p := ring[(i - 1 + n) % n]
+		var c := ring[i]
+		var q := ring[(i + 1) % n]
+		var e0 := (c - p).normalized()
+		var e1 := (q - c).normalized()
+		# Outward normals of a ccw polygon point right of the edge direction.
+		var n0 := Vector2(e0.y, -e0.x)
+		var n1 := Vector2(e1.y, -e1.x)
+		var bis := (n0 + n1)
+		if bis.length_squared() < 1e-12:
+			out[i] = c + n0 * d
+			continue
+		bis = bis.normalized()
+		var cosh := bis.dot(n0)
+		var scale := 1.0 / maxf(cosh, 0.25)
+		out[i] = c + bis * d * scale
+	return out
 
 
 ## Build the solid mesh from the CURRENT sketch state. null when the
 ## profile no longer exists.
 func build_mesh(doc: CadDocument) -> ArrayMesh:
-	return _prism_mesh(doc, 0.0, distance, 0.0)
+	if not needs_bodies():
+		prepare(doc, [])   # distance-type extents resolve from fields alone
+	return _prism_mesh(doc, _lo, _hi, 0.0)
 
 
 ## M38: the solid the kernel booleans with. Cut prisms overshoot both caps
@@ -60,8 +229,10 @@ func build_mesh(doc: CadDocument) -> ArrayMesh:
 func kernel_mesh(doc: CadDocument, _part: Dictionary) -> ArrayMesh:
 	if operation != OP_CUT:
 		return build_mesh(doc)
-	var s := 1.0 if distance >= 0.0 else -1.0
-	return _prism_mesh(doc, -EPS_MM * s, distance + EPS_MM * s, 0.0)
+	if not needs_bodies():
+		prepare(doc, [])
+	var s := 1.0 if _hi >= _lo else -1.0
+	return _prism_mesh(doc, _lo - EPS_MM * s, _hi + EPS_MM * s, 0.0)
 
 
 ## The prism between plane offsets `lo` and `hi` (signed, along the plane
@@ -125,6 +296,30 @@ func _prism_mesh(doc: CadDocument, lo: float, hi: float, grow: float) -> ArrayMe
 		return xf * Vector3(p.x, p.y, 0.0) + offset
 	var bot := func(p: Vector2) -> Vector3:
 		return xf * Vector3(p.x, p.y, 0.0) + base
+	# Draft (M40): the far cap is the profile offset by tan(taper) * height;
+	# walls run between matching vertices (miter offset keeps the count).
+	var taper := clampf(taper_deg, -80.0, 80.0)
+	var top_of := {}   # ring index -> offset ring
+	var cap_top_pts := cap_pts
+	if absf(taper) > 1e-6:
+		var d_off := tan(deg_to_rad(taper)) * absf(hi - lo)
+		var top_poly := miter_offset(poly, d_off)
+		var top_holes: Array = []
+		for h in holes_cw:
+			top_holes.append(miter_offset(h as PackedVector2Array, d_off))
+		var tri_top := ProfileFinder.triangulate_with_holes(top_poly,
+			top_holes.map(func(h): var hh := (h as PackedVector2Array).duplicate(); hh.reverse(); return hh))
+		if (tri_top["indices"] as PackedInt32Array).size() == indices.size():
+			cap_top_pts = tri_top["points"]
+		else:
+			# Triangulations disagree — fall back to mapping each cap point
+			# through the ring offset (robust for convex-ish profiles).
+			cap_top_pts = PackedVector2Array()
+			for p in cap_pts:
+				cap_top_pts.append(_map_to_offset(p, poly, top_poly, holes_cw, top_holes))
+		top_of[0] = top_poly
+		for k in holes_cw.size():
+			top_of[k + 1] = top_holes[k]
 
 	# Caps (plane-level cap faces -n, offset cap faces +n; `n` is the outward
 	# direction of the OFFSET cap, so a negative distance mirrors the
@@ -140,7 +335,11 @@ func _prism_mesh(doc: CadDocument, lo: float, hi: float, grow: float) -> ArrayMe
 			verts.append(bot.call(p))
 		for _i in 3:
 			normals.append(-n)
-		for p: Vector2 in (rev if flip else fwd):
+		var fwd_t: Array = [cap_top_pts[indices[t]], cap_top_pts[indices[t + 1]],
+			cap_top_pts[indices[t + 2]]]
+		var rev_t: Array = [cap_top_pts[indices[t]], cap_top_pts[indices[t + 2]],
+			cap_top_pts[indices[t + 1]]]
+		for p: Vector2 in (rev_t if flip else fwd_t):
 			verts.append(top.call(p))
 		for _i in 3:
 			normals.append(n)
@@ -148,14 +347,16 @@ func _prism_mesh(doc: CadDocument, lo: float, hi: float, grow: float) -> ArrayMe
 	# boundary ring: the CCW outer plus each CW hole.
 	var rings: Array = [poly]
 	rings.append_array(holes_cw)
-	for ring: PackedVector2Array in rings:
+	for ri in rings.size():
+		var ring: PackedVector2Array = rings[ri]
+		var tring: PackedVector2Array = top_of.get(ri, ring)
 		for i in ring.size():
 			var a2 := ring[i]
 			var b2 := ring[(i + 1) % ring.size()]
 			var a0: Vector3 = bot.call(a2)
 			var b0: Vector3 = bot.call(b2)
-			var a1: Vector3 = top.call(a2)
-			var b1: Vector3 = top.call(b2)
+			var a1: Vector3 = top.call(tring[i])
+			var b1: Vector3 = top.call(tring[(i + 1) % ring.size()])
 			if flip:
 				verts.append_array([a0, b1, b0, a0, a1, b1])
 			else:
@@ -175,18 +376,20 @@ func _prism_mesh(doc: CadDocument, lo: float, hi: float, grow: float) -> ArrayMe
 	# corners), so the silhouette reads even under flat ambient light. Smooth
 	# profile runs (a tessellated circle) get no vertical seams.
 	var edges := PackedVector3Array()
-	for ring: PackedVector2Array in rings:
+	for ri in rings.size():
+		var ring: PackedVector2Array = rings[ri]
+		var tring: PackedVector2Array = top_of.get(ri, ring)
 		var m := ring.size()
 		for i in m:
 			var a2 := ring[i]
 			var b2 := ring[(i + 1) % m]
 			edges.append_array([bot.call(a2), bot.call(b2)])
-			edges.append_array([top.call(a2), top.call(b2)])
+			edges.append_array([top.call(tring[i]), top.call(tring[(i + 1) % m])])
 			var prev := ring[(i - 1 + m) % m]
 			var din := (a2 - prev).normalized()
 			var dout := (b2 - a2).normalized()
 			if din.dot(dout) < cos(deg_to_rad(15.0)):   # sharp corner at a2
-				edges.append_array([bot.call(a2), top.call(a2)])
+				edges.append_array([bot.call(a2), top.call(tring[i])])
 	var earr := []
 	earr.resize(Mesh.ARRAY_MAX)
 	earr[Mesh.ARRAY_VERTEX] = edges
@@ -208,7 +411,10 @@ func solid_part(doc: CadDocument) -> Dictionary:
 	var outer := (prof["polygon"] as PackedVector2Array).duplicate()
 	var aabb := AABB()
 	var first := true
-	for z in [0.0, distance]:
+	if not needs_bodies():
+		prepare(doc, [])
+	var spread := absf(tan(deg_to_rad(clampf(taper_deg, -80.0, 80.0)))) * absf(_hi - _lo)
+	for z in [_lo, _hi]:
 		for p in outer:
 			var w: Vector3 = xf * Vector3(p.x, p.y, 0.0) + xf.basis.z * float(z)
 			if first:
@@ -217,7 +423,7 @@ func solid_part(doc: CadDocument) -> Dictionary:
 			else:
 				aabb = aabb.expand(w)
 	return {"feature": self, "prof": prof, "xf": xf,
-		"aabb": aabb.grow(0.001)}
+		"aabb": aabb.grow(0.001 + spread)}
 
 
 ## The prism as a CSG node: the region's outer loop extruded `distance`
@@ -282,6 +488,22 @@ func csg_node(part: Dictionary) -> CSGShape3D:
 		hn.operation = CSGShape3D.OPERATION_SUBTRACTION
 		c.add_child(hn)
 	return c
+
+
+## Map a cap triangulation point to the offset cap: ring vertices map to
+## their offset twin, interior (Steiner) points stay put.
+static func _map_to_offset(p: Vector2, poly: PackedVector2Array, top_poly: PackedVector2Array,
+		holes: Array, top_holes: Array) -> Vector2:
+	for i in poly.size():
+		if poly[i].distance_squared_to(p) < 1e-12:
+			return top_poly[i]
+	for k in holes.size():
+		var h: PackedVector2Array = holes[k]
+		var th: PackedVector2Array = top_holes[k]
+		for i in h.size():
+			if h[i].distance_squared_to(p) < 1e-12:
+				return th[i]
+	return p
 
 
 static func _signed_area(poly: PackedVector2Array) -> float:

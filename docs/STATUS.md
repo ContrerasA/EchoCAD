@@ -1,7 +1,8 @@
 # EchoCAD — Status
 
 Updated: 2026-08-20. M0–M36 + the CHANGES round + **M38 (Manifold kernel)**
-+ **M39 (face identity, explicit targets, feature dialogs)** on `main`. Volume 3 (`docs/MILESTONES3.md`, M38–M50 + polish rounds) is the
++ **M39 (face identity, explicit targets, feature dialogs)** + **M40
+(extrude extents/taper, chip editing, hole wizard)** on `main`. Volume 3 (`docs/MILESTONES3.md`, M38–M50 + polish rounds) is the
 alpha plan; manual QA for it lives in `docs/MANUAL_QA3.md`. Solids are now
 computed by Manifold (`MeshSolid` in `addons/geometry`): exact booleans
 (no more EPS-inflated cuts), synchronous rebuilds, face ids on every
@@ -11,8 +12,12 @@ follow their face; lost refs are amber warning chips), explicit boolean
 targets + Intersect, one ordered BodyBuilder pass (moves before cuts
 count, pattern/mirror of a cut feature re-cuts per instance), and the
 shared `FeatureDialog` shell (docked top-right, inline errors, Pick…
-rows) behind Extrude/Revolve/Sweep/Loft/Pattern/Mirror. 65 headless
-tests + 30 RPC suites green.
+rows) behind Extrude/Revolve/Sweep/Loft/Pattern/Mirror. M40: extrude
+extents (symmetric, two-sided, to object, to next, through all) + taper,
+every extrude/hole editable from its chip, Hole wizard (simple /
+counterbore / countersink, ISO + unified tables, through/blind, drill
+tip, cosmetic or modelled thread) with face pick + snapping placement.
+66 headless tests + 31 RPC suites green.
 
 Earlier history: M0–M25 implemented and merged to `main`.
 Volume 2 (M26–M35, `docs/MILESTONES2.md`) is IMPLEMENTED on a chain of

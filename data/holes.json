@@ -1,0 +1,23 @@
+{
+  "_comment": "Hole wizard tables (mm). metric: ISO 273 clearance (close/normal/loose), ISO 4762 socket-head counterbore (dia/depth), ISO 10642 90° countersink dia, tap drill = major - 1.0825*pitch. unified: ANSI B18.2.8 clearance, socket-head counterbore, 82° countersink. Users may add files under user://holes/*.json with the same shape.",
+  "metric": [
+    {"id": "M2",   "major": 2.0,  "pitch": 0.4,  "close": 2.2,  "normal": 2.4,  "loose": 2.6,  "cbore": [4.4, 2.0],  "csink": 4.4},
+    {"id": "M2.5", "major": 2.5,  "pitch": 0.45, "close": 2.7,  "normal": 2.9,  "loose": 3.1,  "cbore": [5.4, 2.5],  "csink": 5.5},
+    {"id": "M3",   "major": 3.0,  "pitch": 0.5,  "close": 3.2,  "normal": 3.4,  "loose": 3.6,  "cbore": [6.5, 3.4],  "csink": 6.3},
+    {"id": "M4",   "major": 4.0,  "pitch": 0.7,  "close": 4.3,  "normal": 4.5,  "loose": 4.8,  "cbore": [8.0, 4.4],  "csink": 8.4},
+    {"id": "M5",   "major": 5.0,  "pitch": 0.8,  "close": 5.3,  "normal": 5.5,  "loose": 5.8,  "cbore": [10.0, 5.4], "csink": 10.4},
+    {"id": "M6",   "major": 6.0,  "pitch": 1.0,  "close": 6.4,  "normal": 6.6,  "loose": 7.0,  "cbore": [11.0, 6.5], "csink": 12.6},
+    {"id": "M8",   "major": 8.0,  "pitch": 1.25, "close": 8.4,  "normal": 9.0,  "loose": 10.0, "cbore": [15.0, 8.6], "csink": 17.3},
+    {"id": "M10",  "major": 10.0, "pitch": 1.5,  "close": 10.5, "normal": 11.0, "loose": 12.0, "cbore": [18.0, 10.8], "csink": 20.0},
+    {"id": "M12",  "major": 12.0, "pitch": 1.75, "close": 13.0, "normal": 13.5, "loose": 14.5, "cbore": [20.0, 13.0], "csink": 24.4}
+  ],
+  "unified": [
+    {"id": "#4-40",   "major": 2.845, "pitch": 0.635, "close": 3.0,  "normal": 3.3,  "loose": 3.7,  "cbore": [5.6, 2.9],  "csink": 5.8},
+    {"id": "#6-32",   "major": 3.505, "pitch": 0.794, "close": 3.7,  "normal": 4.0,  "loose": 4.4,  "cbore": [7.1, 3.6],  "csink": 7.1},
+    {"id": "#8-32",   "major": 4.166, "pitch": 0.794, "close": 4.4,  "normal": 4.8,  "loose": 5.2,  "cbore": [8.3, 4.3],  "csink": 8.5},
+    {"id": "#10-24",  "major": 4.826, "pitch": 1.058, "close": 5.1,  "normal": 5.6,  "loose": 6.0,  "cbore": [9.5, 5.0],  "csink": 9.7},
+    {"id": "1/4-20",  "major": 6.35,  "pitch": 1.27,  "close": 6.6,  "normal": 7.1,  "loose": 7.9,  "cbore": [11.1, 6.5], "csink": 12.7},
+    {"id": "5/16-18", "major": 7.938, "pitch": 1.411, "close": 8.3,  "normal": 8.7,  "loose": 9.5,  "cbore": [13.5, 8.1], "csink": 15.9},
+    {"id": "3/8-16",  "major": 9.525, "pitch": 1.588, "close": 9.9,  "normal": 10.3, "loose": 11.1, "cbore": [15.9, 9.7], "csink": 19.1}
+  ]
+}
