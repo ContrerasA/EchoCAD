@@ -66,9 +66,7 @@ var picking_revolve := false
 var picking_revolve_axis := false
 var _pending_revolve := {}
 var _btn_revolve: Button
-var _revolve_dialog: Window
-var _revolve_angle: LineEdit
-var _revolve_op: OptionButton
+var _revolve_dialog: FeatureDialog
 var _revolve_axis := ""
 ## True while "Offset Plane" waits for a BASE plane click (M22).
 var picking_offset_base := false
@@ -110,9 +108,7 @@ var _con_buttons := {}       # SketchConstraint.Type -> ribbon button
 var _btn_create: Button
 var _btn_extrude: Button
 var _btn_finish: Button
-var _extrude_dialog: Window
-var _extrude_dist: LineEdit
-var _extrude_op: OptionButton
+var _extrude_dialog: FeatureDialog
 var _params_dialog: Window
 var _params_tree: Tree
 var _param_name: LineEdit
@@ -1187,11 +1183,11 @@ func _build_ribbon(parent: Control) -> void:
 	var mirrb := _tool_button(g_create, "Mirror Body", _on_mirror_body_pressed,
 		"mirror_body")
 	mirrb.name = "MirrorBodyBtn"
-	mirrb.tooltip_text = "Mirror the selected body across a plane"
+	mirrb.tooltip_text = "Mirror a body, or one cut/join feature, across a plane"
 	var pattb := _tool_button(g_create, "Pattern",
 		func() -> void: open_pattern_dialog(""), "pattern_body")
 	pattb.name = "PatternBodyBtn"
-	pattb.tooltip_text = "Linear/circular pattern of the selected body"
+	pattb.tooltip_text = "Linear/circular pattern of a body, or of one cut/join feature"
 
 	_divider(model)
 	var g_modify := _tool_grid(_shelf_group(model, "Modify"), 2)
@@ -2930,11 +2926,12 @@ func _on_offset_plane_pressed() -> void:
 ## entity id in the sketch. "" when the region or axis is invalid (missing,
 ## or the region straddles the axis).
 func revolve(sketch_id: String, at: Vector2, axis: String, angle: float,
-		operation := SolidFeature.OP_NEW_BODY) -> String:
+		operation := SolidFeature.OP_NEW_BODY, targets: Array = []) -> String:
 	var sf := doc.sketch_feature(sketch_id)
 	if sf == null:
 		return ""
 	var f := RevolveFeature.make(sketch_id, at, axis, angle, operation)
+	f.targets = targets.duplicate()
 	# Dry-run the mesher against the current sketch: it returns null for a
 	# missing region/axis or a straddling profile, which we refuse up front
 	# rather than committing a feature that builds nothing.
@@ -2953,13 +2950,14 @@ func revolve(sketch_id: String, at: Vector2, axis: String, angle: float,
 ## feature id or "" when no profile encloses `at`. `operation` is the
 ## boolean role (M18): new_body / join / cut.
 func extrude(sketch_id: String, at: Vector2, dist: float,
-		operation := ExtrudeFeature.OP_NEW_BODY) -> String:
+		operation := ExtrudeFeature.OP_NEW_BODY, targets: Array = []) -> String:
 	var sf := doc.sketch_feature(sketch_id)
 	if sf == null:
 		return ""
 	if ProfileFinder.profile_at(sf.sketch, at).is_empty():
 		return ""
 	var f := ExtrudeFeature.make(sketch_id, at, dist, operation)
+	f.targets = targets.duplicate()
 	f.name = doc.auto_name("Extrude")
 	f.id = doc.next_feature_id()
 	stack.push_no_merge(CmdAddFeature.new(f))
@@ -3000,56 +2998,52 @@ func _profile_under_ray(origin: Vector3, dir: Vector3) -> Dictionary:
 	return best
 
 
+## Operation rows shared by the solid dialogs (index = OptionButton id).
+const _OP_ITEMS := ["New Body", "Join", "Cut", "Intersect"]
+const _OP_VALUES := [SolidFeature.OP_NEW_BODY, SolidFeature.OP_JOIN,
+	SolidFeature.OP_CUT, SolidFeature.OP_INTERSECT]
+
+
 func _open_extrude_dialog() -> void:
 	if _extrude_dialog == null:
-		_extrude_dialog = Window.new()
-		_extrude_dialog.name = "ExtrudeDialog"
-		_extrude_dialog.title = "Extrude"
-		_extrude_dialog.size = Vector2i(220, 118)
-		_extrude_dialog.exclusive = false
-		_extrude_dialog.close_requested.connect(
-			func() -> void:
-				_extrude_dialog.hide()
-				world.clear_profile_hover())
-		var box := VBoxContainer.new()
-		box.set_anchors_preset(Control.PRESET_FULL_RECT)
-		_extrude_dialog.add_child(box)
-		_extrude_dist = LineEdit.new()
-		_extrude_dist.name = "ExtrudeDistEdit"
-		_extrude_dist.placeholder_text = "Distance (e.g. 0.5in)"
-		box.add_child(_extrude_dist)
-		_extrude_op = OptionButton.new()
-		_extrude_op.name = "ExtrudeOpPick"
-		_extrude_op.add_item("New Body", 0)
-		_extrude_op.add_item("Join", 1)
-		_extrude_op.add_item("Cut", 2)
-		_extrude_op.focus_mode = Control.FOCUS_NONE
-		box.add_child(_extrude_op)
-		var okb := Button.new()
-		okb.name = "ExtrudeOkBtn"
-		okb.text = "OK"
-		okb.pressed.connect(_commit_extrude)
-		box.add_child(okb)
-		_extrude_dist.text_submitted.connect(
-			func(_t: String) -> void: _commit_extrude())
+		_extrude_dialog = FeatureDialog.create(self, "ExtrudeDialog", "Extrude")
+		_extrude_dialog.set_ok_name("ExtrudeOkBtn")
+		_extrude_dialog.add_info("profile", "Profile")
+		_extrude_dialog.add_field("distance", "Distance", "ExtrudeDistEdit",
+			"e.g. 10mm, 0.5in, -5")
+		var op := _extrude_dialog.add_option("op", "Operation", "ExtrudeOpPick", _OP_ITEMS)
+		op.item_selected.connect(func(_i: int) -> void: _sync_solid_dialog(_extrude_dialog))
+		_extrude_dialog.add_targets("targets", "Targets", "ExtrudeTargetsBtn")
+		_extrude_dialog.confirmed.connect(_commit_extrude)
+		_extrude_dialog.cancelled.connect(func() -> void:
+			_pending_extrude = {}
+			world.clear_profile_hover())
 		add_child(_extrude_dialog)
-	_extrude_dist.text = ""
-	_extrude_dialog.popup_centered()
-	_extrude_dist.grab_focus()
+	(_extrude_dialog.field("distance") as LineEdit).text = ""
+	var sfp := doc.sketch_feature(String(_pending_extrude.get("sketch_id", "")))
+	(_extrude_dialog.field("profile") as Label).text = sfp.name if sfp != null else ""
+	_extrude_dialog.set_targets("targets", [])
+	_sync_solid_dialog(_extrude_dialog)
+	_extrude_dialog.open()
+
+
+## Targets only matter for join/cut/intersect — hide the row for New Body.
+func _sync_solid_dialog(d: FeatureDialog) -> void:
+	d.set_row_visible("targets", d.selected("op") != 0)
 
 
 func _commit_extrude() -> void:
-	var r := UnitConverter.parse(_extrude_dist.text, doc.display_unit)
-	if not r["ok"]:
-		_status_hint.text = "Extrude: enter a distance"
+	var r := UnitConverter.parse(_extrude_dialog.text_of("distance"), doc.display_unit)
+	if not r["ok"] or absf(float(r["mm"])) < 1e-6:
+		_extrude_dialog.set_error("Enter a non-zero distance (unit suffix optional)")
 		return
-	_extrude_dialog.hide()
+	var op: String = _OP_VALUES[maxi(_extrude_dialog.selected("op"), 0)]
+	var targets := _extrude_dialog.targets("targets") if op != SolidFeature.OP_NEW_BODY else []
+	_extrude_dialog.close()
 	world.clear_profile_hover()
 	if not _pending_extrude.is_empty():
-		var ops := [ExtrudeFeature.OP_NEW_BODY, ExtrudeFeature.OP_JOIN,
-			ExtrudeFeature.OP_CUT]
 		extrude(_pending_extrude["sketch_id"], _pending_extrude["at"],
-			float(r["mm"]), ops[_extrude_op.selected])
+			float(r["mm"]), op, targets)
 	_pending_extrude = {}
 
 
@@ -3116,60 +3110,52 @@ func _axis_hover_width_mm() -> float:
 
 func _open_revolve_dialog() -> void:
 	if _revolve_dialog == null:
-		_revolve_dialog = Window.new()
-		_revolve_dialog.name = "RevolveDialog"
-		_revolve_dialog.title = "Revolve"
-		_revolve_dialog.size = Vector2i(220, 118)
-		_revolve_dialog.exclusive = false
-		_revolve_dialog.close_requested.connect(
-			func() -> void:
-				_revolve_dialog.hide()
-				world.clear_profile_hover())
-		var box := VBoxContainer.new()
-		box.set_anchors_preset(Control.PRESET_FULL_RECT)
-		_revolve_dialog.add_child(box)
-		_revolve_angle = LineEdit.new()
-		_revolve_angle.name = "RevolveAngleEdit"
-		_revolve_angle.placeholder_text = "Angle (deg, default 360)"
-		box.add_child(_revolve_angle)
-		_revolve_op = OptionButton.new()
-		_revolve_op.name = "RevolveOpPick"
-		_revolve_op.add_item("New Body", 0)
-		_revolve_op.add_item("Join", 1)
-		_revolve_op.add_item("Cut", 2)
-		_revolve_op.focus_mode = Control.FOCUS_NONE
-		box.add_child(_revolve_op)
-		var okb := Button.new()
-		okb.name = "RevolveOkBtn"
-		okb.text = "OK"
-		okb.pressed.connect(_commit_revolve)
-		box.add_child(okb)
-		_revolve_angle.text_submitted.connect(
-			func(_t: String) -> void: _commit_revolve())
+		_revolve_dialog = FeatureDialog.create(self, "RevolveDialog", "Revolve")
+		_revolve_dialog.set_ok_name("RevolveOkBtn")
+		_revolve_dialog.add_info("profile", "Profile")
+		_revolve_dialog.add_info("axis", "Axis")
+		_revolve_dialog.add_field("angle", "Angle", "RevolveAngleEdit",
+			"degrees (default 360)")
+		var op := _revolve_dialog.add_option("op", "Operation", "RevolveOpPick", _OP_ITEMS)
+		op.item_selected.connect(func(_i: int) -> void: _sync_solid_dialog(_revolve_dialog))
+		_revolve_dialog.add_targets("targets", "Targets", "RevolveTargetsBtn")
+		_revolve_dialog.confirmed.connect(_commit_revolve)
+		_revolve_dialog.cancelled.connect(func() -> void:
+			_pending_revolve = {}
+			_revolve_axis = ""
+			world.clear_profile_hover()
+			world.clear_axis_hover()
+			world.hide_axis_candidates())
 		add_child(_revolve_dialog)
-	_revolve_angle.text = ""
-	_revolve_dialog.popup_centered()
-	_revolve_angle.grab_focus()
+	(_revolve_dialog.field("angle") as LineEdit).text = ""
+	var sfp := doc.sketch_feature(String(_pending_revolve.get("sketch_id", "")))
+	(_revolve_dialog.field("profile") as Label).text = sfp.name if sfp != null else ""
+	(_revolve_dialog.field("axis") as Label).text = \
+		("sketch %s axis" % _revolve_axis.to_upper()) \
+		if _revolve_axis in ["x", "y"] else "line %s" % _revolve_axis
+	_revolve_dialog.set_targets("targets", [])
+	_sync_solid_dialog(_revolve_dialog)
+	_revolve_dialog.open()
 
 
 func _commit_revolve() -> void:
-	var txt := _revolve_angle.text.strip_edges()
+	var txt := _revolve_dialog.text_of("angle")
 	var ang := 360.0
 	if txt != "":
 		if not txt.is_valid_float():
-			_status_hint.text = "Revolve: angle must be a number of degrees"
+			_revolve_dialog.set_error("Angle must be a number of degrees")
 			return
 		ang = txt.to_float()
 	if ang <= 0.0 or ang > 360.0:
-		_status_hint.text = "Revolve: angle must be in (0, 360]"
+		_revolve_dialog.set_error("Angle must be in (0, 360]")
 		return
-	_revolve_dialog.hide()
+	var op: String = _OP_VALUES[maxi(_revolve_dialog.selected("op"), 0)]
+	var targets := _revolve_dialog.targets("targets") if op != SolidFeature.OP_NEW_BODY else []
+	_revolve_dialog.close()
 	world.clear_profile_hover()
 	if not _pending_revolve.is_empty():
-		var ops := [SolidFeature.OP_NEW_BODY, SolidFeature.OP_JOIN,
-			SolidFeature.OP_CUT]
 		var rid := revolve(_pending_revolve["sketch_id"], _pending_revolve["at"],
-			_revolve_axis, ang, ops[_revolve_op.selected])
+			_revolve_axis, ang, op, targets)
 		if rid == "":
 			set_status_hint("Revolve refused: the region must lie entirely on "
 				+ "one side of the axis")
@@ -3193,8 +3179,15 @@ func create_offset_plane(base: String, offset_mm: float) -> String:
 
 ## Face pick while creating a sketch: mint a CUSTOM plane on the face and the
 ## sketch on it, as ONE undo step.
-func create_sketch_on_face(point: Vector3, normal: Vector3) -> String:
-	var pf := PlaneFeature.make_custom(PlaneFeature.face_transform(point, normal))
+func create_sketch_on_face(point: Vector3, normal: Vector3, body := "",
+		face_id := -1) -> String:
+	var xf := PlaneFeature.face_transform(point, normal)
+	var pf: PlaneFeature
+	if body != "" and face_id >= 0:
+		# M39: a parametric link — the sketch follows the face.
+		pf = PlaneFeature.make_face(TopoRef.make(body, face_id, normal, point), xf)
+	else:
+		pf = PlaneFeature.make_custom(xf)
 	pf.name = doc.auto_name("Plane")
 	pf.id = doc.next_feature_id()
 	var sf := SketchFeature.make(doc.auto_name("Sketch"), pf.id)
@@ -3936,11 +3929,8 @@ var picking_sweep_path := false
 var _pending_sweep := {}          # {sketch_id, at} then + path
 var picking_loft := false
 var _loft_sections: Array = []
-var _sweep_dialog: Window = null
-var _sweep_op: OptionButton = null
-var _loft_dialog: Window = null
-var _loft_op: OptionButton = null
-var _loft_count: Label = null
+var _sweep_dialog: FeatureDialog = null
+var _loft_dialog: FeatureDialog = null
 
 
 func _on_sweep_pressed() -> void:
@@ -3999,48 +3989,46 @@ static func _ray_segment_distance(ro: Vector3, rd: Vector3, a: Vector3,
 
 func _open_sweep_dialog() -> void:
 	if _sweep_dialog == null:
-		_sweep_dialog = Window.new()
-		_sweep_dialog.name = "SweepDialog"
-		_sweep_dialog.title = "Sweep"
-		_sweep_dialog.size = Vector2i(240, 96)
-		_sweep_dialog.exclusive = false
-		_sweep_dialog.close_requested.connect(
-			func() -> void: _sweep_dialog.hide())
-		var box := VBoxContainer.new()
-		box.set_anchors_preset(Control.PRESET_FULL_RECT)
-		_sweep_dialog.add_child(box)
-		_sweep_op = OptionButton.new()
-		_sweep_op.name = "SweepOpPick"
-		_sweep_op.focus_mode = Control.FOCUS_NONE
-		_sweep_op.add_item("New Body", 0)
-		_sweep_op.add_item("Join", 1)
-		_sweep_op.add_item("Cut", 2)
-		box.add_child(_sweep_op)
-		var okb := Button.new()
-		okb.name = "SweepOkBtn"
-		okb.text = "OK"
-		okb.focus_mode = Control.FOCUS_NONE
-		okb.pressed.connect(_commit_sweep)
-		box.add_child(okb)
+		_sweep_dialog = FeatureDialog.create(self, "SweepDialog", "Sweep")
+		_sweep_dialog.set_ok_name("SweepOkBtn")
+		_sweep_dialog.add_info("profile", "Profile")
+		_sweep_dialog.add_info("path", "Path")
+		var op := _sweep_dialog.add_option("op", "Operation", "SweepOpPick", _OP_ITEMS)
+		op.item_selected.connect(func(_i: int) -> void: _sync_solid_dialog(_sweep_dialog))
+		_sweep_dialog.add_targets("targets", "Targets", "SweepTargetsBtn")
+		_sweep_dialog.confirmed.connect(_commit_sweep)
+		_sweep_dialog.cancelled.connect(func() -> void:
+			_pending_sweep = {}
+			world.clear_profile_hover()
+			world.clear_axis_hover())
 		add_child(_sweep_dialog)
-	_sweep_dialog.popup_centered()
+	var sfp := doc.sketch_feature(String(_pending_sweep.get("sketch_id", "")))
+	var sfq := doc.sketch_feature(String(_pending_sweep.get("path_sketch", "")))
+	(_sweep_dialog.field("profile") as Label).text = sfp.name if sfp != null else ""
+	(_sweep_dialog.field("path") as Label).text = ("%s · %s" % [sfq.name,
+		String(_pending_sweep.get("path_entity", ""))]) if sfq != null else ""
+	_sweep_dialog.set_targets("targets", [])
+	_sync_solid_dialog(_sweep_dialog)
+	_sweep_dialog.open()
 
 
 func _commit_sweep() -> void:
-	_sweep_dialog.hide()
-	var ops := [SolidFeature.OP_NEW_BODY, SolidFeature.OP_JOIN,
-		SolidFeature.OP_CUT]
-	var op: String = ops[_sweep_op.get_selected_id()]
+	var op: String = _OP_VALUES[maxi(_sweep_dialog.selected("op"), 0)]
+	var targets := _sweep_dialog.targets("targets") if op != SolidFeature.OP_NEW_BODY else []
+	_sweep_dialog.close()
+	if _pending_sweep.is_empty():
+		return
 	sweep(String(_pending_sweep["sketch_id"]),
 		_pending_sweep["at"] as Vector2,
 		String(_pending_sweep["path_sketch"]),
-		String(_pending_sweep["path_entity"]), op)
+		String(_pending_sweep["path_entity"]), op, targets)
 	_pending_sweep = {}
 
 
 func sweep(profile_sketch: String, at: Vector2, path_sk: String,
-		path_entity: String, op := SolidFeature.OP_NEW_BODY) -> String:
+		path_entity: String, op := SolidFeature.OP_NEW_BODY, targets: Array = []) -> String:
 	var f := SweepFeature.make(profile_sketch, at, path_sk, path_entity, op)
+	f.targets = targets.duplicate()
 	f.id = doc.next_feature_id()
 	f.name = doc.auto_name("Sweep")
 	f.doc_ref = weakref(doc)
@@ -4065,64 +4053,52 @@ func _show_loft_section_marks() -> void:
 
 func _open_loft_dialog() -> void:
 	if _loft_dialog == null:
-		_loft_dialog = Window.new()
-		_loft_dialog.name = "LoftDialog"
-		_loft_dialog.title = "Loft"
-		_loft_dialog.size = Vector2i(250, 120)
-		_loft_dialog.exclusive = false
-		_loft_dialog.close_requested.connect(func() -> void:
-			_loft_dialog.hide()
+		_loft_dialog = FeatureDialog.create(self, "LoftDialog", "Loft")
+		_loft_dialog.set_ok_name("LoftOkBtn")
+		var cnt := _loft_dialog.add_info("sections", "Sections")
+		cnt.name = "LoftCountLabel"
+		var op := _loft_dialog.add_option("op", "Operation", "LoftOpPick", _OP_ITEMS)
+		op.item_selected.connect(func(_i: int) -> void: _sync_solid_dialog(_loft_dialog))
+		_loft_dialog.add_targets("targets", "Targets", "LoftTargetsBtn")
+		_loft_dialog.confirmed.connect(_commit_loft)
+		_loft_dialog.cancelled.connect(func() -> void:
 			picking_loft = false
 			_loft_sections = []
 			world.hide_loft_sections()
 			_refresh_ui())
-		var box := VBoxContainer.new()
-		box.set_anchors_preset(Control.PRESET_FULL_RECT)
-		_loft_dialog.add_child(box)
-		_loft_count = Label.new()
-		_loft_count.name = "LoftCountLabel"
-		box.add_child(_loft_count)
-		_loft_op = OptionButton.new()
-		_loft_op.name = "LoftOpPick"
-		_loft_op.focus_mode = Control.FOCUS_NONE
-		_loft_op.add_item("New Body", 0)
-		_loft_op.add_item("Join", 1)
-		_loft_op.add_item("Cut", 2)
-		box.add_child(_loft_op)
-		var okb := Button.new()
-		okb.name = "LoftOkBtn"
-		okb.text = "OK"
-		okb.focus_mode = Control.FOCUS_NONE
-		okb.pressed.connect(_commit_loft)
-		box.add_child(okb)
 		add_child(_loft_dialog)
-	_loft_count.text = "Sections: %d (click profiles)" % _loft_sections.size()
-	# Top-right corner, not centered: the user is about to click profiles in
-	# the viewport and a centered window sits right on top of them (same
-	# placement as the fillet/chamfer edge pick).
-	_loft_dialog.position = Vector2i(
-		int(get_viewport().get_visible_rect().size.x) - 270, 80)
-	_loft_dialog.show()
+	_sync_loft_count()
+	_loft_dialog.set_targets("targets", [])
+	_sync_solid_dialog(_loft_dialog)
+	_loft_dialog.open()
+
+
+func _sync_loft_count() -> void:
+	if _loft_dialog == null:
+		return
+	(_loft_dialog.field("sections") as Label).text = \
+		"%d picked — click profiles in the viewport" % _loft_sections.size()
 
 
 func _commit_loft() -> void:
 	if _loft_sections.size() < 2:
-		set_status_hint("Loft: pick at least two profiles (sketch regions "
+		_loft_dialog.set_error("Pick at least two profiles (sketch regions "
 			+ "on different planes — to spin one profile about an axis, "
 			+ "use Revolve)")
 		return
-	_loft_dialog.hide()
+	var op: String = _OP_VALUES[maxi(_loft_dialog.selected("op"), 0)]
+	var targets := _loft_dialog.targets("targets") if op != SolidFeature.OP_NEW_BODY else []
+	_loft_dialog.close()
 	picking_loft = false
 	world.hide_loft_sections()
-	var ops := [SolidFeature.OP_NEW_BODY, SolidFeature.OP_JOIN,
-		SolidFeature.OP_CUT]
-	loft(_loft_sections, ops[_loft_op.get_selected_id()])
+	loft(_loft_sections, op, targets)
 	_loft_sections = []
 	_refresh_ui()
 
 
-func loft(p_sections: Array, op := SolidFeature.OP_NEW_BODY) -> String:
+func loft(p_sections: Array, op := SolidFeature.OP_NEW_BODY, targets: Array = []) -> String:
 	var f := LoftFeature.make(p_sections, op)
+	f.targets = targets.duplicate()
 	f.id = doc.next_feature_id()
 	f.name = doc.auto_name("Loft")
 	f.doc_ref = weakref(doc)
@@ -4143,8 +4119,8 @@ var picking_body := false
 var _body_pick_then: Callable = Callable()
 var _body_pick_label := ""
 var _mirror_source := ""
-var _pattern_dialog: Window = null
-var _pattern_fields := {}
+var _mirror_dialog: FeatureDialog = null
+var _pattern_dialog: FeatureDialog = null
 var _pattern_edit_fid := ""
 var _pattern_source := ""
 
@@ -4153,6 +4129,115 @@ var _pattern_source := ""
 ## a body pick (hover-highlighted; Esc cancels) whose click selects the body
 ## and then runs `then`. Every body command goes through here so "arm the
 ## tool, then pick" holds for all of them. Returns true when run at once.
+## --- M39 target picking (multi-body, for feature dialogs) ----------------------
+
+var picking_targets := false
+var _target_ids: Array = []
+var _target_on_change := Callable()
+var _target_on_done := Callable()
+
+
+## Arm the multi-body picker: hover tints the body under the cursor, a click
+## toggles it in the set (reported through `on_change`), Enter or
+## right-click (or Esc) ends the pick and calls `on_done`.
+func begin_target_pick(initial: Array, on_change: Callable, on_done: Callable) -> void:
+	_target_on_done = Callable()
+	end_target_pick()
+	picking_targets = true
+	_target_ids = initial.duplicate()
+	_target_on_change = on_change
+	_target_on_done = on_done
+	world.set_marked_bodies(_target_ids)
+	_refresh_ui()
+
+
+func end_target_pick() -> void:
+	if not picking_targets:
+		return
+	picking_targets = false
+	world.set_body_hover("")
+	var done := _target_on_done
+	_target_on_done = Callable()
+	_target_on_change = Callable()
+	if done.is_valid():
+		done.call()
+	_refresh_ui()
+
+
+func _toggle_target(bid: String) -> void:
+	if _target_ids.has(bid):
+		_target_ids.erase(bid)
+	else:
+		_target_ids.append(bid)
+	world.set_marked_bodies(_target_ids)
+	if _target_on_change.is_valid():
+		_target_on_change.call(_target_ids.duplicate())
+	_refresh_ui()
+
+
+## --- M39 source picking (body OR feature-by-face) ------------------------------
+
+var picking_source := ""        # "" | "body" | "feature"
+var _source_on_pick := Callable()
+var _source_on_done := Callable()
+
+
+func begin_source_pick(kind: String, on_pick: Callable, on_done: Callable) -> void:
+	# Re-arming (Body <-> Feature switch) must not fire the old pick's
+	# "done" — that would un-press the button that just re-armed it.
+	_source_on_done = Callable()
+	end_source_pick()
+	picking_source = kind
+	_source_on_pick = on_pick
+	_source_on_done = on_done
+	_refresh_ui()
+
+
+func end_source_pick() -> void:
+	if picking_source == "":
+		return
+	picking_source = ""
+	world.set_body_hover("")
+	world.clear_face_hover()
+	var done := _source_on_done
+	_source_on_done = Callable()
+	_source_on_pick = Callable()
+	if done.is_valid():
+		done.call()
+	_refresh_ui()
+
+
+## The solid feature whose face the ray hits (by the face id's ordinal),
+## "" on a miss or when the face belongs to no live solid feature.
+func _feature_under_ray(origin: Vector3, dir: Vector3) -> String:
+	var face := world.pick_face(origin, dir)
+	if face.is_empty() or int(face.get("face", -1)) < 0:
+		return ""
+	var ordinal := SolidKernel.feature_of_face(int(face["face"]))
+	var f := doc.feature_by_id("f%d" % ordinal)
+	return f.id if f is SolidFeature else ""
+
+
+func feature_display_name(fid: String) -> String:
+	var f := doc.feature_by_id(fid)
+	return f.name if f != null else fid
+
+
+## Tint a set of bodies as "chosen" (dialog chips), independent of the
+## selection. Empty clears.
+func set_target_marks(ids: Array) -> void:
+	world.set_marked_bodies(ids)
+
+
+## Display name of a body id ("Extrude1", "Pattern2 3"), the id when unknown.
+func body_display_name(bid: String) -> String:
+	for b: Dictionary in world.bodies():
+		if String(b["id"]) == bid:
+			return String(b["name"])
+	var f := doc.feature_by_id(bid)
+	return f.name if f != null else bid
+
+
 func require_body(label: String, then: Callable) -> bool:
 	if world.selected_body() != "":
 		then.call()
@@ -4176,12 +4261,90 @@ func _end_body_pick() -> void:
 func _on_mirror_body_pressed() -> void:
 	if mode != Mode.MODEL:
 		return
-	_mirror_source = world.selected_body()
-	if _mirror_source == "":
-		require_body("Mirror Body", _on_mirror_body_pressed)
+	if world.body_ids().is_empty():
+		set_status_hint("Mirror: no bodies in the model yet")
 		return
-	picking_mirror_plane = true
-	world.set_planes_visible(true)
+	_open_mirror_dialog()
+
+
+## Plane choices for mirror-style pickers: origin planes + every live
+## construction plane. -> [{id, label}]
+func _plane_choices() -> Array:
+	var out: Array = []
+	for pname in ["XY", "XZ", "YZ"]:
+		out.append({"id": pname, "label": pname})
+	for f in doc.live_features():
+		if f is PlaneFeature:
+			out.append({"id": (f as Feature).id, "label": (f as Feature).name})
+	return out
+
+
+func _open_mirror_dialog() -> void:
+	if _mirror_dialog == null:
+		_mirror_dialog = FeatureDialog.create(self, "MirrorDialog", "Mirror")
+		_mirror_dialog.set_ok_name("MirrorOkBtn")
+		_mirror_dialog.add_source("source", "Source", "MirrorSourceBtn")
+		var prow := _mirror_dialog.add_option("plane", "Plane", "MirrorPlanePick", [])
+		prow.tooltip_text = "Mirror plane — or press Pick… and click a plane in the viewport"
+		var pick := Button.new()
+		pick.name = "MirrorPlanePickBtn"
+		pick.text = "Pick…"
+		pick.toggle_mode = true
+		pick.focus_mode = Control.FOCUS_NONE
+		pick.toggled.connect(func(on: bool) -> void:
+			picking_mirror_plane = on
+			world.set_planes_visible(on)
+			if not on:
+				world.set_plane_hover("")
+			_refresh_ui())
+		_mirror_dialog.row("plane").add_child(pick)
+		_mirror_dialog.confirmed.connect(_commit_mirror)
+		_mirror_dialog.cancelled.connect(func() -> void:
+			picking_mirror_plane = false
+			world.set_planes_visible(false)
+			world.set_plane_hover("")
+			_refresh_ui())
+		add_child(_mirror_dialog)
+	var opt := _mirror_dialog.field("plane") as OptionButton
+	opt.clear()
+	for c: Dictionary in _plane_choices():
+		opt.add_item(String(c["label"]))
+		opt.set_item_metadata(opt.item_count - 1, c["id"])
+	opt.select(0)
+	_mirror_dialog.set_source("source", world.selected_body(), "body")
+	_mirror_dialog.open()
+	# Arm-first: with a body selected the usual gesture is "press Mirror,
+	# click plane" — arm the plane pick; with nothing selected, arm the
+	# source pick so the next click chooses what to mirror.
+	if world.selected_body() != "":
+		(_mirror_dialog.find_child("MirrorPlanePickBtn", true, false) as Button).button_pressed = true
+	else:
+		(_mirror_dialog.find_child("MirrorSourceBtn", true, false) as Button).button_pressed = true
+
+
+## Viewport plane click while the Mirror dialog is up: select that plane.
+func _mirror_plane_picked(plane: String) -> void:
+	if _mirror_dialog == null:
+		return
+	var opt := _mirror_dialog.field("plane") as OptionButton
+	for i in opt.item_count:
+		if String(opt.get_item_metadata(i)) == plane:
+			opt.select(i)
+	(_mirror_dialog.find_child("MirrorPlanePickBtn", true, false) as Button).button_pressed = false
+
+
+func _commit_mirror() -> void:
+	var src := _mirror_dialog.source_id("source")
+	if src == "":
+		_mirror_dialog.set_error("Pick what to mirror: a body, or a face of a cut/join feature")
+		return
+	var opt := _mirror_dialog.field("plane") as OptionButton
+	var plane := String(opt.get_item_metadata(opt.selected)) if opt.selected >= 0 else "XY"
+	_mirror_dialog.close()
+	picking_mirror_plane = false
+	world.set_planes_visible(false)
+	world.set_plane_hover("")
+	mirror_body(src, plane)
 	_refresh_ui()
 
 
@@ -4202,92 +4365,48 @@ func open_pattern_dialog(edit_fid: String) -> void:
 	var pf := doc.feature_by_id(edit_fid) as PatternBodyFeature
 	_pattern_edit_fid = edit_fid if pf != null else ""
 	_pattern_source = pf.source if pf != null else world.selected_body()
-	if _pattern_source == "":
-		require_body("Pattern", func() -> void: open_pattern_dialog(""))
-		return
 	if _pattern_dialog == null:
-		_pattern_dialog = Window.new()
-		_pattern_dialog.name = "PatternDialog"
-		_pattern_dialog.size = Vector2i(300, 300)
-		_pattern_dialog.exclusive = false
-		_pattern_dialog.close_requested.connect(
-			func() -> void: _pattern_dialog.hide())
-		var box := VBoxContainer.new()
-		box.set_anchors_preset(Control.PRESET_FULL_RECT)
-		_pattern_dialog.add_child(box)
-		_pattern_fields = {}
-		var mrow := HBoxContainer.new()
-		box.add_child(mrow)
-		var mlab := Label.new()
-		mlab.text = "Mode"
-		mlab.custom_minimum_size = Vector2(70, 0)
-		mrow.add_child(mlab)
-		var mode_pick := OptionButton.new()
-		mode_pick.name = "PatternModePick"
-		mode_pick.focus_mode = Control.FOCUS_NONE
-		mode_pick.add_item("Linear", 0)
-		mode_pick.add_item("Circular", 1)
-		mode_pick.item_selected.connect(func(_i: int) -> void:
-			_sync_pattern_rows())
-		mrow.add_child(mode_pick)
-		_pattern_fields["mode"] = mode_pick
-		for def: Array in [["Count", "n1"], ["Δ1 X,Y,Z", "o1"],
-				["Count 2", "n2"], ["Δ2 X,Y,Z", "o2"], ["Total °", "total"]]:
-			var row := HBoxContainer.new()
-			row.name = "Row_" + String(def[1])
-			box.add_child(row)
-			var lab := Label.new()
-			lab.text = def[0]
-			lab.custom_minimum_size = Vector2(70, 0)
-			row.add_child(lab)
-			var edit := LineEdit.new()
-			edit.name = "Pattern" + String(def[1]).capitalize() + "Edit"
-			edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			edit.text_submitted.connect(
-				func(_t: String) -> void: _commit_pattern_dialog())
-			row.add_child(edit)
-			_pattern_fields[def[1]] = edit
-			_pattern_fields["row_" + String(def[1])] = row
-		var arow := HBoxContainer.new()
-		arow.name = "Row_axis"
-		box.add_child(arow)
-		var alab := Label.new()
-		alab.text = "Axis"
-		alab.custom_minimum_size = Vector2(70, 0)
-		arow.add_child(alab)
-		var axis := OptionButton.new()
-		axis.name = "PatternAxisPick"
-		axis.focus_mode = Control.FOCUS_NONE
-		axis.add_item("Z", 2)
-		axis.add_item("X", 0)
-		axis.add_item("Y", 1)
-		arow.add_child(axis)
-		_pattern_fields["axis"] = axis
-		_pattern_fields["row_axis"] = arow
-		var okb := Button.new()
-		okb.name = "PatternOkBtn"
-		okb.text = "OK"
-		okb.focus_mode = Control.FOCUS_NONE
-		okb.pressed.connect(_commit_pattern_dialog)
-		box.add_child(okb)
+		_pattern_dialog = FeatureDialog.create(self, "PatternDialog", "Pattern")
+		_pattern_dialog.set_ok_name("PatternOkBtn")
+		_pattern_dialog.add_source("source", "Source", "PatternSourceBtn")
+		var mode_pick := _pattern_dialog.add_option("mode", "Mode", "PatternModePick",
+			["Linear", "Circular"])
+		mode_pick.item_selected.connect(func(_i: int) -> void: _sync_pattern_rows())
+		_pattern_dialog.add_field("n1", "Count", "PatternN1Edit", "instances")
+		_pattern_dialog.add_field("o1", "Δ1 X,Y,Z", "PatternO1Edit", "step, e.g. 20, 0, 0")
+		_pattern_dialog.add_field("n2", "Count 2", "PatternN2Edit", "1 = one direction")
+		_pattern_dialog.add_field("o2", "Δ2 X,Y,Z", "PatternO2Edit", "second step")
+		_pattern_dialog.add_field("total", "Total °", "PatternTotalEdit", "360 = full circle")
+		var axis := _pattern_dialog.add_option("axis", "Axis", "PatternAxisPick", ["Z", "X", "Y"])
+		axis.set_item_id(0, 2)
+		axis.set_item_id(1, 0)
+		axis.set_item_id(2, 1)
+		_pattern_dialog.confirmed.connect(_commit_pattern_dialog)
 		add_child(_pattern_dialog)
 	var u := doc.display_unit
-	var mp: OptionButton = _pattern_fields["mode"]
+	var mp := _pattern_dialog.field("mode") as OptionButton
+	var f_n1 := _pattern_dialog.field("n1") as LineEdit
+	var f_o1 := _pattern_dialog.field("o1") as LineEdit
+	var f_n2 := _pattern_dialog.field("n2") as LineEdit
+	var f_o2 := _pattern_dialog.field("o2") as LineEdit
+	var f_total := _pattern_dialog.field("total") as LineEdit
+	var ax := _pattern_dialog.field("axis") as OptionButton
+	var src_is_body := _pattern_source == "" \
+		or world.body_ids().has(_pattern_source) \
+		or not (doc.feature_by_id(_pattern_source) is SolidFeature)
+	_pattern_dialog.set_source("source", _pattern_source,
+		"body" if src_is_body else "feature")
+	_pattern_dialog.row("source").visible = pf == null   # the source is fixed when editing
 	if pf != null:
 		_pattern_dialog.title = "Edit %s" % pf.name
 		mp.select(1 if pf.mode == PatternBodyFeature.MODE_CIRCULAR else 0)
-		(_pattern_fields["n1"] as LineEdit).text = str(pf.count1)
-		(_pattern_fields["o1"] as LineEdit).text = "%s, %s, %s" % [
-			UnitConverter.format(pf.offset1.x, u),
-			UnitConverter.format(pf.offset1.y, u),
-			UnitConverter.format(pf.offset1.z, u)]
-		(_pattern_fields["n2"] as LineEdit).text = str(pf.count2)
-		(_pattern_fields["o2"] as LineEdit).text = "%s, %s, %s" % [
-			UnitConverter.format(pf.offset2.x, u),
-			UnitConverter.format(pf.offset2.y, u),
-			UnitConverter.format(pf.offset2.z, u)]
-		(_pattern_fields["total"] as LineEdit).text = "%.1f" % pf.total_deg
-		var ax: OptionButton = _pattern_fields["axis"]
+		f_n1.text = str(pf.count1)
+		f_o1.text = "%s, %s, %s" % [UnitConverter.format(pf.offset1.x, u),
+			UnitConverter.format(pf.offset1.y, u), UnitConverter.format(pf.offset1.z, u)]
+		f_n2.text = str(pf.count2)
+		f_o2.text = "%s, %s, %s" % [UnitConverter.format(pf.offset2.x, u),
+			UnitConverter.format(pf.offset2.y, u), UnitConverter.format(pf.offset2.z, u)]
+		f_total.text = "%.1f" % pf.total_deg
 		var want := 2
 		if absf(pf.axis_dir.x) > 0.5:
 			want = 0
@@ -4295,33 +4414,33 @@ func open_pattern_dialog(edit_fid: String) -> void:
 			want = 1
 		ax.select(ax.get_item_index(want))
 	else:
-		_pattern_dialog.title = "Pattern Body"
+		_pattern_dialog.title = "Pattern"
 		mp.select(0)
-		(_pattern_fields["n1"] as LineEdit).text = "3"
+		f_n1.text = "3"
 		var w := 30.0
 		for b: Dictionary in world.bodies():
 			if String(b["id"]) == _pattern_source:
 				w = (b["mesh"] as ArrayMesh).get_aabb().size.x + 10.0
-		(_pattern_fields["o1"] as LineEdit).text = "%s, %s, %s" % [
-			UnitConverter.format(w, u), UnitConverter.format(0, u),
-			UnitConverter.format(0, u)]
-		(_pattern_fields["n2"] as LineEdit).text = "1"
-		(_pattern_fields["o2"] as LineEdit).text = "%s, %s, %s" % [
-			UnitConverter.format(0, u), UnitConverter.format(0, u),
-			UnitConverter.format(0, u)]
-		(_pattern_fields["total"] as LineEdit).text = "360"
+		f_o1.text = "%s, %s, %s" % [UnitConverter.format(w, u),
+			UnitConverter.format(0, u), UnitConverter.format(0, u)]
+		f_n2.text = "1"
+		f_o2.text = "%s, %s, %s" % [UnitConverter.format(0, u),
+			UnitConverter.format(0, u), UnitConverter.format(0, u)]
+		f_total.text = "360"
 	_sync_pattern_rows()
-	_pattern_dialog.popup_centered()
+	_pattern_dialog.open()
+	# Arm-first: nothing selected — start with the source pick armed.
+	if pf == null and _pattern_source == "":
+		(_pattern_dialog.find_child("PatternSourceBtn", true, false) as Button).button_pressed = true
 
 
 func _sync_pattern_rows() -> void:
-	var circular: bool = (_pattern_fields["mode"] as OptionButton) \
-		.get_selected_id() == 1
-	(_pattern_fields["row_o1"] as Control).visible = not circular
-	(_pattern_fields["row_n2"] as Control).visible = not circular
-	(_pattern_fields["row_o2"] as Control).visible = not circular
-	(_pattern_fields["row_total"] as Control).visible = circular
-	(_pattern_fields["row_axis"] as Control).visible = circular
+	var circular := _pattern_dialog.selected("mode") == 1
+	_pattern_dialog.set_row_visible("o1", not circular)
+	_pattern_dialog.set_row_visible("n2", not circular)
+	_pattern_dialog.set_row_visible("o2", not circular)
+	_pattern_dialog.set_row_visible("total", circular)
+	_pattern_dialog.set_row_visible("axis", circular)
 
 
 func _parse_vec3(text: String, u: UnitConverter.Unit) -> Vector3:
@@ -4335,26 +4454,35 @@ func _parse_vec3(text: String, u: UnitConverter.Unit) -> Vector3:
 
 func _commit_pattern_dialog() -> void:
 	var u := doc.display_unit
-	var circular: bool = (_pattern_fields["mode"] as OptionButton) \
-		.get_selected_id() == 1
-	var n1_text := (_pattern_fields["n1"] as LineEdit).text
-	var n2_text := (_pattern_fields["n2"] as LineEdit).text
-	var total_text := (_pattern_fields["total"] as LineEdit).text
-	var axis_id: int = (_pattern_fields["axis"] as OptionButton) \
-		.get_selected_id()
+	var circular := _pattern_dialog.selected("mode") == 1
+	var n1_text := _pattern_dialog.text_of("n1")
+	var n2_text := _pattern_dialog.text_of("n2")
+	var total_text := _pattern_dialog.text_of("total")
+	var axis_id: int = (_pattern_dialog.field("axis") as OptionButton).get_selected_id()
+	if not n1_text.is_valid_int() or n1_text.to_int() < 2:
+		_pattern_dialog.set_error("Count must be a whole number of 2 or more")
+		return
+	if circular and (not total_text.is_valid_float() or total_text.to_float() <= 0.0):
+		_pattern_dialog.set_error("Total angle must be a positive number of degrees")
+		return
 	var props := {
 		"mode": PatternBodyFeature.MODE_CIRCULAR if circular
 			else PatternBodyFeature.MODE_LINEAR,
-		"count1": maxi(n1_text.to_int(), 2) if n1_text.is_valid_int() else 3,
-		"offset1": _parse_vec3((_pattern_fields["o1"] as LineEdit).text, u),
+		"count1": n1_text.to_int(),
+		"offset1": _parse_vec3(_pattern_dialog.text_of("o1"), u),
 		"count2": maxi(n2_text.to_int(), 1) if n2_text.is_valid_int() else 1,
-		"offset2": _parse_vec3((_pattern_fields["o2"] as LineEdit).text, u),
+		"offset2": _parse_vec3(_pattern_dialog.text_of("o2"), u),
 		"axis_dir": [Vector3(1, 0, 0), Vector3(0, 1, 0),
-			Vector3(0, 0, 1)][axis_id] as Vector3,
+			Vector3(0, 0, 1)][clampi(axis_id, 0, 2)] as Vector3,
 		"total_deg": total_text.to_float() if total_text.is_valid_float()
 			else 360.0,
 	}
-	_pattern_dialog.hide()
+	if _pattern_edit_fid == "":
+		_pattern_source = _pattern_dialog.source_id("source")
+		if _pattern_source == "":
+			_pattern_dialog.set_error("Pick what to repeat: a body, or a face of a cut/join feature")
+			return
+	_pattern_dialog.close()
 	if _pattern_edit_fid != "":
 		var batch := CmdMergeBatch.new("Edit Pattern", [])
 		stack.push_no_merge(batch)
@@ -5169,7 +5297,7 @@ func _on_viewport_input(event: InputEvent) -> void:
 				picking_mirror_plane = false
 				world.set_plane_hover("")
 				world.set_planes_visible(false)
-				mirror_body(_mirror_source, mplane)
+				_mirror_plane_picked(mplane)
 				_refresh_ui()
 		elif mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT and picking_plane:
 			var ray := rig.pixel_ray(mb.position)
@@ -5183,7 +5311,8 @@ func _on_viewport_input(event: InputEvent) -> void:
 				var face := world.pick_face(ray[0], ray[1])
 				if not face.is_empty():
 					world.clear_face_hover()
-					create_sketch_on_face(face["point"], face["normal"])
+					create_sketch_on_face(face["point"], face["normal"],
+						String(face.get("body", "")), int(face.get("face", -1)))
 		elif mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT \
 				and picking_offset_base:
 			var rayo := rig.pixel_ray(mb.position)
@@ -5229,9 +5358,7 @@ func _on_viewport_input(event: InputEvent) -> void:
 			if not lhit.is_empty():
 				_loft_sections.append({"sketch": lhit["sketch_id"],
 					"at": lhit["at"]})
-				if _loft_count != null:
-					_loft_count.text = "Sections: %d (click profiles)" \
-						% _loft_sections.size()
+				_sync_loft_count()
 				_show_loft_section_marks()
 		elif mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT and picking_revolve:
 			var rayr := rig.pixel_ray(mb.position)
@@ -5276,6 +5403,34 @@ func _on_viewport_input(event: InputEvent) -> void:
 				world.show_treat_edges(_treat_pick_edges, _treat_selected,
 					_axis_hover_width_mm())
 				_update_treat_pick_count()
+		elif mb.pressed and picking_source != "" \
+				and mb.button_index == MOUSE_BUTTON_LEFT:
+			var rays := rig.pixel_ray(mb.position)
+			var picked := ""
+			if picking_source == "feature":
+				picked = _feature_under_ray(rays[0], rays[1])
+				if picked == "":
+					set_status_hint("Source: click a face of the feature to repeat")
+			else:
+				picked = world.pick_body(rays[0], rays[1])
+				if picked == "":
+					set_status_hint("Source: click a body")
+			if picked != "":
+				var cb := _source_on_pick
+				end_source_pick()
+				if cb.is_valid():
+					cb.call(picked)
+		elif mb.pressed and picking_targets \
+				and mb.button_index == MOUSE_BUTTON_RIGHT:
+			end_target_pick()
+		elif mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT \
+				and picking_targets:
+			var rayt := rig.pixel_ray(mb.position)
+			var tid := world.pick_body(rayt[0], rayt[1])
+			if tid == "":
+				set_status_hint("Targets: click a body to add or remove it (Enter when done)")
+			else:
+				_toggle_target(tid)
 		elif mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT \
 				and picking_body:
 			var rayb := rig.pixel_ray(mb.position)
@@ -5325,7 +5480,16 @@ func _on_viewport_input(event: InputEvent) -> void:
 		elif picking_offset_base:
 			var rayb := rig.pixel_ray(mm.position)
 			world.set_plane_hover(world.pick_plane(rayb[0], rayb[1]))
-		elif picking_body:
+		elif picking_source == "feature":
+			# Pre-highlight every face of the feature the click would take.
+			var rayf := rig.pixel_ray(mm.position)
+			var facef := world.pick_face(rayf[0], rayf[1])
+			if facef.is_empty() or int(facef.get("face", -1)) < 0:
+				world.clear_face_hover()
+			else:
+				world.set_feature_hover(String(facef["body"]),
+					SolidKernel.feature_of_face(int(facef["face"])))
+		elif picking_body or picking_targets or picking_source == "body":
 			# Pre-highlight the body the click would take.
 			var rayh := rig.pixel_ray(mm.position)
 			world.set_body_hover(world.pick_body(rayh[0], rayh[1]))
@@ -5433,6 +5597,12 @@ func handle_app_key(k: InputEventKey) -> bool:
 			if sketch_orbit:
 				return_to_sketch_plane()
 				return true
+		if picking_source != "":
+			end_source_pick()
+			return true
+		if picking_targets:
+			end_target_pick()
+			return true
 		if picking_body:
 			_end_body_pick()
 			set_status_hint("Cancelled")
@@ -5468,6 +5638,9 @@ func handle_app_key(k: InputEventKey) -> bool:
 			_refresh_ui()
 			return true
 		return false
+	if (k.keycode == KEY_ENTER or k.keycode == KEY_KP_ENTER) and picking_targets:
+		end_target_pick()
+		return true
 	if (k.keycode == KEY_ENTER or k.keycode == KEY_KP_ENTER) and mode == Mode.SKETCH:
 		# Enter goes to the tool's TYPE-IN handler first, and only then counts
 		# as "finish the gesture". Routing it straight to handle_commit meant
@@ -5958,6 +6131,14 @@ func _refresh_ui() -> void:
 	if picking_look_at:
 		_status_hint.text = ("Look At: select a plane or a flat body face "
 			+ "(Esc to cancel)")
+	elif picking_source == "feature":
+		_status_hint.text = ("Source: click a face of the cut/join feature to "
+			+ "repeat (its faces light up) — Esc to cancel")
+	elif picking_source == "body":
+		_status_hint.text = "Source: click a body — Esc to cancel"
+	elif picking_targets:
+		_status_hint.text = ("Targets: click bodies to add/remove (%d chosen) — "
+			+ "Enter or right-click when done") % _target_ids.size()
 	elif picking_body:
 		_status_hint.text = "%s: click a body (Esc to cancel)" % _body_pick_label
 	elif picking_mirror_plane:

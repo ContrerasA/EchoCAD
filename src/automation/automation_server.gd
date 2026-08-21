@@ -125,6 +125,13 @@ func _vec2(v: Variant) -> Vector2:
 	return Vector2(float(a[0]), float(a[1]))
 
 
+func _vec3(v: Variant) -> Vector3:
+	var a := v as Array
+	if a == null or a.size() < 3:
+		return Vector3.ZERO
+	return Vector3(float(a[0]), float(a[1]), float(a[2]))
+
+
 ## --- app.* -------------------------------------------------------------------
 
 func _cmd_app_info(_a: Dictionary, _p: StreamPeerTCP, _id: Variant) -> Dictionary:
@@ -458,10 +465,18 @@ func _edge_treat(a: Dictionary, p: StreamPeerTCP, id: Variant,
 
 ## --- M34 sweep + loft --------------------------------------------------------
 
+static func _str_list(v: Variant) -> Array:
+	var out: Array = []
+	if v is Array:
+		for x in (v as Array):
+			out.append(String(x))
+	return out
+
+
 func _cmd_action_sweep(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
 	var fid := app.sweep(String(a.get("sketch", "")), _vec2(a.get("at", [0, 0])),
 		String(a.get("path_sketch", "")), String(a.get("path_entity", "")),
-		String(a.get("op", SolidFeature.OP_NEW_BODY)))
+		String(a.get("op", SolidFeature.OP_NEW_BODY)), _str_list(a.get("targets", [])))
 	if fid == "":
 		_reply_err(p, id, "bad_args", "sweep refused (see status hint)")
 		return null
@@ -476,7 +491,8 @@ func _cmd_action_loft(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
 	for sec in a.get("sections", []):
 		sections.append({"sketch": String((sec as Dictionary).get("sketch", "")),
 			"at": _vec2((sec as Dictionary).get("at", [0, 0]))})
-	var fid := app.loft(sections, String(a.get("op", SolidFeature.OP_NEW_BODY)))
+	var fid := app.loft(sections, String(a.get("op", SolidFeature.OP_NEW_BODY)),
+		_str_list(a.get("targets", [])))
 	if fid == "":
 		_reply_err(p, id, "bad_args", "loft refused (see status hint)")
 		return null
@@ -692,6 +708,31 @@ func _cmd_query_plane_point(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Var
 	return {"p": [s.x, s.y], "visible": on_screen}
 
 
+## M39: window pixel of a WORLD point (mm) through the model camera —
+## for aiming clicks at bodies/faces. {"p": [x, y], "visible": bool}.
+func _cmd_query_project(a: Dictionary, _p: StreamPeerTCP, _id: Variant) -> Dictionary:
+	var world := _vec3(a.get("p", [0, 0, 0]))
+	var cam := app.rig.camera
+	var rect := app.viewport_rect()
+	var s := cam.unproject_position(world) + rect.position
+	var on_screen := not cam.is_position_behind(world) and rect.has_point(s)
+	return {"p": [s.x, s.y], "visible": on_screen}
+
+
+## M39: select an OptionButton item by index (emits item_selected like a
+## click would) — popups are fiddly to drive by pixel in headless runs.
+func _cmd_action_select_option(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
+	var node := app.find_child(String(a.get("name", "")), true, false)
+	if not (node is OptionButton):
+		_reply_err(p, id, "not_found", "no OptionButton named %s" % String(a.get("name", "")))
+		return null
+	var ob := node as OptionButton
+	var index := clampi(int(a.get("index", 0)), 0, ob.item_count - 1)
+	ob.select(index)
+	ob.item_selected.emit(index)
+	return {"selected": ob.selected, "text": ob.get_item_text(index)}
+
+
 ## Global rect of a named control under AppRoot (for driving real UI).
 func _cmd_query_control(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
 	var node := app.find_child(String(a.get("name", "")), true, false) as Control
@@ -791,10 +832,10 @@ func _cmd_action_extrude(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Varian
 	var dist := float(a.get("distance", 10.0))
 	var op := String(a.get("operation", ExtrudeFeature.OP_NEW_BODY))
 	if not op in [ExtrudeFeature.OP_NEW_BODY, ExtrudeFeature.OP_JOIN,
-			ExtrudeFeature.OP_CUT]:
+			ExtrudeFeature.OP_CUT, SolidFeature.OP_INTERSECT]:
 		_reply_err(p, id, "bad_args", "unknown operation %s" % op)
 		return null
-	var eid := app.extrude(fid, at, dist, op)
+	var eid := app.extrude(fid, at, dist, op, _str_list(a.get("targets", [])))
 	if eid == "":
 		_reply_err(p, id, "invalid", "no closed profile at that point")
 		return null
@@ -823,10 +864,10 @@ func _cmd_action_revolve(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Varian
 	var angle := float(a.get("angle", 360.0))
 	var op := String(a.get("operation", SolidFeature.OP_NEW_BODY))
 	if not op in [SolidFeature.OP_NEW_BODY, SolidFeature.OP_JOIN,
-			SolidFeature.OP_CUT]:
+			SolidFeature.OP_CUT, SolidFeature.OP_INTERSECT]:
 		_reply_err(p, id, "bad_args", "unknown operation %s" % op)
 		return null
-	var rid := app.revolve(fid, at, axis, angle, op)
+	var rid := app.revolve(fid, at, axis, angle, op, _str_list(a.get("targets", [])))
 	if rid == "":
 		_reply_err(p, id, "invalid",
 			"no region/axis there, or the region straddles the axis")

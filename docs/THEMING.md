@@ -105,7 +105,9 @@ against `bg3d`)
 `big_button_w/h`, `small_button_w/h`, `browser_width`, `row_height`,
 `hud_height`, `timeline_height`, `timeline_chip_w`, `status_height`,
 `icon_big`, `icon_small`, `icon_row`, `title_height` (embedded dialog title
-bar) — all in pixels. `small_button_w/h` is the icon-only ribbon square,
+bar), `dialog_label_w` / `dialog_pad` / `dialog_gap` / `dialog_min_w` /
+`dialog_field_w` (feature dialog row label width, outer padding, row gap,
+minimum width, field width) — all in pixels. `small_button_w/h` is the icon-only ribbon square,
 `big_button_w/h` the footprint once *Show tool names* is on.
 
 ## Type variations
@@ -118,8 +120,10 @@ changes them through the tokens above, code opts in with
 are aliases of it), `FlyoutButton` (rows in a stack's flyout), `HudButton`, `PrimaryButton`,
 `TimelineChip` (`TimelineChipActive` = the sketch being edited,
 `TimelineChipError` = a feature that failed to compute, reason in its
-tooltip — border + label in `error`), `MenuBarButton`, `CaptionLabel`, `HeaderLabel`,
-`StatusLabel`, `StatusKeyLabel`, `StatusIdLabel`, `DimLabel`, `BrandLabel`, `Ribbon`,
+tooltip — border + label in `error`; `TimelineChipWarn` = computed from a
+stale reference, in `warning`), `MenuBarButton`, `CaptionLabel`, `HeaderLabel`,
+`StatusLabel`, `StatusKeyLabel`, `StatusIdLabel`, `DimLabel`, `BrandLabel`,
+`DialogLabel` / `DialogErrorLabel` / `TargetChip` (feature dialogs, M39), `Ribbon`,
 `MenuBarPanel`, `SidePanel`, `PanelHeader`, `HudPanel`, `TimelinePanel`,
 `StatusPanel`, `Divider`. `Window` additionally carries
 `embedded_border` / `embedded_unfocused_border` (title bar in `titlebar` /

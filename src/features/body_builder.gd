@@ -1,17 +1,21 @@
 class_name BodyBuilder
 extends RefCounted
-## Builds the document's BODIES from its live SOLID features (M18 extrudes,
-## M23 revolves). A body is the boolean result of one NEW_BODY feature plus
-## every later JOIN/CUT feature whose solid touches it (AABB test),
-## evaluated in timeline order — Fusion's operation dropdown semantics:
-##   new_body — starts a solid of its own,
-##   join     — unions into every body it touches (none touched: new body),
-##   cut      — carves its shape out of every body it touches (none: no-op).
+## Builds the document's BODIES from its live features in ONE ordered pass
+## over the timeline (M39) — Fusion's operation dropdown semantics:
+##   new_body  — starts a solid of its own,
+##   join      — unions into its target bodies (none: new body),
+##   cut       — carves its shape out of its target bodies,
+##   intersect — keeps only the overlap with its target bodies.
+## Targets are the feature's explicit list (M39 picker) or, when empty,
+## every body whose bounds touch the tool (the M18 rule). Face planes
+## re-resolve against the bodies built so far; moves/copies/mirrors/
+## patterns happen at their timeline position; a pattern or mirror of a
+## cut/join feature replays the tool per instance.
 ##
-## M38: bodies are computed by the Manifold kernel (SolidKernel → MeshSolid
-## in the vendored geometry addon): every part is a closed triangle mesh
-## tagged with face ids, booleans are exact and synchronous, and the result
-## carries the kernel solid + per-triangle face ids for pickers/exporters.
+## Solids are computed by the Manifold kernel (SolidKernel -> MeshSolid in
+## the vendored geometry addon): every part is a closed triangle mesh
+## tagged with face ids, booleans are exact and synchronous, and each body
+## carries its kernel solid + per-triangle face ids for pickers/exporters.
 ## When the addon binary is missing on a platform the legacy engine-CSG
 ## path runs instead (deferred brushes — one frame wait), which is why
 ## `build` stays a COROUTINE taking a host node. Callers await it.
@@ -24,13 +28,270 @@ const EPS_MM := SolidFeature.EPS_MM
 
 ## -> Array of {id: String (root feature id), name: String,
 ##              mesh: ArrayMesh, feature_ids: Array[String],
-##              solid: MeshSolid|null, face_ids: PackedInt32Array}
+##              solid: MeshSolid|null, face_ids: PackedInt32Array, color}
 static func build(doc: CadDocument, host: Node) -> Array:
+	for f in doc.features:
+		(f as Feature).rebuild_error = ""
+		(f as Feature).rebuild_level = "error"
+	if SolidKernel.available():
+		return _build_kernel(doc)
+	return await _build_csg(doc, host)
+
+
+## M39: ONE ordered pass over the timeline. Solid features fold into bodies
+## as they come (new body / join / cut / intersect, with explicit targets
+## or the AABB rule); face planes re-resolve against the bodies built so
+## far, so a sketch on a face follows its face; moves, copies, mirrors and
+## patterns happen at their own position, so a later cut targets a moved
+## body where it now is; a pattern or mirror of a CUT/JOIN feature replays
+## that feature's tool at every instance.
+static func _build_kernel(doc: CadDocument) -> Array:
+	var bodies: Array = []        # [{id, name, feature_ids, solid, color}]
+	var part_solids := {}         # feature id -> its own kernel solid
+	var treated := {}
+	for f in doc.live_features():
+		if f is PlaneFeature:
+			var pf := f as PlaneFeature
+			if pf.plane_kind == PlaneFeature.KIND_FACE:
+				if not pf.resolve_face(_entries(bodies)):
+					if pf.ref != null and pf.ref.body != "":
+						pf.rebuild_error = "face reference lost — the last position stands; re-pick the face"
+						pf.rebuild_level = "warning"
+		elif f is SolidFeature:
+			var ef := f as SolidFeature
+			var part := ef.solid_part(doc)
+			if part.is_empty():
+				ef.rebuild_error = "profile no longer resolves"
+				continue
+			var ps := SolidKernel.from_mesh(ef.kernel_mesh(doc, part),
+				SolidKernel.ordinal_of(ef.id))
+			if ps == null:
+				ef.rebuild_error = SolidKernel.last_error
+				continue
+			part_solids[ef.id] = ps
+			_apply_tool(bodies, ef, ef, ps, ef.operation, ef.id, ef.name, ef.color)
+		elif f is EdgeTreatFeature:
+			# M35 treatments rebuild a plain single-extrude body's mesh with
+			# every live treatment on it baked in, then the body continues
+			# through the kernel (later cuts apply to the rounded body).
+			var et := f as EdgeTreatFeature
+			if treated.has(et.body):
+				continue
+			var bt := _entry_by_id(bodies, et.body)
+			if bt.is_empty() or (bt["feature_ids"] as Array).size() != 1:
+				if not bt.is_empty():
+					et.rebuild_error = "only a plain single-extrude body can be treated"
+				else:
+					et.rebuild_error = "its body no longer exists"
+				continue
+			var root_ef := doc.feature_by_id(et.body) as ExtrudeFeature
+			if root_ef == null:
+				et.rebuild_error = "its body is not an extrude"
+				continue
+			var ets: Array = []
+			for g in doc.live_features():
+				if g is EdgeTreatFeature and (g as EdgeTreatFeature).body == et.body:
+					ets.append(g)
+			var tm := EdgeTreatFeature.build_combined(doc, root_ef, ets)
+			if tm == null:
+				et.rebuild_error = EdgeTreatFeature.build_error \
+					if EdgeTreatFeature.build_error != "" else "treatment failed"
+				continue
+			var ts := SolidKernel.from_mesh(tm, SolidKernel.ordinal_of(et.body))
+			if ts == null:
+				et.rebuild_error = SolidKernel.last_error
+				continue
+			bt["solid"] = ts
+			bt["dirty"] = true
+			for g in ets:
+				(bt["feature_ids"] as Array).append((g as Feature).id)
+			treated[et.body] = true
+		elif f is TransformFeature:
+			var tf := f as TransformFeature
+			var b2 := _entry_by_id(bodies, tf.body)
+			if b2.is_empty():
+				tf.rebuild_error = "its body no longer exists"
+				continue
+			var center := SolidKernel.aabb(b2["solid"]).get_center()
+			b2["solid"] = SolidKernel.transformed(b2["solid"], tf.transform3d(center))
+			b2["dirty"] = true
+			(b2["feature_ids"] as Array).append(tf.id)
+		elif f is CopyBodyFeature:
+			var cf := f as CopyBodyFeature
+			var b3 := _entry_by_id(bodies, cf.source)
+			if b3.is_empty():
+				cf.rebuild_error = "its source body no longer exists"
+				continue
+			# Copies inherit the source color until given one (QA §M32.5).
+			bodies.append(_derived_entry(b3, cf.id, cf.name,
+				Transform3D(Basis.IDENTITY, cf.translation),
+				cf.color if cf.color.a > 0.0 else b3.get("color", Color(0, 0, 0, 0))))
+		elif f is MirrorBodyFeature:
+			var mf := f as MirrorBodyFeature
+			var b4 := _entry_by_id(bodies, mf.source)
+			if not b4.is_empty():
+				bodies.append(_derived_entry(b4, mf.id, mf.name,
+					mf.mirror_transform(), b4.get("color", Color(0, 0, 0, 0))))
+			else:
+				_replay_feature(doc, bodies, part_solids, mf, mf.source,
+					[mf.mirror_transform()])
+		elif f is PatternBodyFeature:
+			var pf2 := f as PatternBodyFeature
+			var b5 := _entry_by_id(bodies, pf2.source)
+			var xfs := pf2.instance_transforms()
+			if not b5.is_empty():
+				for k in xfs.size():
+					bodies.append(_derived_entry(b5, "%s:%d" % [pf2.id, k + 1],
+						"%s %d" % [pf2.name, k + 1], xfs[k],
+						b5.get("color", Color(0, 0, 0, 0))))
+			else:
+				_replay_feature(doc, bodies, part_solids, pf2, pf2.source, xfs)
+	var out: Array = []
+	for e: Dictionary in _entries(bodies):
+		if e.get("mesh") == null \
+				or (e["mesh"] as ArrayMesh).get_surface_count() == 0:
+			continue
+		out.append(e)
+	return out
+
+
+## Apply a tool solid to the body list with Fusion's operation semantics.
+## `owner` is the feature that takes the blame for errors; `tf` the solid
+## feature whose targets apply (the same object, or the source of a
+## replayed pattern instance).
+static func _apply_tool(bodies: Array, owner: Feature, tf: SolidFeature, ps: RefCounted,
+		op: String, new_id: String, new_name: String, color: Color) -> void:
+	match op:
+		SolidFeature.OP_JOIN:
+			var targets := _targets(bodies, tf, ps, owner)
+			if targets.is_empty():
+				if owner.rebuild_error == "":
+					bodies.append(_new_entry(new_id, new_name, ps, color))
+				return
+			var merged: Dictionary = targets[0]
+			var solid: RefCounted = merged["solid"]
+			for k in range(1, targets.size()):
+				var other: Dictionary = targets[k]
+				solid = SolidKernel.boolean(solid, other["solid"], SolidFeature.OP_JOIN)
+				(merged["feature_ids"] as Array).append_array(other["feature_ids"])
+				bodies.erase(other)
+			var res := SolidKernel.boolean(solid, ps, SolidFeature.OP_JOIN)
+			if not SolidKernel.is_valid(res):
+				owner.rebuild_error = "join produced nothing"
+				return
+			merged["solid"] = res
+			merged["dirty"] = true
+			(merged["feature_ids"] as Array).append(owner.id)
+		SolidFeature.OP_CUT, SolidFeature.OP_INTERSECT:
+			var targets2 := _targets(bodies, tf, ps, owner)
+			if targets2.is_empty():
+				if owner.rebuild_error == "":
+					owner.rebuild_error = "touches no body"
+				return
+			for b: Dictionary in targets2:
+				var before := SolidKernel.volume(b["solid"])
+				var res2 := SolidKernel.boolean(b["solid"], ps, op)
+				if not SolidKernel.is_valid(res2):
+					if op == SolidFeature.OP_INTERSECT:
+						owner.rebuild_error = "no overlap with %s" % b["name"]
+						continue
+					# A cut that consumes the whole body: the body vanishes.
+					bodies.erase(b)
+					continue
+				if op == SolidFeature.OP_CUT \
+						and absf(SolidKernel.volume(res2) - before) < 1e-9:
+					# Explicitly targeted, but it never reaches the body —
+					# say so instead of silently doing nothing.
+					owner.rebuild_error = "does not touch %s" % b["name"]
+					continue
+				b["solid"] = res2
+				b["dirty"] = true
+				(b["feature_ids"] as Array).append(owner.id)
+		_:
+			bodies.append(_new_entry(new_id, new_name, ps, color))
+
+
+## Bodies a tool applies to: the feature's explicit targets (M39) or every
+## body whose bounds touch the tool (M18). A missing explicit target is the
+## feature's error.
+static func _targets(bodies: Array, tf: SolidFeature, ps: RefCounted, owner: Feature) -> Array:
+	var out: Array = []
+	if not tf.targets.is_empty():
+		for tid in tf.targets:
+			var e := _entry_by_id(bodies, String(tid))
+			if not e.is_empty():
+				out.append(e)
+		if out.is_empty():
+			owner.rebuild_error = "target body no longer exists — re-pick"
+		return out
+	var box := SolidKernel.aabb(ps).grow(0.001)
+	for b: Dictionary in bodies:
+		if SolidKernel.aabb(b["solid"]).grow(0.001).intersects(box):
+			out.append(b)
+	return out
+
+
+## Pattern/mirror of a FEATURE (M39): the source solid feature's tool is
+## replayed at every instance transform with the source's operation and
+## targets, as if the feature had been repeated by hand.
+static func _replay_feature(doc: CadDocument, bodies: Array, part_solids: Dictionary,
+		owner: Feature, source_id: String, xfs: Array) -> void:
+	var src := doc.feature_by_id(source_id) as SolidFeature
+	if src == null:
+		owner.rebuild_error = "its source no longer exists"
+		return
+	if not part_solids.has(source_id):
+		owner.rebuild_error = "its source feature did not compute"
+		return
+	if src.operation == SolidFeature.OP_NEW_BODY:
+		owner.rebuild_error = "source is a body — pick the body instead"
+		return
+	var ps: RefCounted = part_solids[source_id]
+	for k in xfs.size():
+		_apply_tool(bodies, owner, src, SolidKernel.transformed(ps, xfs[k]),
+			src.operation, "%s:%d" % [owner.id, k + 1],
+			"%s %d" % [owner.name, k + 1], Color(0, 0, 0, 0))
+
+
+static func _new_entry(id: String, name: String, solid: RefCounted, color: Color) -> Dictionary:
+	return {"id": id, "name": name, "feature_ids": [id], "solid": solid,
+		"color": color, "dirty": true, "mesh": null,
+		"face_ids": PackedInt32Array()}
+
+
+static func _derived_entry(src: Dictionary, id: String, name: String, xf: Transform3D,
+		color: Color) -> Dictionary:
+	return {"id": id, "name": name, "feature_ids": [id],
+		"solid": SolidKernel.transformed(src["solid"], xf), "color": color,
+		"dirty": true, "mesh": null, "face_ids": PackedInt32Array()}
+
+
+static func _entry_by_id(bodies: Array, id: String) -> Dictionary:
+	for b: Dictionary in bodies:
+		if String(b["id"]) == id:
+			return b
+	return {}
+
+
+## Mesh every dirty body (kernel solid -> renderable mesh + face ids) and
+## return the list. Entries are the same dictionaries (mutated in place).
+static func _entries(bodies: Array) -> Array:
+	for b: Dictionary in bodies:
+		if bool(b.get("dirty", true)):
+			var tm := SolidKernel.to_mesh(b["solid"])
+			b["mesh"] = tm["mesh"]
+			b["face_ids"] = tm["face_ids"]
+			b["dirty"] = false
+	return bodies
+
+
+## Legacy path (no kernel binary on this platform): the M18–M35 builder —
+## AABB targets, CSG bake, transforms applied after the booleans.
+static func _build_csg(doc: CadDocument, host: Node) -> Array:
 	var bodies: Array = []
 	var ordinal := {}
 	for f in doc.features:
-		ordinal[(f as Feature).id] = ordinal.size() + 1
-		(f as Feature).rebuild_error = ""
+		ordinal[(f as Feature).id] = SolidKernel.ordinal_of((f as Feature).id)
 	for f in doc.live_features():
 		if not (f is SolidFeature):
 			continue
@@ -45,8 +306,6 @@ static func build(doc: CadDocument, host: Node) -> Array:
 				if targets.is_empty():
 					bodies.append(_new_body(part))
 				else:
-					# Union the touched bodies and this prism into ONE body,
-					# rooted at the earliest of them.
 					var merged: Dictionary = bodies[targets[0]]
 					for k in range(targets.size() - 1, 0, -1):
 						var other: Dictionary = bodies[targets[k]]
@@ -69,10 +328,7 @@ static func build(doc: CadDocument, host: Node) -> Array:
 			_:
 				bodies.append(_new_body(part))
 
-	if SolidKernel.available():
-		_mesh_bodies_kernel(doc, bodies, ordinal)
-	else:
-		await _mesh_bodies_csg(doc, bodies, host)
+	await _mesh_bodies_csg(doc, bodies, host)
 
 	var out: Array = []
 	for b: Dictionary in bodies:
@@ -117,7 +373,7 @@ static func build(doc: CadDocument, host: Node) -> Array:
 				var tm := EdgeTreatFeature.build_combined(doc, root_ef, ets)
 				if tm != null:
 					bt["mesh"] = tm
-					_rekernel(bt, tm, int(ordinal.get(et.body, 0)))
+					_rekernel(bt, tm, int(ordinal.get(et.body, 1)))
 					for g in ets:
 						(bt["feature_ids"] as Array).append((g as Feature).id)
 					treated[et.body] = true
@@ -159,45 +415,6 @@ static func build(doc: CadDocument, host: Node) -> Array:
 						"%s %d" % [pf.name, k + 1], xfs[k],
 						b5.get("color", Color(0, 0, 0, 0))))
 	return out
-
-
-## M38: Manifold path. Every part becomes a kernel solid tagged with its
-## feature's face ids; parts fold into the body in timeline order with the
-## feature's operation. A part the kernel rejects (open mesh) fails ITS OWN
-## feature — rebuild_error set, the body keeps building without it — instead
-## of poisoning the body.
-static func _mesh_bodies_kernel(doc: CadDocument, bodies: Array, ordinal: Dictionary) -> void:
-	for b: Dictionary in bodies:
-		var solid: RefCounted = null
-		for part: Dictionary in (b["parts"] as Array):
-			var ef: SolidFeature = part["feature"]
-			var km := ef.kernel_mesh(doc, part)
-			var ps := SolidKernel.from_mesh(km, int(ordinal.get(ef.id, 0)))
-			if ps == null:
-				ef.rebuild_error = SolidKernel.last_error
-				continue
-			if solid == null:
-				if ef.operation == SolidFeature.OP_CUT \
-						or ef.operation == SolidFeature.OP_INTERSECT:
-					continue
-				solid = ps
-			else:
-				var res := SolidKernel.boolean(solid, ps, ef.operation)
-				if not SolidKernel.is_valid(res):
-					# A cut that consumes the whole body legitimately leaves
-					# nothing (the body vanishes); an intersect with no
-					# overlap is the feature's error and the body is kept.
-					if ef.operation == SolidFeature.OP_INTERSECT:
-						ef.rebuild_error = "no overlap with the body"
-						continue
-					if ef.operation == SolidFeature.OP_JOIN:
-						ef.rebuild_error = "join produced nothing"
-						continue
-				solid = res
-		var tm := SolidKernel.to_mesh(solid)
-		b["mesh"] = tm["mesh"]
-		b["face_ids"] = tm["face_ids"]
-		b["solid"] = solid
 
 
 ## Legacy path (no kernel binary on this platform): bake through the

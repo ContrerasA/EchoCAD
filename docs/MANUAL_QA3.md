@@ -81,3 +81,80 @@ rebuilds, face ids on every triangle, an edge overlay on every body.
 ### Fix log
 
 (none yet)
+
+---
+
+## §M39 — Face identity + explicit targets
+
+Status: PENDING
+
+Every body face now has a persistent identity (TopoRef). Sketches on
+faces follow their face, booleans can name their targets, patterns and
+mirrors can repeat a single cut/join feature, and the feature dialogs
+share one shell (rows, inline errors, Enter/Esc, Pick… buttons).
+
+- [ ] 1. **Sketch follows its face.** Extrude a 40×30 plate 10 mm. New
+   Sketch on its top face, draw a 10×10 square, Finish, extrude it 5 mm as
+   Join (a boss). Double-click Extrude1's chip and change the distance to
+   25. **Expect:** the plate grows AND the boss rides up with it — the
+   sketch's 3D outline, its construction plane row, and the boss all sit on
+   the new top face. Undo: everything comes back down.
+- [ ] 2. Same document: drag the rollback marker before Extrude1 and back.
+   **Expect:** no chip turns yellow/red; the face plane resolves again.
+- [ ] 3. **Lost face = warning.** Suppress Extrude1 (right-click its chip).
+   **Expect:** the face plane's chip turns warning-tinted (amber border);
+   tooltip says "face reference lost — the last position stands; re-pick the
+   face". The sketch and boss stay where they were (no crash, no jump).
+   Unsuppress: the tint clears.
+- [ ] 4. **Open a pre-M39 file** that has a sketch on a face (any §M22
+   document). **Expect:** it opens unchanged; after the first rebuild,
+   editing the underlying extrude moves that sketch too (the snapshot plane
+   adopted its face). Save ▸ the file still opens in this build.
+- [ ] 5. **New dialogs.** Press Extrude after picking a profile. **Expect:** a
+   dialog with labelled rows — Profile (sketch name), Distance (placeholder
+   shows unit examples), Operation, and for Join/Cut/Intersect a Targets
+   row reading "Auto (bodies it touches)" with a Pick… button. The
+   Distance field is focused; Enter confirms; Esc cancels; an empty or zero
+   distance shows an inline red error under the rows instead of closing.
+   Same shell for Revolve (Profile, Axis, Angle, Operation, Targets), Sweep
+   (Profile, Path, Operation, Targets), Loft (Sections count, Operation,
+   Targets), Pattern and Mirror.
+- [ ] 6. **Explicit targets.** Two plates side by side (0..40 and 40..80 in
+   X). Sketch a 10×10 square straddling the seam (35..45), Extrude ▸ Cut.
+   **Expect:** with Targets on Auto both plates get notched. Undo. Repeat,
+   press Pick…: the status bar says "Targets: click bodies to add/remove";
+   hovering a body tints it; click plate 2 — it stays tinted and a chip
+   "Extrude2 ×" appears in the dialog; Enter (or right-click) returns to the
+   dialog; OK. **Expect:** only plate 2 is notched. Clicking the chip's ×
+   removes it (back to Auto).
+- [ ] 7. **Intersect.** Operation ▸ Intersect with a target: only the overlap
+   of the tool and the target body survives; a tool that misses the target
+   flags the chip red with "no overlap with <body>".
+- [ ] 8. **Cut that misses its target** (explicit target that the tool never
+   reaches): red chip "does not touch <body>".
+- [ ] 9. **Pattern of a feature.** Cut one small pocket in a plate. Press
+   Pattern with nothing selected. **Expect:** the dialog opens with Source ▸
+   Pick… armed; switch Source to "Feature"; hover the pocket — ALL of the
+   pocket's faces light up (not the whole body); click. Count 4, step 10 in
+   X, OK. **Expect:** four pockets in the plate, ONE body in the browser
+   (no "Pattern1 1/2/3" bodies). Edit the pocket's depth via its chip:
+   every instance follows. Source ▸ "Body" still patterns whole bodies as
+   before (browser rows per instance).
+- [ ] 10. **Mirror of a feature.** Same pocket; Mirror, Source ▸ Feature,
+   click the pocket, Plane ▸ XZ (or Pick… and click the plane in the
+   viewport — planes appear, hover glows). **Expect:** the mirrored pocket
+   is cut on the other side of the plate; if the mirror lands outside every
+   body the chip goes red ("touches no body").
+- [ ] 11. **Mirror a body** (the old flow): select a body, press Mirror.
+   **Expect:** the dialog opens with the body as Source and the plane Pick…
+   already armed — click a plane in the viewport, it lands in the Plane
+   dropdown; OK mirrors.
+- [ ] 12. **Move, then cut.** Extrude a block, Move Body +50 in X, then sketch
+   and Cut a pocket where the block now IS. **Expect:** the pocket is carved
+   (before M39 booleans targeted the pre-move position).
+- [ ] 13. Both themes: dialog labels, placeholder text, the inline error, the
+   target chips and the tinted target bodies all read clearly.
+
+### Fix log
+
+(none yet)

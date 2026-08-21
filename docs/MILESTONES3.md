@@ -423,6 +423,26 @@ Document safety (M46) after the schema stops moving. Perf (M47) once
 the feature set is final. UX milestone (M48) collects the polish-round
 leftovers; release engineering (M49) last, alpha gate (M50).
 
+## As-built notes
+
+- **M38** (2026-08-20): Manifold 3.2.1 vendored (`MeshSolid`), winding
+  consistency pass + 1 µm weld before import, kernel tolerance 1e-4 mm,
+  cuts exact (no EPS inflation). Legacy CSG path kept behind
+  `SolidKernel.available()` with a status-bar badge.
+- **M39** (2026-08-20): face ids use the feature id's number as ordinal
+  (stable across insertions); TopoRef heals by plane hint; face planes
+  re-resolve inside ONE ordered BodyBuilder pass, which also moved body
+  transforms/copies/mirrors/patterns into timeline order (closing the M32
+  "booleans target pre-move AABB" limitation). Pattern/mirror of a
+  feature = the source tool replayed per instance with the source's
+  operation + targets; picked by clicking one of its faces (Source ▸
+  Feature). `FeatureDialog` became the shared dialog shell (docked
+  top-right, wraps to content, inline errors, Targets/Source Pick… rows)
+  and Extrude/Revolve/Sweep/Loft/Pattern/Mirror moved onto it; Mirror
+  gained a dialog (plane dropdown + viewport pick). RPC:
+  `action.select_option`, `query.project`, `targets` on the four solid
+  actions.
+
 ## Deferred past alpha (beta backlog)
 
 - STEP import/export (B-rep kernel decision: OpenCascade-lite via

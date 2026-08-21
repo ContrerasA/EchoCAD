@@ -33,6 +33,22 @@ static func available() -> bool:
 	return ClassDB.class_exists("MeshSolid")
 
 
+## Stable per-feature ordinal for face ids: the number in the feature id
+## ("f17" -> 17). Ids are minted once and never reused, so a face id keeps
+## meaning the same feature face across timeline edits, rollbacks and loads
+## (a list index would renumber everything after an insertion).
+static func ordinal_of(feature_id: String) -> int:
+	if feature_id.length() > 1 and feature_id.begins_with("f"):
+		var n := feature_id.substr(1)
+		if n.is_valid_int():
+			return clampi(n.to_int(), 1, (1 << 18) - 1)
+	return 1
+
+
+static func feature_of_face(face_id: int) -> int:
+	return face_id >> FACE_SHIFT
+
+
 static func kernel_name() -> String:
 	if not available():
 		return "legacy CSG"
@@ -220,15 +236,33 @@ static func from_mesh(mesh: ArrayMesh, ordinal: int) -> RefCounted:
 	if tris.size() < 12:
 		last_error = "empty mesh"
 		return null
-	var idx := PackedInt32Array()
-	idx.resize(tris.size())
-	for i in tris.size():
-		idx[i] = i
 	var faces := local_faces(tris)
-	for t in faces.size():
-		faces[t] = (ordinal << FACE_SHIFT) | (faces[t] & FACE_MASK)
+	# Weld on the same 1 µm grid the topology passes use, so the kernel
+	# receives SHARED vertices (its own merge tolerance is far tighter than
+	# a generator's float noise — an unwelded soup with 1e-5 mm gaps reads
+	# as NotManifold). Degenerate triangles (two corners welded) drop out.
+	var vid := {}
+	var verts := PackedVector3Array()
+	var idx := PackedInt32Array()
+	var fids := PackedInt32Array()
+	for t in tris.size() / 3:
+		var ids := [0, 0, 0]
+		for e in 3:
+			var v := tris[t * 3 + e]
+			var k := Vector3i(roundi(v.x * 1000.0), roundi(v.y * 1000.0),
+				roundi(v.z * 1000.0))
+			if not vid.has(k):
+				vid[k] = verts.size()
+				verts.append(v)
+			ids[e] = vid[k]
+		if ids[0] == ids[1] or ids[1] == ids[2] or ids[0] == ids[2]:
+			continue
+		idx.append(ids[0])
+		idx.append(ids[1])
+		idx.append(ids[2])
+		fids.append((ordinal << FACE_SHIFT) | (faces[t] & FACE_MASK))
 	var solid: RefCounted = ClassDB.instantiate("MeshSolid")
-	if not solid.call("from_mesh", tris, idx, faces):
+	if not solid.call("from_mesh", verts, idx, fids):
 		last_error = "mesh is not a closed solid (%s)" % solid.call("status")
 		return null
 	return solid.call("with_tolerance", TOLERANCE_MM)

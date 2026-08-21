@@ -198,15 +198,27 @@ func _run() -> bool:
 	_root._move_dialog.hide()
 	# Esc cancels an armed body pick.
 	_root.select_body("")
+	# M39: Mirror opens its dialog with the SOURCE pick armed (body or
+	# feature-by-face); hover tints bodies, Esc drops the pick.
 	_root._on_mirror_body_pressed()
-	if not _root.picking_body:
-		return _fail("E: Mirror Body should arm a body pick")
+	if _root.picking_source != "body":
+		return _fail("E: Mirror with nothing selected should arm the source pick")
+	_root._on_viewport_input(mm)
+	if _root.world._hover_body != body:
+		return _fail("E: source pick has no hover pre-highlight")
 	var esc := InputEventKey.new()
 	esc.keycode = KEY_ESCAPE
 	esc.pressed = true
 	_root.handle_app_key(esc)
-	if _root.picking_body:
-		return _fail("E: Esc did not cancel the body pick")
+	if _root.picking_source != "":
+		return _fail("E: Esc did not cancel the source pick")
+	# Re-arm and click: the body lands in the dialog as the source.
+	(_root._mirror_dialog.find_child("MirrorSourceBtn", true, false) as Button).button_pressed = true
+	_root._on_viewport_input(mm)
+	_root._on_viewport_input(mb)
+	if _root._mirror_dialog.source_id("source") != body:
+		return _fail("E: body click did not land as the mirror source")
+	_root._mirror_dialog.cancel()
 
 	print("M37_ARM_THEN_PICK OK: constraints, mirror, patterns and body ",
 		"commands all accept operands after arming")

@@ -15,6 +15,11 @@ const OP_INTERSECT := "intersect"
 
 var operation := OP_NEW_BODY
 
+## M39: explicit boolean targets — root ids of the bodies a join/cut/
+## intersect applies to. Empty = automatic (every body whose bounds touch
+## the tool solid, the M18 rule).
+var targets: Array = []
+
 ## Per-body appearance (M32): albedo of the body ROOTED at this feature.
 ## Alpha 0 = unset (the default gray). Ignored on join/cut features.
 var color := Color(0, 0, 0, 0)
@@ -24,6 +29,8 @@ func to_dict() -> Dictionary:
 	var d := super.to_dict()
 	if color.a > 0.0:
 		d["color"] = [color.r, color.g, color.b]
+	if not targets.is_empty():
+		d["targets"] = targets.duplicate()
 	return d
 
 
@@ -32,6 +39,9 @@ func _read_base(d: Dictionary) -> void:
 	var c: Variant = d.get("color")
 	if c is Array and (c as Array).size() >= 3:
 		color = Color(float(c[0]), float(c[1]), float(c[2]), 1.0)
+	targets = []
+	for t in (d.get("targets", []) as Array):
+		targets.append(String(t))
 
 
 ## Exact watertight mesh of this feature's own solid (surface 0 = shaded

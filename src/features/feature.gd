@@ -14,6 +14,9 @@ var suppressed := false
 ## Transient — set by BodyBuilder every build, never serialized; the
 ## timeline paints a chip red and shows this as its tooltip.
 var rebuild_error := ""
+## "error" (the feature computed nothing) or "warning" (it computed from a
+## stale reference — M39 lost face refs). Drives the chip tint.
+var rebuild_level := "error"
 
 ## Weak back-reference to the owning document (set by CadDocument.attach),
 ## so features that reference OTHER features — a sketch on a construction

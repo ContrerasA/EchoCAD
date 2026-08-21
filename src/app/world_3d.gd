@@ -17,7 +17,6 @@ static func COLOR_PLANE_HOVER() -> Color:
 const COLOR_CPLANE := Color(0.88, 0.76, 0.38, 0.12)
 const COLOR_CPLANE_HOVER := Color(0.95, 0.85, 0.45, 0.30)
 ## Flat body face hovered while picking a sketch plane (M22).
-const COLOR_FACE_HOVER := Color(0.95, 0.85, 0.45, 0.35)
 static func COLOR_SKETCH() -> Color:
 	return ThemeService.col("ink_free")
 static func COLOR_CONSTRUCTION() -> Color:
@@ -695,9 +694,40 @@ func set_body_hover(fid: String) -> void:
 			if id == fid else _body_base_color(id)
 
 
+var _marked_bodies: Array = []
+
+
+## M39: bodies chosen as boolean targets in a dialog — tinted like a
+## selection while the dialog is up. Empty clears. View state only.
+func set_marked_bodies(ids: Array) -> void:
+	var prev := _marked_bodies
+	_marked_bodies = ids.duplicate()
+	var touch := {}
+	for id in prev:
+		touch[id] = true
+	for id in _marked_bodies:
+		touch[id] = true
+	for id in touch:
+		if String(id) == _selected_body:
+			continue
+		var mi := _body_mesh(String(id))
+		if mi == null:
+			continue
+		var mat := mi.get_surface_override_material(0) as StandardMaterial3D
+		if mat != null:
+			mat.albedo_color = _body_base_color(String(id))
+	if _hover_body != "":
+		var hb := _hover_body
+		_hover_body = ""
+		set_body_hover(hb)
+
+
 ## The shaded color a body wears when not selected: its per-body color
-## (M32) when one is set, the shared default otherwise.
+## (M32) when one is set, the shared default otherwise — or the selection
+## tint when it is a marked target (M39).
 func _body_base_color(fid: String) -> Color:
+	if _marked_bodies.has(fid):
+		return COLOR_BODY_SELECTED()
 	for b: Dictionary in _bodies:
 		if String(b["id"]) == fid:
 			var own: Color = b.get("color", Color(0, 0, 0, 0))
@@ -849,7 +879,9 @@ func pick_face(origin: Vector3, dir: Vector3) -> Dictionary:
 		if not hit.is_empty() and float(hit["t"]) < best_t:
 			best_t = float(hit["t"])
 			best = {"body": String(mi.get_meta("feature_id")),
-				"point": hit["point"], "normal": hit["normal"]}
+				"point": hit["point"], "normal": hit["normal"],
+				"face": _face_id_of(String(mi.get_meta("feature_id")),
+					int(hit.get("tri", -1)))}
 	if not best.is_empty():
 		# The face's outward side is the one looking at the camera.
 		var n := best["normal"] as Vector3
@@ -892,9 +924,31 @@ func _ray_mesh_face(mi: MeshInstance3D, origin: Vector3, dir: Vector3) -> Dictio
 				if t < best:
 					best = t
 					out = {"t": t, "point": hit,
-						"normal": (b - a).cross(cc - a).normalized()}
+						"normal": (b - a).cross(cc - a).normalized(),
+						"tri": i / 3 if s == 0 else -1}
 			i += 3
 	return out
+
+
+## M39: kernel face id of triangle `tri` (surface 0 order) of a body, -1
+## when unknown (legacy path, or a mesh without face ids).
+func _face_id_of(body_fid: String, tri: int) -> int:
+	if tri < 0:
+		return -1
+	for b: Dictionary in _bodies:
+		if String(b["id"]) == body_fid:
+			var fids: PackedInt32Array = b.get("face_ids", PackedInt32Array())
+			if tri < fids.size():
+				return fids[tri]
+	return -1
+
+
+## M39: the body entry (BodyBuilder row) for a body id, {} when unknown.
+func body_entry(body_fid: String) -> Dictionary:
+	for b: Dictionary in _bodies:
+		if String(b["id"]) == body_fid:
+			return b
+	return {}
 
 
 var _face_hover_mi: MeshInstance3D = null
@@ -953,7 +1007,52 @@ func set_face_hover(body_fid: String, point: Vector3, normal: Vector3) -> void:
 	_face_hover_mi = MeshInstance3D.new()
 	_face_hover_mi.name = "FaceHover"
 	_face_hover_mi.mesh = hm
-	_face_hover_mi.material_override = _fill_material(COLOR_FACE_HOVER, false)
+	_face_hover_mi.material_override = _fill_material(ThemeService.col("hover"), false)
+	add_child(_face_hover_mi)
+	_face_hover_key = key
+
+
+## M39: highlight every face of `body_fid` that came from feature ordinal
+## `ordinal` (all triangles whose face id belongs to it) — the hover for
+## picking a FEATURE by clicking one of its faces. Shares the face-hover
+## slot, so clear_face_hover() clears it.
+func set_feature_hover(body_fid: String, ordinal: int) -> void:
+	var key := "feat|%s|%d" % [body_fid, ordinal]
+	if key == _face_hover_key and _face_hover_mi != null:
+		return
+	clear_face_hover()
+	var mi := _body_mesh(body_fid)
+	var entry := body_entry(body_fid)
+	if mi == null or entry.is_empty():
+		return
+	var mesh := mi.mesh as ArrayMesh
+	var fids: PackedInt32Array = entry.get("face_ids", PackedInt32Array())
+	if mesh == null or mesh.get_surface_count() == 0 or fids.is_empty():
+		return
+	var verts := mesh.surface_get_arrays(0)[Mesh.ARRAY_VERTEX] as PackedVector3Array
+	var tris := PackedVector3Array()
+	var nt := mini(verts.size() / 3, fids.size())
+	for t in nt:
+		if SolidKernel.feature_of_face(fids[t]) != ordinal:
+			continue
+		var a: Vector3 = mi.transform * verts[t * 3]
+		var b: Vector3 = mi.transform * verts[t * 3 + 1]
+		var c2: Vector3 = mi.transform * verts[t * 3 + 2]
+		var lift := (b - a).cross(c2 - a).normalized() * 0.05
+		tris.append(a + lift)
+		tris.append(b + lift)
+		tris.append(c2 + lift)
+	if tris.is_empty():
+		return
+	var hm := ArrayMesh.new()
+	var arr := []
+	arr.resize(Mesh.ARRAY_MAX)
+	arr[Mesh.ARRAY_VERTEX] = tris
+	hm.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
+	_face_hover_mi = MeshInstance3D.new()
+	_face_hover_mi.name = "FeatureHover"
+	_face_hover_mi.mesh = hm
+	_face_hover_mi.material_override = _fill_material(ThemeService.col("hover"), false)
 	add_child(_face_hover_mi)
 	_face_hover_key = key
 
@@ -975,10 +1074,16 @@ func rebuild_sketches(doc: CadDocument) -> void:
 	for c in _sketch_root.get_children():
 		if not (c as Node).has_meta("is_body"):
 			c.queue_free()
+	# M39: with the kernel the body pass is synchronous and it RESOLVES face
+	# planes in timeline order — run it first so sketches on faces (and
+	# their construction planes) draw at the face's current position.
+	var kernel := SolidKernel.available()
+	if kernel:
+		_rebuild_bodies(doc)
 	_rebuild_cplanes(doc)
 	for f in doc.live_features():
 		if f is SolidFeature:
-			continue   # bodies are rebuilt below, boolean-aware
+			continue   # bodies are rebuilt separately, boolean-aware
 		if f is CanvasFeature:
 			_add_canvas_quad(f as CanvasFeature)
 			continue
@@ -1034,7 +1139,8 @@ func rebuild_sketches(doc: CadDocument) -> void:
 			fmi.material_override = _fill_material(COLOR_REGION_FILL(), false)
 			fmi.visible = sketch_shown(sf.id)
 			_sketch_root.add_child(fmi)
-	_rebuild_bodies(doc)
+	if not kernel:
+		_rebuild_bodies(doc)
 
 
 ## Chop a polyline into dash segments (2 mm dash / 1.5 mm gap, sketch mm) —
@@ -1468,9 +1574,8 @@ func _apply_bodies(bodies: Array) -> void:
 		smi.set_meta("is_body", true)
 		var mat := StandardMaterial3D.new()
 		# Per-body appearance (M32): the root feature's color, when set.
-		var own: Color = b.get("color", Color(0, 0, 0, 0))
 		mat.albedo_color = COLOR_BODY_SELECTED() if b["id"] == _selected_body \
-			else (Color(own.r, own.g, own.b) if own.a > 0.0 else COLOR_BODY())
+			else _body_base_color(String(b["id"]))
 		mat.metallic = 0.1
 		mat.roughness = 0.7
 		# Double-sided: with a closed outward-wound shell the back faces are

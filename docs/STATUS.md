@@ -1,12 +1,18 @@
 # EchoCAD — Status
 
 Updated: 2026-08-20. M0–M36 + the CHANGES round + **M38 (Manifold kernel)**
-on `main`. Volume 3 (`docs/MILESTONES3.md`, M38–M50 + polish rounds) is the
++ **M39 (face identity, explicit targets, feature dialogs)** on `main`. Volume 3 (`docs/MILESTONES3.md`, M38–M50 + polish rounds) is the
 alpha plan; manual QA for it lives in `docs/MANUAL_QA3.md`. Solids are now
 computed by Manifold (`MeshSolid` in `addons/geometry`): exact booleans
 (no more EPS-inflated cuts), synchronous rebuilds, face ids on every
 triangle, edge overlay on every body, per-feature rebuild errors shown as
-red timeline chips. 64 headless tests + 29 RPC suites green.
+red timeline chips. M39: TopoRef face references (sketch-on-face planes
+follow their face; lost refs are amber warning chips), explicit boolean
+targets + Intersect, one ordered BodyBuilder pass (moves before cuts
+count, pattern/mirror of a cut feature re-cuts per instance), and the
+shared `FeatureDialog` shell (docked top-right, inline errors, Pick…
+rows) behind Extrude/Revolve/Sweep/Loft/Pattern/Mirror. 65 headless
+tests + 30 RPC suites green.
 
 Earlier history: M0–M25 implemented and merged to `main`.
 Volume 2 (M26–M35, `docs/MILESTONES2.md`) is IMPLEMENTED on a chain of
@@ -60,8 +66,9 @@ binaries still pending in the sibling repos.
 
 ## Known limitations / backlog
 
-- Extrude booleans pick their targets by AABB overlap (join/cut hit every
-  body whose bounds touch the prism) — explicit target picker is M39.
+- (closed by M39) booleans may name their targets; Auto keeps the AABB
+  rule. Body moves now happen in timeline order, so later booleans see
+  the moved body.
 - (closed by M38) CSG-baked bodies have no edge-line overlay — every body
   now draws its edges from the kernel mesh.
 - Offset constraints are Fusion-lite: parallels + one driving gap dimension,
@@ -74,8 +81,8 @@ binaries still pending in the sibling repos.
 - DXF export is R12 lines/arcs/circles/points (no splines, no
   dimensions/annotations); import reads the same subset plus polylines —
   text, dimensions, splines, and blocks are skipped with a count.
-- Face planes (sketch-on-face, M22) are SNAPSHOTS of the clicked face, not
-  parametric links — editing the underlying extrude does not move them.
+- (closed by M39) face planes are parametric TopoRef links; pre-M39
+  snapshot planes adopt a matching face on the first rebuild.
 - Revolve booleans share extrude's AABB target picking; a revolve's swept
   AABB is generous, so join can merge bodies that only nearly touch.
 - macOS/web builds need addon binaries built in the sibling repos first.

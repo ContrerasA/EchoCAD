@@ -104,7 +104,9 @@ func _add_chip(f: Feature, index: int) -> void:
 		b.theme_type_variation = "TimelineChipActive"
 	elif f.rebuild_error != "" and not f.suppressed and not rolled:
 		# M38: the feature kept its place but could not compute — say why.
-		b.theme_type_variation = "TimelineChipError"
+		# M39: a lost reference is a warning (the last good pose stands).
+		b.theme_type_variation = "TimelineChipWarn" \
+			if f.rebuild_level == "warning" else "TimelineChipError"
 		b.tooltip_text = "%s — %s" % [f.name, f.rebuild_error]
 	b.gui_input.connect(func(ev: InputEvent) -> void: _on_chip_input(f.id, ev))
 	add_child(b)

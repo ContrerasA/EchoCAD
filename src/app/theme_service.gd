@@ -105,6 +105,8 @@ const FALLBACK_METRICS := {
 	"timeline_height": 52.0, "timeline_chip_w": 52.0, "status_height": 24.0,
 	"icon_big": 36.0, "icon_small": 24.0, "icon_row": 14.0,
 	"title_height": 28.0,
+	"dialog_label_w": 84.0, "dialog_pad": 10.0, "dialog_gap": 6.0,
+	"dialog_min_w": 300.0, "dialog_field_w": 170.0,
 }
 
 const FALLBACK_FONT_SIZES := {
@@ -582,6 +584,19 @@ static func build_theme() -> Theme:
 	for cn in ["font_color", "font_hover_color", "font_pressed_color",
 			"icon_normal_color", "icon_hover_color", "icon_pressed_color"]:
 		t.set_color(cn, "TimelineChipError", col("error"))
+	# M39: a feature computed from a stale reference (lost face ref) —
+	# warning-tinted, same footprint.
+	t.add_type("TimelineChipWarn")
+	t.set_type_variation("TimelineChipWarn", "TimelineChip")
+	t.set_stylebox("normal", "TimelineChipWarn", _flat(col("btn"),
+		col("warning"), radius, Vector2(2, 3)))
+	t.set_stylebox("hover", "TimelineChipWarn", _flat(col("btn_hover"),
+		col("warning"), radius, Vector2(2, 3)))
+	t.set_stylebox("pressed", "TimelineChipWarn", _flat(col("btn"),
+		col("warning"), radius, Vector2(2, 3)))
+	for cn in ["font_color", "font_hover_color", "font_pressed_color",
+			"icon_normal_color", "icon_hover_color", "icon_pressed_color"]:
+		t.set_color(cn, "TimelineChipWarn", col("warning"))
 	# Rollback marker: a thin accent bar.
 	t.add_type("TimelineMarker")
 	t.set_type_variation("TimelineMarker", "Button")
@@ -647,6 +662,19 @@ static func build_theme() -> Theme:
 	t.set_type_variation("DimLabel", "Label")
 	t.set_color("font_color", "DimLabel", col("text_dim"))
 	t.set_font_size("font_size", "DimLabel", font_size("small"))
+	# M39 feature dialogs: row labels, inline error, target chips.
+	t.add_type("DialogLabel")
+	t.set_type_variation("DialogLabel", "Label")
+	t.set_color("font_color", "DialogLabel", col("text_dim"))
+	t.set_font_size("font_size", "DialogLabel", font_size("body"))
+	t.add_type("DialogErrorLabel")
+	t.set_type_variation("DialogErrorLabel", "Label")
+	t.set_color("font_color", "DialogErrorLabel", col("error"))
+	t.set_font_size("font_size", "DialogErrorLabel", font_size("small"))
+	t.add_type("TargetChip")
+	t.set_type_variation("TargetChip", "Button")
+	_style_button(t, "TargetChip", Vector2(6, 2), radius_sm)
+	t.set_font_size("font_size", "TargetChip", font_size("small"))
 	t.add_type("BrandLabel")
 	t.set_type_variation("BrandLabel", "Label")
 	t.set_color("font_color", "BrandLabel", col("text_dim"))

@@ -230,7 +230,7 @@ func _run() -> bool:
 	var bwant := 12000.0 - (af * (37.0 + 27.0 + 7.0) + 27.0 - 4.5 * PI)
 	var bgot := _body_volume(bodies, box_id)
 	if absf(bgot - bwant) > bwant * 0.01:
-		return _fail("E: ball corner volume %f vs %f" % [bgot, bwant])
+		return _fail("E: ball corner volume %f vs %f (%s)" % [bgot, bwant, (_root.doc.feature_by_id(fide) as Feature).rebuild_error])
 	if not _manifold_ok(_body_mesh(bodies, box_id)):
 		return _fail("E: ball corner mesh is not watertight")
 	_root.stack.undo()
