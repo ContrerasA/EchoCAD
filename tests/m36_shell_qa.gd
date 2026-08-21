@@ -212,26 +212,29 @@ func _run() -> bool:
 	var fr := cube.face_screen_px(Vector3(0, -1, 0))
 	if not bool(fr["ok"]):
 		return _fail("G: FRONT face not clickable from the home view")
-	# Navigation widgets (CHANGES #5): home + swooping ccw/cw quarter-turn
-	# arrows, each with a hit rect inside the widget; a turn steps the rig's
-	# yaw, home restores.
+	# Navigation widget (CHANGES #5, QA §M37.5): only the house remains, hit
+	# rect inside the widget; the turn arrows are gone; home restores.
 	var rects := cube.nav_rects()
-	for k in ["home", "ccw", "cw"]:
-		if not rects.has(k) or not Rect2(Vector2.ZERO, cube.size).encloses(rects[k]):
-			return _fail("G: nav widget %s missing or outside the cube" % k)
+	if rects.size() != 1 or not rects.has("home") \
+			or not Rect2(Vector2.ZERO, cube.size).encloses(rects["home"]):
+		return _fail("G: nav widget should be the home glyph only, got %s" % str(rects.keys()))
 	var yaw0: float = _root.rig.yaw
-	cube.nav_requested.emit("ccw")
+	_root.rig.step_view(PI / 2.0, 0.0)
 	await _idle()
 	if absf(wrapf(_root.rig.yaw - yaw0 - PI / 2.0, -PI, PI)) > 1e-3:
-		return _fail("G: ccw arrow did not step the yaw by a quarter turn")
+		return _fail("G: step_view did not turn the yaw by a quarter turn")
+	# Triad hangs off the cube's bottom-left-front corner in world space.
+	var triad: Node3D = cube.find_child("Triad", true, false)
+	if triad == null or triad.position != ViewCube.TRIAD_CORNER:
+		return _fail("G: triad should sit at the cube's bottom-left-front corner")
 	cube.nav_requested.emit("home")
 	await _idle()
 	if absf(_root.rig.yaw - OrbitCamera.HOME_YAW) > 1e-3 \
 			or absf(_root.rig.pitch - OrbitCamera.HOME_PITCH) > 1e-3:
 		return _fail("G: home widget did not restore the 3/4 view")
 	# Hover feedback: motion over a glyph marks it hot.
-	cube._on_nav_input(_motion((rects["cw"] as Rect2).get_center()))
-	if cube._nav_hover != "cw":
+	cube._on_nav_input(_motion((rects["home"] as Rect2).get_center()))
+	if cube._nav_hover != "home":
 		return _fail("G: nav glyph has no hover feedback")
 	cube._on_nav_input(_motion(Vector2(-50, -50)))
 

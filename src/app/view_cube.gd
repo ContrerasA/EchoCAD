@@ -6,19 +6,22 @@ extends SubViewportContainer
 ## Face detection is math (ray vs box), no physics.
 
 signal face_picked(normal: Vector3, up: Vector3)
-## A navigation widget around the cube was clicked: "ccw" / "cw" turn the
-## orbit a quarter turn about the world up axis, "home" is the 3/4 view.
+## The navigation widget by the cube was clicked: "home" flies to the 3/4
+## home view (QA §M37.5: the quarter-turn arrows were dropped — the cube
+## faces and orbit cover it; Fusion keeps only the house).
 signal nav_requested(kind: String)
 
 const SIZE_PX := 180
 const CUBE_HALF := 20.0
 const CAM_DIST := 142.0
 const AXIS_LEN := 14.0
-## Camera-space offsets: the cube sits up-right of centre, the triad pinned
-## to the bottom-left corner of the widget (Fusion's layout) so neither ever
-## clips at the viewport edge whichever way the view turns.
+## Camera-space offset: the cube sits a little up-right of centre so the
+## house glyph has room in the top-left corner.
 const CUBE_SHIFT := Vector3(-12.0, -10.0, 0.0)
-const TRIAD_AT := Vector3(-36.0, -38.0, 0.0)
+## The axis triad hangs off the cube's bottom-left-FRONT corner in WORLD
+## space (Fusion's layout, QA §M37.5): it turns with the cube, so the X/Y/Z
+## arrows always point the way the model's axes do.
+const TRIAD_CORNER := Vector3(-1.0, -1.0, -1.0) * (CUBE_HALF + 6.0)
 ## Navigation widgets (CHANGES #5): glyph size + inset from the widget edge.
 const NAV_PX := 22.0
 const NAV_INSET := 4.0
@@ -138,18 +141,12 @@ func _ready() -> void:
 	add_child(_nav)
 
 
-## Hit rectangles of the navigation glyphs, keyed by kind (Fusion's layout):
-## home in the top-left corner, the two swooping turn arrows side by side in
-## the top-right corner above the cube.
+## Hit rectangle of the navigation glyph, keyed by kind: the house sits in
+## the widget's top-left corner (the only glyph left — QA §M37.5).
 func nav_rects() -> Dictionary:
-	var s := size
 	var n := NAV_PX
 	var i := NAV_INSET
-	return {
-		"home": Rect2(i, i, n, n),
-		"ccw": Rect2(s.x - 2.0 * n - i - 2.0, i, n, n),
-		"cw": Rect2(s.x - n - i, i, n, n),
-	}
+	return {"home": Rect2(i, i, n, n)}
 
 
 ## Window-pixel centre of a navigation glyph — lets automation click it.
@@ -210,33 +207,6 @@ func _draw_nav() -> void:
 				_nav.draw_polyline(roof, c, 2.0, true)
 				_nav.draw_rect(Rect2(m + Vector2(-h * 0.7, 0), Vector2(h * 1.4, h)),
 					c, false, 2.0)
-			"ccw":
-				_draw_swoop(m, h, c, false)
-			"cw":
-				_draw_swoop(m, h, c, true)
-
-
-## A curved (swooping) turn arrow: three-quarter arc with an arrowhead at its
-## end, mirrored for the clockwise glyph.
-func _draw_swoop(m: Vector2, h: float, c: Color, clockwise: bool) -> void:
-	var r := h * 1.2
-	# Arc runs from the arrowhead's tail (bottom) round the far side to the
-	# arrowhead (right for ccw, left for cw).
-	var a0 := deg_to_rad(120.0)
-	var a1 := deg_to_rad(120.0 + 270.0)
-	_nav.draw_arc(m, r, a0, a1, 24, c, 2.0, true)
-	# Arrowhead tangent to the arc at a1.
-	var tip := m + Vector2(cos(a1), sin(a1)) * r
-	var tangent := Vector2(-sin(a1), cos(a1))
-	var normal := Vector2(cos(a1), sin(a1))
-	var s := h * 0.8
-	var head := PackedVector2Array([tip + tangent * s * 0.9,
-		tip - tangent * s * 0.25 + normal * s * 0.55,
-		tip - tangent * s * 0.25 - normal * s * 0.55])
-	if clockwise:
-		for k in head.size():
-			head[k] = Vector2(2.0 * m.x - head[k].x, head[k].y)
-	_nav.draw_colored_polygon(head, c)
 
 
 ## Hairline cube edges so the faces read as a box even where two lit faces
@@ -289,6 +259,7 @@ func _build_labels(root: Node3D) -> void:
 func _build_axes(root: Node3D) -> void:
 	_triad = Node3D.new()
 	_triad.name = "Triad"
+	_triad.position = TRIAD_CORNER
 	root.add_child(_triad)
 	var defs := [[Vector3.RIGHT, "X", "axis_x"], [Vector3(0, 1, 0), "Y", "axis_y"],
 		[Vector3(0, 0, 1), "Z", "axis_z"]]
@@ -328,8 +299,6 @@ func sync_orientation(rig_rotation: Vector3) -> void:
 		return
 	var b := Basis.from_euler(rig_rotation)
 	_cam.transform = Transform3D(b, b * (Vector3(0, 0, CAM_DIST) + CUBE_SHIFT))
-	if _triad != null:
-		_triad.position = _cam.transform * (TRIAD_AT + Vector3(0, 0, -CAM_DIST))
 
 
 func _gui_input(event: InputEvent) -> void:

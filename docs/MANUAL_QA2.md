@@ -1161,13 +1161,14 @@ Run windowed at ≥1280×800, then again at ~1000×700.
       Home, Open the file: the odd view is back instantly. Saving while
       inside a sketch stores the MODEL view you left, not the square-on one.
       A pre-#4 file opens with the current view untouched.
-- [!] **View cube widgets** (#5): the house glyph (top-left of the cube)
+- [ ] **View cube widgets** (#5): the house glyph (top-left of the cube)
       flies to the 3/4 home view — the same pose the app starts in (FRONT,
-      RIGHT, TOP visible). ◀ ▶ turn a quarter around Z; ▲ ▼ a quarter up /
-      down (clamped at the poles). Each glyph lights on hover; clicking the
-      cube faces still works; Views ▸ Home matches the house.
-    For now remove the rotation buttons, only keep the home button
-    Move the axis gizmos to bottom left of front face in view cube so it matches fusion
+      RIGHT, TOP visible). It lights on hover; clicking the cube faces still
+      works; Views ▸ Home matches the house. The X/Y/Z axis triad hangs off
+      the cube's bottom-left-front corner and turns with it (Fusion's
+      layout). **Issue (round 1):** the quarter-turn arrows were unwanted and
+      the triad sat in the widget corner. Fixed — see fix log **M37.1**;
+      re-test.
 - [X] **Arm first, pick after** (#6): in a sketch with two lines and nothing
       selected, click **Parallel**: the button stays pressed, the hint says
       "needs two lines — click them", lines pre-highlight under the cursor,
@@ -1191,3 +1192,11 @@ Run windowed at ≥1280×800, then again at ~1000×700.
       `tools/run_tests.sh` and `HEADLESS=1 tools/run_rpc_tests.sh`, relaunch
       the app: the theme is unchanged (tests now write
       `user://settings.test.cfg`).
+
+### §M37 fix log
+
+- **M37.1** (2026-08-20, item 5): dropped the quarter-turn arrows — the
+  house is the only glyph by the cube; the axis triad moved from the
+  widget's corner to the cube's bottom-left-front corner in world space, so
+  it turns with the cube like Fusion's. `ViewCube.nav_rects()` now returns
+  `home` only; `ViewCube.TRIAD_CORNER` pins the triad.

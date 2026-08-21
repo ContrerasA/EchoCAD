@@ -5101,10 +5101,6 @@ func _on_cube_nav(kind: String) -> void:
 	match kind:
 		"home":
 			go_home_view()
-		"ccw":
-			rig.step_view(PI / 2.0, 0.0)
-		"cw":
-			rig.step_view(-PI / 2.0, 0.0)
 
 
 func _on_cube_face(normal: Vector3, up: Vector3) -> void:
