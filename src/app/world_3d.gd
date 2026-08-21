@@ -1092,6 +1092,7 @@ func rebuild_sketches(doc: CadDocument) -> void:
 	# this clear so solids never blink out while a rebuild is in flight.
 	for c in _sketch_root.get_children():
 		if not (c as Node).has_meta("is_body"):
+			_release_materials(c)
 			c.queue_free()
 	# M39: with the kernel the body pass is synchronous and it RESOLVES face
 	# planes in timeline order — run it first so sketches on faces (and
@@ -1721,12 +1722,44 @@ func section_enabled() -> bool:
 	return _section_on
 
 
+## Drop every material a render node (and its children) owns.
+##
+## A MeshInstance3D that is created and destroyed inside a SINGLE frame is
+## never flushed by the renderer: its pending instance update still holds the
+## RIDs of the override materials the node owned. Freeing the node releases
+## those materials FIRST and the instance second — and freeing an instance
+## makes the renderer flush its pending updates, which then read materials
+## that no longer exist. That is the `Parameter "material" is null` flood
+## (four errors per surface) seen when opening a document: `load_document`
+## and the `mark_saved` stack signal both rebuild in the same frame, so the
+## first rebuild's body nodes die before they were ever drawn.
+##
+## Clearing the references first replaces the stale RIDs with null ones,
+## which the flush handles as "no material" instead of erroring.
+static func _release_materials(n: Node) -> void:
+	var mi := n as MeshInstance3D
+	if mi != null:
+		mi.material_override = null
+		mi.material_overlay = null
+		for i in mi.get_surface_override_material_count():
+			mi.set_surface_override_material(i, null)
+	for c in n.get_children():
+		_release_materials(c)
+
+
+## `Node.free()` with the material references dropped first — see
+## `_release_materials` for why the order matters.
+static func _free_render_node(n: Node) -> void:
+	_release_materials(n)
+	n.free()
+
+
 func _apply_bodies(bodies: Array) -> void:
 	_bodies = bodies
 	bodies_rebuilt.emit()
 	for c in _sketch_root.get_children():
 		if (c as Node).has_meta("is_body"):
-			c.free()   # immediate: the replacement is added THIS call
+			_free_render_node(c)   # immediate: the replacement is added THIS call
 	for b: Dictionary in bodies:
 		var mesh: ArrayMesh = b["mesh"]
 		var cap_mesh: ArrayMesh = null

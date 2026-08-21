@@ -748,9 +748,21 @@ func solve_followers_async(pinned = []) -> void:
 	threaded_solver.request(active_sketch_id, sk, pinned)
 
 
+## A click that OPENS a document is very often a double click — the sample
+## row in the start panel, a Recent entry, a file in the Open dialog. Its
+## second half lands on the viewport a moment later, once that panel or
+## dialog is gone, and `fit_view` has just parked the model right under the
+## cursor. M48's double-click-to-edit then popped an Edit dialog nobody
+## asked for. Viewport double-clicks are ignored for one double-click
+## interval after a load; the stray press falls through to a plain pick.
+const DBLCLICK_GUARD_MS := 600
+var _dblclick_guard_until := 0
+
+
 ## Replace the whole document (open/new). History is cleared — a loaded file
 ## starts with a clean timeline of its own.
 func load_document(new_doc: CadDocument) -> void:
+	_dblclick_guard_until = Time.get_ticks_msec() + DBLCLICK_GUARD_MS
 	doc = new_doc
 	stack.doc = new_doc
 	stack.clear()
@@ -7950,7 +7962,9 @@ func _on_viewport_input(event: InputEvent) -> void:
 				if then.is_valid():
 					then.call()
 				_refresh_ui()
-		elif mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT and mb.double_click:
+		elif mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT \
+				and mb.double_click \
+				and Time.get_ticks_msec() >= _dblclick_guard_until:
 			# Double-click a body: edit the feature that made the face under
 			# the cursor (M48) — the pocket's cut, the plate's extrude, …
 			var rayd := rig.pixel_ray(mb.position)
