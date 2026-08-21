@@ -5500,6 +5500,7 @@ func set_live_gesture(on: bool) -> void:
 		_refresh_dof()
 		if mode == Mode.SKETCH:
 			sketch_view.mark_dirty()
+			world.rebuild_sketches(doc)   # 3D twin catches up with the drag
 		overlay.queue_redraw()
 		_refresh_ui()
 
@@ -5532,8 +5533,11 @@ func _on_stack_changed() -> void:
 			sketch_view.mark_dirty()
 			overlay.queue_redraw()
 			# Off-axis the 3D line meshes ARE the sketch display, so undo/redo
-			# must rebuild them just as model mode does.
-			if sketch_orbit:
+			# must rebuild them just as model mode does. Square-on, the 3D
+			# mesh of the active sketch still shows through the canvas, so a
+			# stale one reads as a ghost of the pre-edit geometry (CHANGES #8)
+			# — rebuild at every settled change; drags catch up on release.
+			if sketch_orbit or not live_gesture:
 				world.rebuild_sketches(doc)
 	else:
 		world.rebuild_sketches(doc)

@@ -6,4 +6,4 @@
 - [ ] most tools require me to first select the entities im trying to modify, then select the tool from the shelf. other applications allow me to do this, but also arm the tool, and then allow me to select the entities. this is the workflow i want. For instance applying constraints, mirror, bevel, etc. this needs to be a hard requirement as well for any new features / tools we add in in the future as well
 - [ ] in light mode, vertecis should be another color. right now they blend in with grid bg
 - [ ] if we move geometry during an edit sketch operation, there's a ghost of the old geometry until we exit sketch mode
-- [ ] 
+- [ ] whenever code is updated, my user settings seem to reset. theme specifically. ensure this does not happen
