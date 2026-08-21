@@ -62,6 +62,14 @@ static func icon_for(f: Feature) -> String:
 		return "revolve"
 	if f is HoleFeature:
 		return "hole"
+	if f is CombineFeature:
+		return "combine"
+	if f is SplitBodyFeature:
+		return "split"
+	if f is ShellFeature:
+		return "shell"
+	if f is FaceOffsetFeature:
+		return "press_pull"
 	if f is SweepFeature:
 		return "sweep"
 	if f is LoftFeature:

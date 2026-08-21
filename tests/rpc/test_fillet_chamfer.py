@@ -77,8 +77,10 @@ def main():
     app.call("action.suppress", {"feature": r["feature"], "suppressed": False})
 
     for name in ["FilletEdgesBtn", "ChamferEdgesBtn"]:
-        check(app.call("query.control", {"name": name})["visible"],
-              f"{name} on the shelf")
+        c = app.call("query.control", {"name": name})
+        # Stacked tools (M42 ribbon): the stack's face is visible, the other
+        # variants live in its flyout (flyout_owner names the stack button).
+        check(c["visible"] or bool(c.get("flyout_owner")), f"{name} on the shelf")
 
     app.close()
     if FAILURES:

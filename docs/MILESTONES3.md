@@ -471,6 +471,17 @@ leftovers; release engineering (M49) last, alpha gate (M50).
   RPC: `action.edge_fillet`, `query.edges`. M35 `EdgeTreatFeature` stays
   loadable/editable; ribbon buttons route to the new flow.
 
+- **M42** (2026-08-20): `ShellFeature` (per-vertex multi-plane offset of
+  the kernel mesh — 1/2/3+ plane solves, curved faces by averaged normals,
+  removed faces pushed outward; fold-over detection by signed volume +
+  half-extent guard), `CombineFeature`, `SplitBodyFeature` (by plane or
+  planar face via `MeshSolid.split_by_plane`), `FaceOffsetFeature`
+  (press/pull = prism of the face's boundary loops, join or cut). All four
+  in the ordered build, all with docked dialogs + arm-first face/body
+  picks + chip editing. Split face and press-pull drag were not built
+  (numeric + dialog only). RPC: `action.shell / combine / split_body /
+  press_pull`.
+
 ## Deferred past alpha (beta backlog)
 
 - STEP import/export (B-rep kernel decision: OpenCascade-lite via

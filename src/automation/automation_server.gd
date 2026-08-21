@@ -463,6 +463,107 @@ func _edge_treat(a: Dictionary, p: StreamPeerTCP, id: Variant,
 	return {"feature": fid}
 
 
+## --- M42 shell / combine / split / press-pull -----------------------------------
+
+func _face_ref_from(a: Variant) -> TopoRef:
+	if not (a is Dictionary):
+		return null
+	var tf := a as Dictionary
+	var entry := app.world.body_entry(String(tf.get("body", "")))
+	var fp: Dictionary = TopoRef.face_planes(entry).get(int(tf.get("face", -1)), {})
+	if fp.is_empty():
+		return null
+	return TopoRef.make(String(tf["body"]), int(tf["face"]), fp["normal"], fp["point"])
+
+
+func _body_volume_after(body: String) -> float:
+	for b: Dictionary in await BodyBuilder.build(app.doc, app):
+		if String(b["id"]) == body:
+			return BodyBuilder.mesh_volume(b["mesh"])
+	return 0.0
+
+
+## args: {body, thickness, direction? (inside|outside), remove?: [{body, face}]}
+func _cmd_action_shell(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
+	var f := ShellFeature.new()
+	f.body = String(a.get("body", ""))
+	f.thickness = float(a.get("thickness", 2.0))
+	f.direction = String(a.get("direction", ShellFeature.DIR_INSIDE))
+	for r in (a.get("remove", []) as Array):
+		var ref := _face_ref_from(r)
+		if ref == null:
+			_reply_err(p, id, "bad_args", "remove: no such face")
+			return null
+		f.remove.append(ref)
+	if app.world.body_entry(f.body).is_empty():
+		_reply_err(p, id, "not_found", "no body %s" % f.body)
+		return null
+	f.id = app.doc.next_feature_id()
+	f.name = app.doc.auto_name("Shell")
+	app.stack.push_no_merge(CmdAddFeature.new(f))
+	var v := await _body_volume_after(f.body)
+	_reply(p, id, {"feature": f.id, "name": f.name, "body_volume": v, "error": f.rebuild_error})
+	return null
+
+
+## args: {target, tools: [ids], operation? (join|cut|intersect), keep_tools?}
+func _cmd_action_combine(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
+	var f := CombineFeature.new()
+	f.target = String(a.get("target", ""))
+	f.tools = _str_list(a.get("tools", []))
+	f.operation = String(a.get("operation", SolidFeature.OP_JOIN))
+	f.keep_tools = bool(a.get("keep_tools", false))
+	if f.target == "" or f.tools.is_empty():
+		_reply_err(p, id, "bad_args", "target and tools are required")
+		return null
+	f.id = app.doc.next_feature_id()
+	f.name = app.doc.auto_name("Combine")
+	app.stack.push_no_merge(CmdAddFeature.new(f))
+	var v := await _body_volume_after(f.target)
+	_reply(p, id, {"feature": f.id, "name": f.name, "body_volume": v, "error": f.rebuild_error})
+	return null
+
+
+## args: {body, plane?: name|id} or {body, face: {body, face}}
+func _cmd_action_split_body(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
+	var f := SplitBodyFeature.new()
+	f.body = String(a.get("body", ""))
+	if a.has("face"):
+		f.by = SplitBodyFeature.BY_FACE
+		f.face_ref = _face_ref_from(a["face"])
+		if f.face_ref == null:
+			_reply_err(p, id, "bad_args", "face: no such face")
+			return null
+	else:
+		f.by = SplitBodyFeature.BY_PLANE
+		f.plane = String(a.get("plane", "XY"))
+	f.id = app.doc.next_feature_id()
+	f.name = app.doc.auto_name("Split")
+	app.stack.push_no_merge(CmdAddFeature.new(f))
+	var v := await _body_volume_after(f.body)
+	var v2 := await _body_volume_after(f.id)
+	_reply(p, id, {"feature": f.id, "name": f.name, "kept_volume": v, "other_volume": v2,
+		"error": f.rebuild_error})
+	return null
+
+
+## args: {body, face: {body, face}, distance}
+func _cmd_action_press_pull(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
+	var f := FaceOffsetFeature.new()
+	f.ref = _face_ref_from(a.get("face"))
+	if f.ref == null:
+		_reply_err(p, id, "bad_args", "face: no such face")
+		return null
+	f.body = String(a.get("body", f.ref.body))
+	f.distance = float(a.get("distance", 5.0))
+	f.id = app.doc.next_feature_id()
+	f.name = app.doc.auto_name("Press Pull")
+	app.stack.push_no_merge(CmdAddFeature.new(f))
+	var v := await _body_volume_after(f.body)
+	_reply(p, id, {"feature": f.id, "name": f.name, "body_volume": v, "error": f.rebuild_error})
+	return null
+
+
 ## --- M41 fillet / chamfer on any edge -------------------------------------------
 
 ## args: {body, treat: fillet|chamfer, size, near: [[x,y,z], ...]} — each

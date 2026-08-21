@@ -1178,40 +1178,50 @@ func _build_ribbon(parent: Control) -> void:
 	holeb.name = "HoleBtn"
 	holeb.tooltip_text = ("Hole wizard: simple / counterbore / countersink, "
 		+ "standard sizes, optional modelled thread — pick a face, click positions")
-	var sweepb := _tool_button(g_create, "Sweep", _on_sweep_pressed, "sweep")
-	sweepb.name = "SweepBtn"
-	sweepb.tooltip_text = "Sweep a profile along a sketch path"
-	var loftb := _tool_button(g_create, "Loft", _on_loft_pressed, "loft")
-	loftb.name = "LoftBtn"
-	loftb.tooltip_text = "Loft between two or more profiles"
-	var mirrb := _tool_button(g_create, "Mirror Body", _on_mirror_body_pressed,
-		"mirror_body")
-	mirrb.name = "MirrorBodyBtn"
-	mirrb.tooltip_text = "Mirror a body, or one cut/join feature, across a plane"
-	var pattb := _tool_button(g_create, "Pattern",
-		func() -> void: open_pattern_dialog(""), "pattern_body")
-	pattb.name = "PatternBodyBtn"
-	pattb.tooltip_text = "Linear/circular pattern of a body, or of one cut/join feature"
+	# Related commands share a stack (right-click / hold for the flyout),
+	# Fusion-style, so the ribbon fits a 1280 px window without collapsing.
+	_tool_stack(g_create, [
+		{"id": "sweep", "name": "SweepBtn", "title": "Sweep", "icon": "sweep",
+			"tooltip": "Sweep a profile along a sketch path", "handler": _on_sweep_pressed},
+		{"id": "loft", "name": "LoftBtn", "title": "Loft", "icon": "loft",
+			"tooltip": "Loft between two or more profiles", "handler": _on_loft_pressed}])
+	_tool_stack(g_create, [
+		{"id": "mirror_body", "name": "MirrorBodyBtn", "title": "Mirror", "icon": "mirror_body",
+			"tooltip": "Mirror a body, or one cut/join feature, across a plane",
+			"handler": _on_mirror_body_pressed},
+		{"id": "pattern_body", "name": "PatternBodyBtn", "title": "Pattern", "icon": "pattern_body",
+			"tooltip": "Linear/circular pattern of a body, or of one cut/join feature",
+			"handler": func() -> void: open_pattern_dialog("")}])
 
 	_divider(model)
-	var g_modify := _tool_grid(_shelf_group(model, "Modify"), 2)
-	var filb := _tool_button(g_modify, "Fillet", func() -> void:
-		open_fillet_dialog("", EdgeFilletFeature.KIND_FILLET), "fillet_3d")
-	filb.name = "FilletEdgesBtn"
-	filb.tooltip_text = "Round edges of any body: click the edges (a click takes the whole smooth chain)"
-	var chab := _tool_button(g_modify, "Chamfer", func() -> void:
-		open_fillet_dialog("", EdgeFilletFeature.KIND_CHAMFER), "chamfer_3d")
-	chab.name = "ChamferEdgesBtn"
-	chab.tooltip_text = ("Chamfer edges of a plain extrude: select the body, "
-		+ "then click the edges to cut")
-	var moveb := _tool_button(g_modify, "Move Body",
-		func() -> void: open_move_dialog(""), "move_body")
-	moveb.name = "MoveBodyBtn"
-	moveb.tooltip_text = "Move/rotate the selected body (a timeline feature)"
-	var copyb := _tool_button(g_modify, "Copy Body",
-		func() -> void: open_copy_dialog(""), "copy_body")
-	copyb.name = "CopyBodyBtn"
-	copyb.tooltip_text = "Parametric copy of the selected body at an offset"
+	var g_modify := _tool_grid(_shelf_group(model, "Modify"), 3)
+	var ppb := _tool_button(g_modify, "Press Pull", func() -> void: open_press_pull_dialog(""), "press_pull")
+	ppb.name = "PressPullBtn"
+	ppb.tooltip_text = "Move a flat face in or out (adds or removes material)"
+	_tool_stack(g_modify, [
+		{"id": "fillet_3d", "name": "FilletEdgesBtn", "title": "Fillet", "icon": "fillet_3d",
+			"tooltip": "Round edges of any body: click the edges (a click takes the whole smooth chain)",
+			"handler": func() -> void: open_fillet_dialog("", EdgeFilletFeature.KIND_FILLET)},
+		{"id": "chamfer_3d", "name": "ChamferEdgesBtn", "title": "Chamfer", "icon": "chamfer_3d",
+			"tooltip": "Chamfer edges of any body: click the edges (a click takes the whole smooth chain)",
+			"handler": func() -> void: open_fillet_dialog("", EdgeFilletFeature.KIND_CHAMFER)}])
+	var shellb := _tool_button(g_modify, "Shell", func() -> void: open_shell_dialog(""), "shell")
+	shellb.name = "ShellBtn"
+	shellb.tooltip_text = "Hollow a body to a wall thickness; click the faces to open"
+	_tool_stack(g_modify, [
+		{"id": "combine", "name": "CombineBtn", "title": "Combine", "icon": "combine",
+			"tooltip": "Join / cut / intersect existing bodies",
+			"handler": func() -> void: open_combine_dialog("")},
+		{"id": "split", "name": "SplitBodyBtn", "title": "Split", "icon": "split",
+			"tooltip": "Split a body by a plane or a flat face",
+			"handler": func() -> void: open_split_dialog("")}])
+	_tool_stack(g_modify, [
+		{"id": "move_body", "name": "MoveBodyBtn", "title": "Move", "icon": "move_body",
+			"tooltip": "Move/rotate the selected body (a timeline feature)",
+			"handler": func() -> void: open_move_dialog("")},
+		{"id": "copy_body", "name": "CopyBodyBtn", "title": "Copy", "icon": "copy_body",
+			"tooltip": "Parametric copy of the selected body at an offset",
+			"handler": func() -> void: open_copy_dialog("")}])
 
 	_divider(model)
 	var g_construct := _shelf_group(model, "Construct")
@@ -1897,7 +1907,7 @@ func _tool_stack(parent: Control, variants: Array, group: ButtonGroup = null) ->
 		"current": head["id"]}
 	var b := _tool_button(parent, String(head["title"]), Callable(),
 		String(head["icon"]))
-	b.name = _pascal(String(head["id"])) + "ToolBtn"
+	b.name = String(head.get("name", _pascal(String(head["id"])) + "ToolBtn"))
 	b.tooltip_text = String(head.get("tooltip", head["title"])) \
 		+ "\nRight-click or hold for more"
 	if group != null:
@@ -1946,8 +1956,9 @@ func _tool_stack(parent: Control, variants: Array, group: ButtonGroup = null) ->
 	popup.add_child(col)
 	for v: Dictionary in variants:
 		var vb := Button.new()
-		vb.name = _pascal(String(v["id"])) + ("VariantBtn" if v["id"] == head["id"]
-			else "ToolBtn")
+		vb.name = String(v.get("name", "")) + "Variant" if v.has("name") and v["id"] == head["id"] \
+			else (String(v["name"]) if v.has("name") else _pascal(String(v["id"]))
+			+ ("VariantBtn" if v["id"] == head["id"] else "ToolBtn"))
 		vb.text = String(v["title"])
 		vb.icon = ThemeService.icon(String(v["icon"]))
 		vb.tooltip_text = String(v.get("tooltip", v["title"]))
@@ -3971,6 +3982,411 @@ func add_edge_fillet(body: String, treat: String, size: float, near_points: Arra
 	return f.id
 
 
+
+## --- M42 shell / combine / split / press-pull -----------------------------------
+
+var _shell_dialog: FeatureDialog = null
+var _shell_edit_fid := ""
+var _shell_body := ""
+var _shell_faces: Array = []       # [TopoRef]
+var picking_shell_faces := false
+var _combine_dialog: FeatureDialog = null
+var _combine_edit_fid := ""
+var _split_dialog: FeatureDialog = null
+var _split_edit_fid := ""
+var _split_face: TopoRef = null
+var picking_split_face := false
+var _pp_dialog: FeatureDialog = null
+var _pp_edit_fid := ""
+var _pp_face: TopoRef = null
+var _pp_body := ""
+var picking_pp_face := false
+
+
+## Shared "single face" pick row: an info label + Pick… toggle that arms
+## the flag the caller owns.
+func _face_pick_row(d: FeatureDialog, row_name: String, label: String, btn_name: String,
+		on_toggle: Callable) -> void:
+	var lab := d.add_info(row_name, label, "— pick a face —")
+	var pick := Button.new()
+	pick.name = btn_name
+	pick.text = "Pick…"
+	pick.toggle_mode = true
+	pick.focus_mode = Control.FOCUS_NONE
+	pick.toggled.connect(on_toggle)
+	lab.get_parent().add_child(pick)
+
+
+func open_shell_dialog(edit_fid: String) -> void:
+	if mode != Mode.MODEL:
+		return
+	var sf := doc.feature_by_id(edit_fid) as ShellFeature
+	_shell_edit_fid = edit_fid if sf != null else ""
+	if sf == null and world.body_ids().is_empty():
+		set_status_hint("Shell: no bodies yet")
+		return
+	if _shell_dialog == null:
+		_shell_dialog = FeatureDialog.create(self, "ShellDialog", "Shell")
+		_shell_dialog.set_ok_name("ShellOkBtn")
+		_shell_dialog.add_info("body", "Body", "— click a face —")
+		_face_pick_row(_shell_dialog, "faces", "Open faces", "ShellFacesBtn",
+			func(on: bool) -> void:
+				picking_shell_faces = on
+				if not on:
+					world.clear_face_hover()
+				_refresh_ui())
+		(_shell_dialog.field("faces") as Label).text = "none (closed hollow)"
+		var clear := Button.new()
+		clear.name = "ShellClearBtn"
+		clear.text = "Clear"
+		clear.focus_mode = Control.FOCUS_NONE
+		clear.pressed.connect(func() -> void:
+			_shell_faces = []
+			_shell_sync())
+		_shell_dialog.row("faces").add_child(clear)
+		_shell_dialog.add_field("thickness", "Thickness", "ShellThicknessEdit", "wall thickness")
+		_shell_dialog.add_option("direction", "Direction", "ShellDirPick", ["Inside", "Outside"])
+		_shell_dialog.confirmed.connect(_commit_shell)
+		_shell_dialog.cancelled.connect(func() -> void:
+			picking_shell_faces = false
+			world.clear_face_hover()
+			_refresh_ui())
+		add_child(_shell_dialog)
+	var d := _shell_dialog
+	var u := doc.display_unit
+	_shell_faces = []
+	_shell_body = ""
+	if sf != null:
+		d.title = "Edit %s" % sf.name
+		_shell_body = sf.body
+		_shell_faces = sf.remove.duplicate()
+		(d.field("thickness") as LineEdit).text = UnitConverter.format_exact(sf.thickness, u)
+		(d.field("direction") as OptionButton).select(1 if sf.direction == ShellFeature.DIR_OUTSIDE else 0)
+	else:
+		d.title = "Shell"
+		_shell_body = world.selected_body()
+		(d.field("thickness") as LineEdit).text = UnitConverter.format_exact(2.0, u)
+		(d.field("direction") as OptionButton).select(0)
+	_shell_sync()
+	d.open()
+	if sf == null:
+		(d.find_child("ShellFacesBtn", true, false) as Button).button_pressed = true
+
+
+func _shell_sync() -> void:
+	(_shell_dialog.field("body") as Label).text = body_display_name(_shell_body) \
+		if _shell_body != "" else "— click a face —"
+	(_shell_dialog.field("faces") as Label).text = "none (closed hollow)" \
+		if _shell_faces.is_empty() else "%d face(s) open" % _shell_faces.size()
+
+
+func _shell_face_picked(face: Dictionary) -> void:
+	var bid := String(face["body"])
+	if _shell_body != "" and bid != _shell_body:
+		if _shell_faces.is_empty():
+			_shell_body = bid
+		else:
+			set_status_hint("Shell: faces must belong to %s (Clear to switch)" % body_display_name(_shell_body))
+			return
+	_shell_body = bid
+	# Toggle.
+	for i in _shell_faces.size():
+		var r: TopoRef = _shell_faces[i]
+		if r.face == int(face["face"]) and r.body == bid:
+			_shell_faces.remove_at(i)
+			_shell_sync()
+			return
+	_shell_faces.append(TopoRef.make(bid, int(face["face"]), face["normal"], face["point"]))
+	_shell_sync()
+
+
+func _commit_shell() -> void:
+	var d := _shell_dialog
+	if _shell_body == "":
+		d.set_error("Pick the body (click one of its faces)")
+		return
+	var r := UnitConverter.parse(d.text_of("thickness"), doc.display_unit)
+	if not r["ok"] or float(r["mm"]) <= 0.0:
+		d.set_error("Enter a positive wall thickness")
+		return
+	var props := {"body": _shell_body, "thickness": float(r["mm"]),
+		"direction": ShellFeature.DIR_OUTSIDE if d.selected("direction") == 1 else ShellFeature.DIR_INSIDE,
+		"remove": _shell_faces.duplicate()}
+	d.close()
+	picking_shell_faces = false
+	world.clear_face_hover()
+	if _shell_edit_fid != "":
+		var batch := CmdMergeBatch.new("Edit Shell", [])
+		stack.push_no_merge(batch)
+		for k in props:
+			stack.push(CmdSetFeatureFlag.new(_shell_edit_fid, k, props[k]))
+		batch.seal()
+		_shell_edit_fid = ""
+	else:
+		var f := ShellFeature.new()
+		f.id = doc.next_feature_id()
+		f.name = doc.auto_name("Shell")
+		for k in props:
+			f.set(k, props[k])
+		stack.push_no_merge(CmdAddFeature.new(f))
+	_refresh_ui()
+
+
+func open_combine_dialog(edit_fid: String) -> void:
+	if mode != Mode.MODEL:
+		return
+	var cf := doc.feature_by_id(edit_fid) as CombineFeature
+	_combine_edit_fid = edit_fid if cf != null else ""
+	if cf == null and world.body_ids().size() < 2:
+		set_status_hint("Combine: needs at least two bodies")
+		return
+	if _combine_dialog == null:
+		_combine_dialog = FeatureDialog.create(self, "CombineDialog", "Combine")
+		_combine_dialog.set_ok_name("CombineOkBtn")
+		_combine_dialog.add_source("target", "Target", "CombineTargetBtn")
+		(_combine_dialog.find_child("CombineTargetBtnKind", true, false) as OptionButton).visible = false
+		_combine_dialog.add_targets("tools", "Tools", "CombineToolsBtn")
+		(_combine_dialog.find_child("CombineToolsBtnAuto", true, false) as Label).text = "— pick bodies —"
+		_combine_dialog.add_option("op", "Operation", "CombineOpPick", ["Join", "Cut", "Intersect"])
+		_combine_dialog.add_check("keep", "Keep tools", "CombineKeepCheck", "leave the tool bodies in place")
+		_combine_dialog.confirmed.connect(_commit_combine)
+		add_child(_combine_dialog)
+	var d := _combine_dialog
+	if cf != null:
+		d.title = "Edit %s" % cf.name
+		d.set_source("target", cf.target, "body")
+		d.set_targets("tools", cf.tools)
+		(d.field("op") as OptionButton).select(maxi([SolidFeature.OP_JOIN, SolidFeature.OP_CUT,
+			SolidFeature.OP_INTERSECT].find(cf.operation), 0))
+		(d.field("keep") as CheckBox).button_pressed = cf.keep_tools
+	else:
+		d.title = "Combine"
+		d.set_source("target", world.selected_body(), "body")
+		d.set_targets("tools", [])
+		(d.field("op") as OptionButton).select(1)
+		(d.field("keep") as CheckBox).button_pressed = false
+	d.open()
+	if cf == null:
+		# Arm-first: the target pick when none is selected, else the tools.
+		if world.selected_body() == "":
+			(d.find_child("CombineTargetBtn", true, false) as Button).button_pressed = true
+		else:
+			(d.find_child("CombineToolsBtn", true, false) as Button).button_pressed = true
+
+
+func _commit_combine() -> void:
+	var d := _combine_dialog
+	var target := d.source_id("target")
+	if target == "":
+		d.set_error("Pick the target body")
+		return
+	var tools := d.targets("tools")
+	tools.erase(target)
+	if tools.is_empty():
+		d.set_error("Pick at least one tool body (other than the target)")
+		return
+	var props := {"target": target, "tools": tools,
+		"operation": [SolidFeature.OP_JOIN, SolidFeature.OP_CUT, SolidFeature.OP_INTERSECT][maxi(d.selected("op"), 0)],
+		"keep_tools": d.checked("keep")}
+	d.close()
+	if _combine_edit_fid != "":
+		var batch := CmdMergeBatch.new("Edit Combine", [])
+		stack.push_no_merge(batch)
+		for k in props:
+			stack.push(CmdSetFeatureFlag.new(_combine_edit_fid, k, props[k]))
+		batch.seal()
+		_combine_edit_fid = ""
+	else:
+		var f := CombineFeature.new()
+		f.id = doc.next_feature_id()
+		f.name = doc.auto_name("Combine")
+		for k in props:
+			f.set(k, props[k])
+		stack.push_no_merge(CmdAddFeature.new(f))
+	_refresh_ui()
+
+
+func open_split_dialog(edit_fid: String) -> void:
+	if mode != Mode.MODEL:
+		return
+	var spf := doc.feature_by_id(edit_fid) as SplitBodyFeature
+	_split_edit_fid = edit_fid if spf != null else ""
+	if spf == null and world.body_ids().is_empty():
+		set_status_hint("Split: no bodies yet")
+		return
+	if _split_dialog == null:
+		_split_dialog = FeatureDialog.create(self, "SplitDialog", "Split Body")
+		_split_dialog.set_ok_name("SplitOkBtn")
+		_split_dialog.add_source("body", "Body", "SplitBodyPickBtn")
+		(_split_dialog.find_child("SplitBodyPickBtnKind", true, false) as OptionButton).visible = false
+		var by := _split_dialog.add_option("by", "Split by", "SplitByPick", ["Plane", "Face"])
+		by.item_selected.connect(func(_i: int) -> void: _split_sync_rows())
+		_split_dialog.add_option("plane", "Plane", "SplitPlanePick", [])
+		_face_pick_row(_split_dialog, "face", "Face", "SplitFaceBtn",
+			func(on: bool) -> void:
+				picking_split_face = on
+				if not on:
+					world.clear_face_hover()
+				_refresh_ui())
+		_split_dialog.confirmed.connect(_commit_split)
+		_split_dialog.cancelled.connect(func() -> void:
+			picking_split_face = false
+			world.clear_face_hover()
+			_refresh_ui())
+		add_child(_split_dialog)
+	var d := _split_dialog
+	var opt := d.field("plane") as OptionButton
+	opt.clear()
+	for c: Dictionary in _plane_choices():
+		opt.add_item(String(c["label"]))
+		opt.set_item_metadata(opt.item_count - 1, c["id"])
+	opt.select(0)
+	_split_face = null
+	if spf != null:
+		d.title = "Edit %s" % spf.name
+		d.set_source("body", spf.body, "body")
+		(d.field("by") as OptionButton).select(1 if spf.by == SplitBodyFeature.BY_FACE else 0)
+		for i in opt.item_count:
+			if String(opt.get_item_metadata(i)) == spf.plane:
+				opt.select(i)
+		_split_face = spf.face_ref
+	else:
+		d.title = "Split Body"
+		d.set_source("body", world.selected_body(), "body")
+		(d.field("by") as OptionButton).select(0)
+	_split_sync_rows()
+	d.open()
+	if spf == null and world.selected_body() == "":
+		(d.find_child("SplitBodyPickBtn", true, false) as Button).button_pressed = true
+
+
+func _split_sync_rows() -> void:
+	var d := _split_dialog
+	var by_face := d.selected("by") == 1
+	d.set_row_visible("plane", not by_face)
+	d.set_row_visible("face", by_face)
+	(d.field("face") as Label).text = "— pick a face —" if _split_face == null \
+		else "face of %s" % body_display_name(_split_face.body)
+	var fb := d.find_child("SplitFaceBtn", true, false) as Button
+	if by_face and _split_face == null and d.visible:
+		fb.button_pressed = true
+	elif not by_face and fb.button_pressed:
+		fb.button_pressed = false
+
+
+func _commit_split() -> void:
+	var d := _split_dialog
+	var body := d.source_id("body")
+	if body == "":
+		d.set_error("Pick the body to split")
+		return
+	var by_face := d.selected("by") == 1
+	if by_face and _split_face == null:
+		d.set_error("Pick the face to split by")
+		return
+	var opt := d.field("plane") as OptionButton
+	var props := {"body": body,
+		"by": SplitBodyFeature.BY_FACE if by_face else SplitBodyFeature.BY_PLANE,
+		"plane": String(opt.get_item_metadata(opt.selected)) if opt.selected >= 0 else "XY",
+		"face_ref": _split_face}
+	d.close()
+	picking_split_face = false
+	world.clear_face_hover()
+	if _split_edit_fid != "":
+		var batch := CmdMergeBatch.new("Edit Split", [])
+		stack.push_no_merge(batch)
+		for k in props:
+			stack.push(CmdSetFeatureFlag.new(_split_edit_fid, k, props[k]))
+		batch.seal()
+		_split_edit_fid = ""
+	else:
+		var f := SplitBodyFeature.new()
+		f.id = doc.next_feature_id()
+		f.name = doc.auto_name("Split")
+		for k in props:
+			f.set(k, props[k])
+		stack.push_no_merge(CmdAddFeature.new(f))
+	_refresh_ui()
+
+
+func open_press_pull_dialog(edit_fid: String) -> void:
+	if mode != Mode.MODEL:
+		return
+	var pf := doc.feature_by_id(edit_fid) as FaceOffsetFeature
+	_pp_edit_fid = edit_fid if pf != null else ""
+	if pf == null and world.body_ids().is_empty():
+		set_status_hint("Press Pull: no bodies yet")
+		return
+	if _pp_dialog == null:
+		_pp_dialog = FeatureDialog.create(self, "PressPullDialog", "Press Pull")
+		_pp_dialog.set_ok_name("PressPullOkBtn")
+		_face_pick_row(_pp_dialog, "face", "Face", "PressPullFaceBtn",
+			func(on: bool) -> void:
+				picking_pp_face = on
+				if not on:
+					world.clear_face_hover()
+				_refresh_ui())
+		_pp_dialog.add_field("distance", "Distance", "PressPullDistEdit",
+			"+ pulls out (adds), − pushes in (removes)")
+		_pp_dialog.confirmed.connect(_commit_press_pull)
+		_pp_dialog.cancelled.connect(func() -> void:
+			picking_pp_face = false
+			world.clear_face_hover()
+			_refresh_ui())
+		add_child(_pp_dialog)
+	var d := _pp_dialog
+	var u := doc.display_unit
+	_pp_face = null
+	_pp_body = ""
+	if pf != null:
+		d.title = "Edit %s" % pf.name
+		_pp_face = pf.ref
+		_pp_body = pf.body
+		(d.field("distance") as LineEdit).text = UnitConverter.format_exact(pf.distance, u)
+	else:
+		d.title = "Press Pull"
+		(d.field("distance") as LineEdit).text = UnitConverter.format_exact(5.0, u)
+	_pp_sync()
+	d.open()
+	if pf == null:
+		(d.find_child("PressPullFaceBtn", true, false) as Button).button_pressed = true
+
+
+func _pp_sync() -> void:
+	(_pp_dialog.field("face") as Label).text = "— pick a face —" if _pp_face == null \
+		else "face of %s" % body_display_name(_pp_body)
+
+
+func _commit_press_pull() -> void:
+	var d := _pp_dialog
+	if _pp_face == null:
+		d.set_error("Pick the flat face to move")
+		return
+	var r := UnitConverter.parse(d.text_of("distance"), doc.display_unit)
+	if not r["ok"] or absf(float(r["mm"])) < 1e-6:
+		d.set_error("Enter a non-zero distance (+ out, − in)")
+		return
+	var props := {"body": _pp_body, "ref": _pp_face, "distance": float(r["mm"])}
+	d.close()
+	picking_pp_face = false
+	world.clear_face_hover()
+	if _pp_edit_fid != "":
+		var batch := CmdMergeBatch.new("Edit Press Pull", [])
+		stack.push_no_merge(batch)
+		for k in props:
+			stack.push(CmdSetFeatureFlag.new(_pp_edit_fid, k, props[k]))
+		batch.seal()
+		_pp_edit_fid = ""
+	else:
+		var f := FaceOffsetFeature.new()
+		f.id = doc.next_feature_id()
+		f.name = doc.auto_name("Press Pull")
+		for k in props:
+			f.set(k, props[k])
+		stack.push_no_merge(CmdAddFeature.new(f))
+	_refresh_ui()
+
+
 ## --- construction planes (M22) -------------------------------------------------
 
 ## Create an offset construction plane (undoable). `base` is an origin-plane
@@ -4036,6 +4452,14 @@ func edit_feature(fid: String) -> void:
 		open_edge_treat_dialog(fid)
 	elif f is EdgeFilletFeature:
 		open_fillet_dialog(fid)
+	elif f is ShellFeature:
+		open_shell_dialog(fid)
+	elif f is CombineFeature:
+		open_combine_dialog(fid)
+	elif f is SplitBodyFeature:
+		open_split_dialog(fid)
+	elif f is FaceOffsetFeature:
+		open_press_pull_dialog(fid)
 	else:
 		set_status_hint("%s: nothing to edit here yet — delete and recreate" % f.name)
 
@@ -4045,7 +4469,9 @@ func can_edit_feature(fid: String) -> bool:
 	return f is SketchFeature or f is ExtrudeFeature or f is HoleFeature \
 		or (f is PlaneFeature and (f as PlaneFeature).plane_kind == PlaneFeature.KIND_OFFSET) \
 		or f is CanvasFeature or f is TransformFeature or f is CopyBodyFeature \
-		or f is PatternBodyFeature or f is EdgeTreatFeature or f is EdgeFilletFeature
+		or f is PatternBodyFeature or f is EdgeTreatFeature or f is EdgeFilletFeature \
+		or f is ShellFeature or f is CombineFeature or f is SplitBodyFeature \
+		or f is FaceOffsetFeature
 
 
 ## Open the offset editor for an existing plane (browser/timeline
@@ -6253,6 +6679,28 @@ func _on_viewport_input(event: InputEvent) -> void:
 				world.show_treat_edges(_treat_pick_edges, _treat_selected,
 					_axis_hover_width_mm())
 				_update_treat_pick_count()
+		elif mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT \
+				and (picking_shell_faces or picking_split_face or picking_pp_face):
+			var raysf := rig.pixel_ray(mb.position)
+			var facesf := world.pick_face(raysf[0], raysf[1])
+			if facesf.is_empty() or int(facesf.get("face", -1)) < 0:
+				set_status_hint("Click a flat body face")
+			elif picking_shell_faces:
+				_shell_face_picked(facesf)
+			elif picking_split_face:
+				_split_face = TopoRef.make(String(facesf["body"]), int(facesf["face"]),
+					facesf["normal"], facesf["point"])
+				(_split_dialog.find_child("SplitFaceBtn", true, false) as Button).button_pressed = false
+				_split_sync_rows()
+			else:
+				_pp_face = TopoRef.make(String(facesf["body"]), int(facesf["face"]),
+					facesf["normal"], facesf["point"])
+				_pp_body = String(facesf["body"])
+				(_pp_dialog.find_child("PressPullFaceBtn", true, false) as Button).button_pressed = false
+				_pp_sync()
+		elif mb.pressed and picking_shell_faces \
+				and mb.button_index == MOUSE_BUTTON_RIGHT:
+			(_shell_dialog.find_child("ShellFacesBtn", true, false) as Button).button_pressed = false
 		elif mb.pressed and picking_fillet_edges and mb.button_index == MOUSE_BUTTON_RIGHT:
 			(_fillet_dialog.find_child("FilletPickBtn", true, false) as Button).button_pressed = false
 		elif mb.pressed and picking_fillet_edges and mb.button_index == MOUSE_BUTTON_LEFT:
@@ -6363,6 +6811,13 @@ func _on_viewport_input(event: InputEvent) -> void:
 		elif picking_offset_base:
 			var rayb := rig.pixel_ray(mm.position)
 			world.set_plane_hover(world.pick_plane(rayb[0], rayb[1]))
+		elif picking_shell_faces or picking_split_face or picking_pp_face:
+			var raysh := rig.pixel_ray(mm.position)
+			var facesh := world.pick_face(raysh[0], raysh[1])
+			if facesh.is_empty():
+				world.clear_face_hover()
+			else:
+				world.set_face_hover(String(facesh["body"]), facesh["point"], facesh["normal"])
 		elif picking_fillet_edges:
 			var rayfh := rig.pixel_ray(mm.position)
 			var chk := _fillet_chain_under_ray(rayfh[0], rayfh[1])
@@ -6455,7 +6910,8 @@ func _on_viewport_input(event: InputEvent) -> void:
 ## no active stage owns any more.
 func _face_hover_stale() -> bool:
 	return not (picking_plane or picking_look_at or picking_mirror_plane \
-		or picking_hole_face or picking_to_face or picking_source == "feature")
+		or picking_hole_face or picking_to_face or picking_source == "feature" \
+		or picking_shell_faces or picking_split_face or picking_pp_face)
 
 
 func _unhandled_key_input(event: InputEvent) -> void:
@@ -6520,6 +6976,15 @@ func handle_app_key(k: InputEventKey) -> bool:
 			if sketch_orbit:
 				return_to_sketch_plane()
 				return true
+		if picking_shell_faces:
+			(_shell_dialog.find_child("ShellFacesBtn", true, false) as Button).button_pressed = false
+			return true
+		if picking_split_face:
+			(_split_dialog.find_child("SplitFaceBtn", true, false) as Button).button_pressed = false
+			return true
+		if picking_pp_face:
+			(_pp_dialog.find_child("PressPullFaceBtn", true, false) as Button).button_pressed = false
+			return true
 		if picking_fillet_edges:
 			(_fillet_dialog.find_child("FilletPickBtn", true, false) as Button).button_pressed = false
 			return true
@@ -6575,6 +7040,9 @@ func handle_app_key(k: InputEventKey) -> bool:
 		return false
 	if (k.keycode == KEY_ENTER or k.keycode == KEY_KP_ENTER) and picking_targets:
 		end_target_pick()
+		return true
+	if (k.keycode == KEY_ENTER or k.keycode == KEY_KP_ENTER) and picking_shell_faces:
+		(_shell_dialog.find_child("ShellFacesBtn", true, false) as Button).button_pressed = false
 		return true
 	if (k.keycode == KEY_ENTER or k.keycode == KEY_KP_ENTER) and picking_fillet_edges:
 		(_fillet_dialog.find_child("FilletPickBtn", true, false) as Button).button_pressed = false
@@ -7072,6 +7540,13 @@ func _refresh_ui() -> void:
 	if picking_look_at:
 		_status_hint.text = ("Look At: select a plane or a flat body face "
 			+ "(Esc to cancel)")
+	elif picking_shell_faces:
+		_status_hint.text = ("Shell: click the faces to open (%d) — Enter or right-click "
+			+ "when done; none = closed hollow") % _shell_faces.size()
+	elif picking_split_face:
+		_status_hint.text = "Split: click the flat face to split by — Esc to cancel"
+	elif picking_pp_face:
+		_status_hint.text = "Press Pull: click the flat face to move — Esc to cancel"
 	elif picking_fillet_edges:
 		_status_hint.text = ("%s: click edges to add/remove (%d picked; a click takes the "
 			+ "whole smooth chain) — Enter or right-click when done") % [

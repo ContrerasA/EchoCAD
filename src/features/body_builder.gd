@@ -144,6 +144,86 @@ static func _build_kernel(doc: CadDocument, stop_id: String) -> Array:
 			bf["solid"] = ff.apply(bf)
 			bf["dirty"] = true
 			(bf["feature_ids"] as Array).append(ff.id)
+		elif f is CombineFeature:
+			var cbf := f as CombineFeature
+			var tgt := _entry_by_id(bodies, cbf.target)
+			if tgt.is_empty():
+				cbf.rebuild_error = "its target body no longer exists"
+				continue
+			var any := false
+			for tid in cbf.tools:
+				var te := _entry_by_id(bodies, String(tid))
+				if te.is_empty() or te == tgt:
+					continue
+				var before := SolidKernel.volume(tgt["solid"])
+				var res := SolidKernel.boolean(tgt["solid"], te["solid"], cbf.operation)
+				if not SolidKernel.is_valid(res):
+					if cbf.operation == SolidFeature.OP_INTERSECT:
+						cbf.rebuild_error = "no overlap with %s" % te["name"]
+						continue
+					if cbf.operation == SolidFeature.OP_CUT:
+						bodies.erase(tgt)   # consumed
+						any = true
+						break
+					continue
+				if cbf.operation == SolidFeature.OP_CUT \
+						and absf(SolidKernel.volume(res) - before) < 1e-9:
+					cbf.rebuild_error = "%s does not touch the target" % te["name"]
+				tgt["solid"] = res
+				tgt["dirty"] = true
+				any = true
+				if not cbf.keep_tools:
+					bodies.erase(te)
+			if not any and cbf.rebuild_error == "":
+				cbf.rebuild_error = "no tool bodies — pick at least one"
+			elif bodies.has(tgt):
+				(tgt["feature_ids"] as Array).append(cbf.id)
+		elif f is SplitBodyFeature:
+			var spf := f as SplitBodyFeature
+			var sb := _entry_by_id(bodies, spf.body)
+			if sb.is_empty():
+				spf.rebuild_error = "its body no longer exists"
+				continue
+			var perr := spf.resolve_plane(doc, _entries(bodies))
+			if perr != "":
+				spf.rebuild_error = perr
+				continue
+			var halves: Array = (sb["solid"] as RefCounted).call("split_by_plane",
+				spf.plane_normal, spf.plane_offset)
+			var kept: RefCounted = halves[0]
+			var other: RefCounted = halves[1]
+			if not SolidKernel.is_valid(kept) or not SolidKernel.is_valid(other):
+				spf.rebuild_error = "the plane does not pass through the body"
+				continue
+			sb["solid"] = kept
+			sb["dirty"] = true
+			(sb["feature_ids"] as Array).append(spf.id)
+			var half := _new_entry(spf.id, spf.name, other, sb.get("color", Color(0, 0, 0, 0)))
+			bodies.insert(bodies.find(sb) + 1, half)
+		elif f is ShellFeature:
+			var shf := f as ShellFeature
+			var she := _entry_by_id(bodies, shf.body)
+			if she.is_empty():
+				shf.rebuild_error = "its body no longer exists"
+				continue
+			_entries([she])
+			she["solid"] = shf.apply(she)
+			she["dirty"] = true
+			(she["feature_ids"] as Array).append(shf.id)
+		elif f is FaceOffsetFeature:
+			var fof := f as FaceOffsetFeature
+			var fe := _entry_by_id(bodies, fof.body)
+			if fe.is_empty():
+				fof.rebuild_error = "its body no longer exists"
+				continue
+			_entries([fe])
+			var r3 := fof.apply(fe)
+			if not SolidKernel.is_valid(r3):
+				bodies.erase(fe)
+				continue
+			fe["solid"] = r3
+			fe["dirty"] = true
+			(fe["feature_ids"] as Array).append(fof.id)
 		elif f is TransformFeature:
 			var tf := f as TransformFeature
 			var b2 := _entry_by_id(bodies, tf.body)

@@ -3,7 +3,8 @@
 Updated: 2026-08-20. M0–M36 + the CHANGES round + **M38 (Manifold kernel)**
 + **M39 (face identity, explicit targets, feature dialogs)** + **M40
 (extrude extents/taper, chip editing, hole wizard)** + **M41 (fillet /
-chamfer on any edge)** on `main`. Volume 3 (`docs/MILESTONES3.md`, M38–M50 + polish rounds) is the
+chamfer on any edge)** + **M42 (shell, combine, split, press-pull)** on
+`main`. Volume 3 (`docs/MILESTONES3.md`, M38–M50 + polish rounds) is the
 alpha plan; manual QA for it lives in `docs/MANUAL_QA3.md`. Solids are now
 computed by Manifold (`MeshSolid` in `addons/geometry`): exact booleans
 (no more EPS-inflated cuts), synchronous rebuilds, face ids on every
@@ -19,8 +20,8 @@ every extrude/hole editable from its chip, Hole wizard (simple /
 counterbore / countersink, ISO + unified tables, through/blind, drill
 tip, cosmetic or modelled thread) with face pick + snapping placement.
 M41: fillet/chamfer any edge chain of any body (hole rims, concave
-edges, ball corners), edit from the chip. 67 headless tests + 32 RPC
-suites green.
+edges, ball corners), edit from the chip. M42: shell (inside/outside, open faces), combine, split by plane/face,
+press-pull. 68 headless tests + 33 RPC suites green.
 
 Earlier history: M0–M25 implemented and merged to `main`.
 Volume 2 (M26–M35, `docs/MILESTONES2.md`) is IMPLEMENTED on a chain of

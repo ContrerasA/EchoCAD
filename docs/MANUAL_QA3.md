@@ -284,3 +284,54 @@ treatments still load and edit from old files.
 ### Fix log
 
 (none yet)
+
+---
+
+## §M42 — Shell, combine, split, press-pull
+
+Status: PENDING
+
+Four new Modify commands, all on the shared dialog shell with arm-first
+picking and chip editing.
+
+- [ ] 1. **Shell — arm first.** Box 40×30×10. Press Shell with nothing
+   selected. **Expect:** dialog docks top-right (Body / Open faces + Pick…
+   armed / Thickness / Direction); hovering faces highlights them; click
+   the top face: Body reads "ExtrudeN", Open faces "1 face(s) open"; click
+   it again toggles it off; Clear empties. Enter (or right-click) ends the
+   pick; 2 mm; OK. **Expect:** an open-top box with 2 mm walls and floor,
+   crisp inner edges drawn, watertight (export STL and slice).
+- [ ] 2. No faces removed: a closed hollow box (look through a later cut).
+   Direction ▸ Outside: the original body becomes the cavity, walls grow
+   around it (outer size 44×34×14). Thickness 8 on the 10 mm box: amber /
+   red chip "thickness too large for this body…", body unchanged.
+- [ ] 3. Shell a body with a hole: the hole's wall gets shelled too (a
+   tube); a cylinder (revolve) shells to a cup when its top is removed.
+- [ ] 4. **Combine.** Two overlapping bodies; select one, press Combine.
+   **Expect:** Target prefilled with the selection, Tools Pick… armed; click
+   the other body (tints); Enter; Operation ▸ Cut; OK. **Expect:** the tool
+   is consumed and its overlap removed from the target; "Keep tools" leaves
+   the tool in place. Join merges into one body; Intersect keeps the
+   overlap only. A tool that misses the target: red chip "… does not touch
+   the target".
+- [ ] 5. **Split.** Select a body, press Split, Split by ▸ Plane, choose an
+   offset plane through it, OK. **Expect:** two bodies in the browser
+   (ExtrudeN keeps the plane's +normal side; "SplitN" is the other half),
+   both watertight, each selectable and movable. Split by ▸ Face: Pick… arms
+   itself; click a flat face of ANOTHER body lying through the first.
+- [ ] 6. **Press Pull.** Press Press Pull; the face pick is armed; click a
+   flat face; Distance +5; OK. **Expect:** the face moves out and the body
+   grows (joined, no seam line where the prism meets). −4: the face moves
+   in (material removed). A face with a hole in it (a ring) presses as a
+   ring. Push deeper than the body: the body vanishes (no crash).
+- [ ] 7. **Edit** any of the four from its chip: prefilled, re-pick works,
+   OK updates, undo is one step.
+- [ ] 8. **Upstream edit.** Change the plate height under a Shell and under a
+   Press Pull: both follow their faces (no amber chip).
+- [ ] 9. Ribbon at 1280 px wide: MODIFY collapses its trailing tools into
+   the » flyout; everything is reachable there.
+- [ ] 10. Both themes: dialog rows, hover faces, target tints.
+
+### Fix log
+
+(none yet)
