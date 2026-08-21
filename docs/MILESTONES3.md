@@ -456,6 +456,21 @@ leftovers; release engineering (M49) last, alpha gate (M50).
   `query.bodies {faces}`, extent args on `action.extrude`, `input.click
   {double}`.
 
+- **M41** (2026-08-20): `EdgeFilletFeature` — edges are kernel EDGE
+  CHAINS (`SolidKernel.edge_chains`: mesh edges between two faces, chained,
+  with per-vertex face normals and convexity), remembered by face pair +
+  ordinal + midpoint hint and healed by hint. Tools are SWEEPS of the
+  corner section along the chain (chamfer triangle / fillet arc), convex
+  chains cut, concave chains join; ball corners where three picked convex
+  straight chains meet (corner box − sphere − three cylinders). Works on
+  any body after any boolean, including hole rims. Dialog docks top-right
+  with arm-first edge picking (hover = whole chain); editing rebuilds the
+  candidates from `BodyBuilder.build_before(doc, fid)` (the body as it was
+  before the feature). Cuts are now fully exact (no cap overshoot —
+  kernel tolerance handles flush caps). `edge_candidate` colour role.
+  RPC: `action.edge_fillet`, `query.edges`. M35 `EdgeTreatFeature` stays
+  loadable/editable; ribbon buttons route to the new flow.
+
 ## Deferred past alpha (beta backlog)
 
 - STEP import/export (B-rep kernel decision: OpenCascade-lite via

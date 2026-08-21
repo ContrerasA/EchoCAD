@@ -463,6 +463,45 @@ func _edge_treat(a: Dictionary, p: StreamPeerTCP, id: Variant,
 	return {"feature": fid}
 
 
+## --- M41 fillet / chamfer on any edge -------------------------------------------
+
+## args: {body, treat: fillet|chamfer, size, near: [[x,y,z], ...]} — each
+## point picks the nearest edge chain (within 1 mm) of the body.
+func _cmd_action_edge_fillet(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
+	var pts: Array = []
+	for q in (a.get("near", []) as Array):
+		pts.append(_vec3(q))
+	var fid := app.add_edge_fillet(String(a.get("body", "")),
+		String(a.get("treat", EdgeFilletFeature.KIND_FILLET)), float(a.get("size", 2.0)), pts)
+	if fid == "":
+		_reply_err(p, id, "bad_args", "no edge chain near those points on that body")
+		return null
+	var body_volume := 0.0
+	for b: Dictionary in await BodyBuilder.build(app.doc, app):
+		if String(b["id"]) == String(a.get("body", "")):
+			body_volume = BodyBuilder.mesh_volume(b["mesh"])
+	var f := app.doc.feature_by_id(fid) as EdgeFilletFeature
+	_reply(p, id, {"feature": fid, "name": f.name, "body_volume": body_volume,
+		"edges": f.edges.size(), "error": f.rebuild_error})
+	return null
+
+
+## Edge chains of a body: [{key, fa, fb, closed, convex, length, mid: [x,y,z]}].
+func _cmd_query_edges(a: Dictionary, p: StreamPeerTCP, id: Variant) -> Variant:
+	var entry := app.world.body_entry(String(a.get("body", "")))
+	if entry.is_empty():
+		_reply_err(p, id, "not_found", "no body %s" % String(a.get("body", "")))
+		return null
+	var out: Array = []
+	for ch: Dictionary in SolidKernel.edge_chains(entry):
+		var m := EdgeFilletFeature.chain_midpoint(ch)
+		out.append({"key": ch["key"], "fa": int(ch["fa"]), "fb": int(ch["fb"]),
+			"closed": bool(ch["closed"]), "convex": bool(ch["convex"]),
+			"length": float(ch["length"]), "mid": [m.x, m.y, m.z],
+			"points": (ch["points"] as PackedVector3Array).size()})
+	return {"edges": out}
+
+
 ## --- M40 holes -----------------------------------------------------------------
 
 ## args: {body, face, uv: [[u,v],...], diameter?, depth?, extent?

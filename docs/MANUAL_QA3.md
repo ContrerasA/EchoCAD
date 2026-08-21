@@ -231,3 +231,56 @@ edited from its chip; the Hole wizard drills standard holes on a face.
 ### Fix log
 
 (none yet)
+
+---
+
+## §M41 — Fillet + chamfer on any edge
+
+Status: PENDING
+
+The Fillet / Chamfer buttons now work on ANY body edge, after any boolean
+— picked edge by edge (a click takes the whole smooth chain). The §M35
+treatments still load and edit from old files.
+
+- [ ] 1. **Arm first.** With nothing selected press Fillet. **Expect:** the
+   dialog docks top-right (Type / Size / Edges + Pick… armed) and every
+   visible body's edges draw as thin candidate lines (`edge_candidate`
+   colour); hovering an edge highlights its whole chain; the status bar
+   says "Fillet: click edges to add/remove (0 picked…)".
+- [ ] 2. Click a straight box edge — it turns into a thick selection tube,
+   Edges reads "1 picked on ExtrudeN". Click it again: off. Click an edge of
+   ANOTHER body: refused with "all edges must belong to … (Clear to switch
+   bodies)". Clear empties the pick.
+- [ ] 3. **Select first.** Select a body, press Chamfer: only that body's
+   edges are candidates.
+- [ ] 4. Fillet one top edge at 3 mm, OK. **Expect:** a smooth round with
+   hairlines along its two tangent lines, no seam lines across the round;
+   the body is watertight (STL export slices clean). Undo removes it.
+- [ ] 5. **Hole rim.** Drill a through hole (wizard), then Chamfer, click the
+   hole's top rim — the WHOLE circle highlights as one chain; 1 mm; OK.
+   **Expect:** a clean conical countersink-like chamfer all round.
+- [ ] 6. **Concave.** Cut a pocket; Fillet the pocket FLOOR edge (where the
+   floor meets a wall) at 2 mm. **Expect:** material is ADDED — a concave
+   round in the corner; the pocket rim (convex) rounds by removal.
+- [ ] 7. **All four top edges** of a box at 3 mm. **Expect:** rounds along
+   all four and rounded BALL corners where they meet (no little pyramids
+   or gaps), watertight.
+- [ ] 8. **Too big.** Fillet 25 mm on a 10 mm thick plate edge. **Expect:**
+   the chip turns amber with "… could not be rounded — size too large for
+   the geometry?" and the body stays sharp there (no crash, no explosion).
+- [ ] 9. **Edit.** Double-click the fillet's chip. **Expect:** the dialog
+   reopens with the feature's edges pre-selected ON THE BODY AS IT WAS
+   BEFORE THE FILLET (the original sharp edges, not the tangent lines);
+   switch Type to Chamfer, size 3, OK: the body updates; undo is one step.
+- [ ] 10. **Upstream edit.** Change the plate's extrude distance after
+   filleting its top edges. **Expect:** the fillet follows the new top;
+   no amber chip.
+- [ ] 11. Fillet after a pattern of cuts, after a mirror, on a revolved
+   body's rim: candidates exist and rounds apply (sweep/loft walls may
+   refuse — amber chip with a reason, not a crash).
+- [ ] 12. Both themes: candidate lines, hover chain, selection tubes read
+   against the body.
+
+### Fix log
+
+(none yet)

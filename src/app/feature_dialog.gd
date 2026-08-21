@@ -59,7 +59,7 @@ func _build() -> void:
 	_rows.add_theme_constant_override("separation", int(ThemeService.metric("dialog_gap", 6.0)))
 	outer.add_child(_rows)
 	_error = Label.new()
-	_error.name = "DialogError"
+	_error.name = name + "Error"
 	_error.theme_type_variation = "DialogErrorLabel"
 	_error.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_error.visible = false

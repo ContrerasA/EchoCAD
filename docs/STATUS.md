@@ -2,7 +2,8 @@
 
 Updated: 2026-08-20. M0–M36 + the CHANGES round + **M38 (Manifold kernel)**
 + **M39 (face identity, explicit targets, feature dialogs)** + **M40
-(extrude extents/taper, chip editing, hole wizard)** on `main`. Volume 3 (`docs/MILESTONES3.md`, M38–M50 + polish rounds) is the
+(extrude extents/taper, chip editing, hole wizard)** + **M41 (fillet /
+chamfer on any edge)** on `main`. Volume 3 (`docs/MILESTONES3.md`, M38–M50 + polish rounds) is the
 alpha plan; manual QA for it lives in `docs/MANUAL_QA3.md`. Solids are now
 computed by Manifold (`MeshSolid` in `addons/geometry`): exact booleans
 (no more EPS-inflated cuts), synchronous rebuilds, face ids on every
@@ -17,7 +18,9 @@ extents (symmetric, two-sided, to object, to next, through all) + taper,
 every extrude/hole editable from its chip, Hole wizard (simple /
 counterbore / countersink, ISO + unified tables, through/blind, drill
 tip, cosmetic or modelled thread) with face pick + snapping placement.
-66 headless tests + 31 RPC suites green.
+M41: fillet/chamfer any edge chain of any body (hole rims, concave
+edges, ball corners), edit from the chip. 67 headless tests + 32 RPC
+suites green.
 
 Earlier history: M0–M25 implemented and merged to `main`.
 Volume 2 (M26–M35, `docs/MILESTONES2.md`) is IMPLEMENTED on a chain of
@@ -88,8 +91,11 @@ binaries still pending in the sibling repos.
   text, dimensions, splines, and blocks are skipped with a count.
 - (closed by M39) face planes are parametric TopoRef links; pre-M39
   snapshot planes adopt a matching face on the first rebuild.
-- Revolve booleans share extrude's AABB target picking; a revolve's swept
-  AABB is generous, so join can merge bodies that only nearly touch.
+- Revolve booleans share extrude's AABB target picking when Targets is
+  Auto; pick explicit targets (M39) when the swept AABB is too generous.
+- Fillets on free-form faces (sweep/loft walls) are best-effort: the
+  sweep follows the mesh normals; very tight or self-intersecting cases
+  flag the chip amber instead of applying.
 - macOS/web builds need addon binaries built in the sibling repos first.
 
 ## Flakes to watch

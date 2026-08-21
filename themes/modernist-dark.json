@@ -87,6 +87,7 @@
     "view_cube":     "#ececea",
     "view_cube_text": "#2a2827",
     "view_cube_nav":  "#c4c0bd",
+    "edge_candidate": "#8cbfff",
     "hover":         "#ffe08c*0.35",
 
     "ink_free":            "@paper-5",

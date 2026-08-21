@@ -26,7 +26,7 @@ const THREAD_MODELED := "modeled"
 
 const LATHE_SEGS := 48
 const THREAD_SEGS_PER_TURN := 36
-const OVERSHOOT := 0.5   # mm the tool starts above the face
+const OVERSHOOT := 0.5   # mm the tool starts above the face (outside the body)
 
 var ref: TopoRef = null
 var plane_xf := Transform3D.IDENTITY

@@ -34,8 +34,26 @@ static func build(doc: CadDocument, host: Node) -> Array:
 		(f as Feature).rebuild_error = ""
 		(f as Feature).rebuild_level = "error"
 	if SolidKernel.available():
-		return _build_kernel(doc)
+		return _build_kernel(doc, "")
 	return await _build_csg(doc, host)
+
+
+## M41: the bodies as they stand just BEFORE feature `stop_id` — what a
+## feature that edits existing geometry (fillet, hole, …) must offer as
+## its pick candidates when re-opened for editing. Does not touch the
+## features' rebuild errors. Kernel only ([] on the legacy path).
+static func build_before(doc: CadDocument, stop_id: String) -> Array:
+	if not SolidKernel.available():
+		return []
+	var saved := {}
+	for f in doc.features:
+		saved[(f as Feature).id] = [(f as Feature).rebuild_error, (f as Feature).rebuild_level]
+	var out := _build_kernel(doc, stop_id)
+	for f in doc.features:
+		var pair: Array = saved[(f as Feature).id]
+		(f as Feature).rebuild_error = pair[0]
+		(f as Feature).rebuild_level = pair[1]
+	return out
 
 
 ## M39: ONE ordered pass over the timeline. Solid features fold into bodies
@@ -45,11 +63,13 @@ static func build(doc: CadDocument, host: Node) -> Array:
 ## patterns happen at their own position, so a later cut targets a moved
 ## body where it now is; a pattern or mirror of a CUT/JOIN feature replays
 ## that feature's tool at every instance.
-static func _build_kernel(doc: CadDocument) -> Array:
+static func _build_kernel(doc: CadDocument, stop_id: String) -> Array:
 	var bodies: Array = []        # [{id, name, feature_ids, solid, color}]
 	var part_solids := {}         # feature id -> its own kernel solid
 	var treated := {}
 	for f in doc.live_features():
+		if stop_id != "" and (f as Feature).id == stop_id:
+			break
 		if f is PlaneFeature:
 			var pf := f as PlaneFeature
 			if pf.plane_kind == PlaneFeature.KIND_FACE:
@@ -111,6 +131,19 @@ static func _build_kernel(doc: CadDocument) -> Array:
 			for g in ets:
 				(bt["feature_ids"] as Array).append((g as Feature).id)
 			treated[et.body] = true
+		elif f is EdgeFilletFeature:
+			# M41: rounds/chamfers any edge chain of its body, in order.
+			var ff := f as EdgeFilletFeature
+			var bf := _entry_by_id(bodies, ff.body)
+			if bf.is_empty():
+				ff.rebuild_error = "its body no longer exists"
+				continue
+			if ff.edges.is_empty():
+				ff.rebuild_error = "no edges picked"
+				continue
+			bf["solid"] = ff.apply(bf)
+			bf["dirty"] = true
+			(bf["feature_ids"] as Array).append(ff.id)
 		elif f is TransformFeature:
 			var tf := f as TransformFeature
 			var b2 := _entry_by_id(bodies, tf.body)

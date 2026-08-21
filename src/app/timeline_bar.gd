@@ -69,6 +69,9 @@ static func icon_for(f: Feature) -> String:
 	if f is EdgeTreatFeature:
 		return "fillet_3d" if (f as EdgeTreatFeature).treat \
 			== EdgeTreatFeature.KIND_FILLET else "chamfer_3d"
+	if f is EdgeFilletFeature:
+		return "fillet_3d" if (f as EdgeFilletFeature).treat \
+			== EdgeFilletFeature.KIND_FILLET else "chamfer_3d"
 	if f is PlaneFeature:
 		return "offset_plane"
 	if f is CanvasFeature:

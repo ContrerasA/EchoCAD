@@ -151,6 +151,8 @@ static func feature_from_dict(d: Dictionary) -> Feature:
 			return RevolveFeature.from_dict(d)
 		"hole":
 			return HoleFeature.from_dict(d)
+		"edge_fillet":
+			return EdgeFilletFeature.from_dict(d)
 		"canvas":
 			return CanvasFeature.from_dict(d)
 		"transform":

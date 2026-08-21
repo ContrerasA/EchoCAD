@@ -79,6 +79,10 @@ fixture sketch quickly).
   `extent`, `distance2`, `symmetric_whole`, `taper_deg`, `to_face {body,
   face}`; `action.select_option {name, index}` drives OptionButtons;
   `query.project {p:[x,y,z]}` gives the window pixel of a world point.
+- `action.edge_fillet {body, treat, size, near:[[x,y,z]…]}` — fillet /
+  chamfer the edge chains nearest each point (M41); `query.edges {body}`
+  lists a body's edge chains `{key, fa, fb, closed, convex, length, mid,
+  points}`.
 - `query.kernel` — `{kernel, manifold, errors}`: kernel name, whether the
   Manifold binary loaded, and `{feature_id: reason}` for every feature
   whose last rebuild failed (M38). `query.bodies` rows additionally carry

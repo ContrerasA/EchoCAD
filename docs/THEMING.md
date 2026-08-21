@@ -90,7 +90,9 @@ Rules:
 `plane_hover`, `body`, `body_selected`, `body_edge`, `hover`, `view_cube`
 (cube faces, a light grey), `view_cube_text` (face labels + edges),
 `view_cube_nav` (the house glyph beside the cube — pick one that reads
-against `bg3d`)
+against `bg3d`), `edge_candidate` (pickable edge lines while a fillet /
+chamfer pick is armed; picked edges use `body_selected`, the hovered chain
+`hover`)
 
 **Sketch ink** — `ink_free` (under-constrained), `ink_constrained`,
 `ink_construction`, `ink_projected`, `ink_reference`, `region_fill`,

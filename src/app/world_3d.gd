@@ -1482,9 +1482,14 @@ func set_curve_hover(sf: SketchFeature, key: String,
 
 ## --- edge-treat picking (M35) --------------------------------------------
 
-const COLOR_TREAT_EDGE := Color(0.55, 0.75, 1.0)
-const COLOR_TREAT_SELECTED := Color(1.0, 0.72, 0.25)
-const COLOR_TREAT_HOVER := Color(1.0, 0.88, 0.55)
+static func COLOR_TREAT_EDGE() -> Color:
+	return ThemeService.col("edge_candidate", Color(0.55, 0.75, 1.0))
+static func COLOR_TREAT_SELECTED() -> Color:
+	return ThemeService.col("body_selected")
+static func COLOR_TREAT_HOVER() -> Color:
+	var c := ThemeService.col("hover")
+	c.a = 1.0
+	return c
 
 
 ## Show the selectable edges of the body being filleted/chamfered:
@@ -1505,7 +1510,7 @@ func show_treat_edges(edges: Array, selected: Dictionary,
 	_treat_edges_mi = MeshInstance3D.new()
 	_treat_edges_mi.name = "TreatEdgeCandidates"
 	_treat_edges_mi.mesh = im
-	var mat := _line_material(COLOR_TREAT_EDGE)
+	var mat := _line_material(COLOR_TREAT_EDGE())
 	# Like the axis pick: the candidates must read over the body itself.
 	mat.no_depth_test = true
 	mat.render_priority = 9
@@ -1517,7 +1522,7 @@ func show_treat_edges(edges: Array, selected: Dictionary,
 	for e: Dictionary in edges:
 		if selected.has(String(e["key"])):
 			_treat_sel_root.add_child(_edge_tube(e["a"] as Vector3,
-				e["b"] as Vector3, width_mm, COLOR_TREAT_SELECTED))
+				e["b"] as Vector3, width_mm, COLOR_TREAT_SELECTED()))
 
 
 ## Thick highlight over the edges the click would toggle — the hovered
@@ -1542,7 +1547,7 @@ func set_treat_edge_hover(key: String, edges: Array, width_mm: float) -> void:
 	for e: Dictionary in edges:
 		if String(e.get("chain", e["key"])) == chain:
 			_treat_hover_root.add_child(_edge_tube(e["a"] as Vector3,
-				e["b"] as Vector3, width_mm, COLOR_TREAT_HOVER))
+				e["b"] as Vector3, width_mm, COLOR_TREAT_HOVER()))
 	_treat_hover_key = k
 
 

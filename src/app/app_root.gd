@@ -1196,12 +1196,11 @@ func _build_ribbon(parent: Control) -> void:
 	_divider(model)
 	var g_modify := _tool_grid(_shelf_group(model, "Modify"), 2)
 	var filb := _tool_button(g_modify, "Fillet", func() -> void:
-		open_edge_treat_dialog("", EdgeTreatFeature.KIND_FILLET), "fillet_3d")
+		open_fillet_dialog("", EdgeFilletFeature.KIND_FILLET), "fillet_3d")
 	filb.name = "FilletEdgesBtn"
-	filb.tooltip_text = ("Round edges of a plain extrude: select the body, "
-		+ "then click the edges to round")
+	filb.tooltip_text = "Round edges of any body: click the edges (a click takes the whole smooth chain)"
 	var chab := _tool_button(g_modify, "Chamfer", func() -> void:
-		open_edge_treat_dialog("", EdgeTreatFeature.KIND_CHAMFER), "chamfer_3d")
+		open_fillet_dialog("", EdgeFilletFeature.KIND_CHAMFER), "chamfer_3d")
 	chab.name = "ChamferEdgesBtn"
 	chab.tooltip_text = ("Chamfer edges of a plain extrude: select the body, "
 		+ "then click the edges to cut")
@@ -3731,6 +3730,247 @@ func add_holes(body: String, face_id: int, uvs: Array, props: Dictionary) -> Str
 	return h.id
 
 
+
+## --- M41 fillet / chamfer on any edge -------------------------------------------
+
+var _fillet_dialog: FeatureDialog = null
+var _fillet_edit_fid := ""
+var _fillet_body := ""
+var _fillet_chains := {}          # chain key -> {chain, body}
+var _fillet_segments: Array = []  # [{key, chain, a, b}] for display + picking
+var _fillet_selected := {}        # chain key -> true
+var picking_fillet_edges := false
+
+
+func open_fillet_dialog(edit_fid: String, p_kind := EdgeFilletFeature.KIND_FILLET) -> void:
+	if mode != Mode.MODEL:
+		return
+	var ff := doc.feature_by_id(edit_fid) as EdgeFilletFeature
+	_fillet_edit_fid = edit_fid if ff != null else ""
+	if ff == null and world.body_ids().is_empty():
+		set_status_hint("Fillet/Chamfer: no bodies yet")
+		return
+	if _fillet_dialog == null:
+		_fillet_dialog = FeatureDialog.create(self, "FilletDialog", "Fillet")
+		_fillet_dialog.set_ok_name("FilletOkBtn")
+		var kind := _fillet_dialog.add_option("kind", "Type", "FilletKindPick", ["Fillet", "Chamfer"])
+		kind.item_selected.connect(func(i: int) -> void:
+			_fillet_dialog.title = ("Edit %s" % ff.name) if _fillet_edit_fid != "" \
+				else ("Fillet" if i == 0 else "Chamfer"))
+		_fillet_dialog.add_field("size", "Size", "FilletSizeEdit", "radius / chamfer distance")
+		var erow := _fillet_dialog.add_info("edges", "Edges", "none picked")
+		var pick := Button.new()
+		pick.name = "FilletPickBtn"
+		pick.text = "Pick…"
+		pick.toggle_mode = true
+		pick.focus_mode = Control.FOCUS_NONE
+		pick.tooltip_text = "Click edges in the viewport (a click takes the whole smooth chain); Enter or right-click when done"
+		pick.toggled.connect(func(on: bool) -> void:
+			picking_fillet_edges = on
+			if on:
+				world.show_treat_edges(_fillet_segments, _fillet_selected, _axis_hover_width_mm())
+			else:
+				world.clear_treat_edge_hover()
+			_refresh_ui())
+		erow.get_parent().add_child(pick)
+		var clear := Button.new()
+		clear.name = "FilletClearBtn"
+		clear.text = "Clear"
+		clear.focus_mode = Control.FOCUS_NONE
+		clear.pressed.connect(func() -> void:
+			_fillet_selected = {}
+			_fillet_body = ""
+			_fillet_sync_edges())
+		erow.get_parent().add_child(clear)
+		_fillet_dialog.confirmed.connect(_commit_fillet)
+		_fillet_dialog.cancelled.connect(func() -> void:
+			picking_fillet_edges = false
+			world.hide_treat_edges()
+			_refresh_ui())
+		add_child(_fillet_dialog)
+	var u := doc.display_unit
+	var d := _fillet_dialog
+	_fillet_selected = {}
+	_fillet_body = ""
+	if ff != null:
+		d.title = "Edit %s" % ff.name
+		(d.field("kind") as OptionButton).select(1 if ff.treat == EdgeFilletFeature.KIND_CHAMFER else 0)
+		(d.field("size") as LineEdit).text = UnitConverter.format_exact(ff.size_mm, u)
+		_fillet_body = ff.body
+		# Candidates come from the body as it was BEFORE this feature (the
+		# picked edges no longer exist on the filleted body).
+		_fillet_collect_candidates([ff.body], BodyBuilder.build_before(doc, ff.id))
+		for ch: Dictionary in ff.resolve_chains(_fillet_chain_list(ff.body)):
+			_fillet_selected["%s@%s" % [ff.body, ch["key"]]] = true
+	else:
+		d.title = "Fillet" if p_kind == EdgeFilletFeature.KIND_FILLET else "Chamfer"
+		(d.field("kind") as OptionButton).select(1 if p_kind == EdgeFilletFeature.KIND_CHAMFER else 0)
+		(d.field("size") as LineEdit).text = UnitConverter.format_exact(2.0, u)
+		# Select-first: a selected body limits the candidates to it; else
+		# every visible body's edges are on offer and the first click picks
+		# the body.
+		var sel := world.selected_body()
+		_fillet_collect_candidates([sel] if sel != "" else world.body_ids())
+		if sel != "":
+			_fillet_body = sel
+	_fillet_sync_edges()
+	d.open()
+	(d.find_child("FilletPickBtn", true, false) as Button).button_pressed = true
+
+
+func _fillet_chain_list(body: String) -> Array:
+	var out: Array = []
+	for k in _fillet_chains:
+		var rec: Dictionary = _fillet_chains[k]
+		if String(rec["body"]) == body:
+			out.append(rec["chain"])
+	return out
+
+
+## Edge chains of the given bodies become the pick candidates. `entries`
+## overrides the world's current bodies (edit mode: the pre-feature state).
+func _fillet_collect_candidates(body_ids: Array, entries: Array = []) -> void:
+	_fillet_chains = {}
+	_fillet_segments = []
+	for bid in body_ids:
+		var entry := world.body_entry(String(bid))
+		if not entries.is_empty():
+			entry = {}
+			for e: Dictionary in entries:
+				if String(e["id"]) == String(bid):
+					entry = e
+		if entry.is_empty() or not world.body_shown(String(bid)):
+			continue
+		for ch: Dictionary in SolidKernel.edge_chains(entry):
+			var key := "%s@%s" % [bid, ch["key"]]
+			_fillet_chains[key] = {"chain": ch, "body": String(bid)}
+			var pts: PackedVector3Array = ch["points"]
+			var n := pts.size()
+			var count := n if bool(ch["closed"]) else n - 1
+			for i in count:
+				_fillet_segments.append({"key": "%s#%d" % [key, i], "chain": key,
+					"a": pts[i], "b": pts[(i + 1) % n]})
+
+
+func _fillet_sync_edges() -> void:
+	var n := _fillet_selected.size()
+	var lab := _fillet_dialog.field("edges") as Label
+	lab.text = "none picked" if n == 0 else "%d picked on %s" % [n, body_display_name(_fillet_body)]
+	world.show_treat_edges(_fillet_segments, _fillet_selected, _axis_hover_width_mm())
+
+
+## Nearest candidate segment to the ray -> its CHAIN key ("" on a miss).
+func _fillet_chain_under_ray(origin: Vector3, dir: Vector3) -> String:
+	var best := ""
+	var best_d := _axis_hover_width_mm() * 2.0
+	var far := origin + dir * 1.0e6
+	for e: Dictionary in _fillet_segments:
+		var pts := Geometry3D.get_closest_points_between_segments(
+			origin, far, e["a"] as Vector3, e["b"] as Vector3)
+		var dd := pts[0].distance_to(pts[1])
+		if dd < best_d:
+			best_d = dd
+			best = String(e["chain"])
+	return best
+
+
+func _fillet_toggle_chain(key: String) -> void:
+	var rec: Dictionary = _fillet_chains.get(key, {})
+	if rec.is_empty():
+		return
+	var body := String(rec["body"])
+	if _fillet_body != "" and body != _fillet_body and not _fillet_selected.is_empty():
+		set_status_hint("Fillet: all edges must belong to %s (Clear to switch bodies)"
+			% body_display_name(_fillet_body))
+		return
+	_fillet_body = body
+	if _fillet_selected.has(key):
+		_fillet_selected.erase(key)
+	else:
+		_fillet_selected[key] = true
+	if _fillet_selected.is_empty():
+		_fillet_body = ""
+	_fillet_sync_edges()
+
+
+func _commit_fillet() -> void:
+	var d := _fillet_dialog
+	var r := UnitConverter.parse(d.text_of("size"), doc.display_unit)
+	if not r["ok"] or float(r["mm"]) <= 0.0:
+		d.set_error("Enter a positive size")
+		return
+	if _fillet_selected.is_empty():
+		d.set_error("Pick at least one edge (Pick…, then click edges)")
+		return
+	var refs: Array = []
+	for key in _fillet_selected:
+		var ch: Dictionary = (_fillet_chains[key] as Dictionary)["chain"]
+		var parts: PackedStringArray = String(ch["key"]).split("|")
+		refs.append({"fa": int(ch["fa"]), "fb": int(ch["fb"]), "k": int(parts[2]),
+			"hint": EdgeFilletFeature.chain_midpoint(ch)})
+	var treat := EdgeFilletFeature.KIND_CHAMFER if d.selected("kind") == 1 else EdgeFilletFeature.KIND_FILLET
+	var props := {"body": _fillet_body, "treat": treat, "size_mm": float(r["mm"]), "edges": refs}
+	d.close()
+	picking_fillet_edges = false
+	world.hide_treat_edges()
+	if _fillet_edit_fid != "":
+		var batch := CmdMergeBatch.new("Edit Fillet", [])
+		stack.push_no_merge(batch)
+		for k in props:
+			stack.push(CmdSetFeatureFlag.new(_fillet_edit_fid, k, props[k]))
+		batch.seal()
+		_fillet_edit_fid = ""
+	else:
+		var f := EdgeFilletFeature.new()
+		f.id = doc.next_feature_id()
+		f.name = doc.auto_name("Fillet" if treat == EdgeFilletFeature.KIND_FILLET else "Chamfer")
+		for k in props:
+			f.set(k, props[k])
+		stack.push_no_merge(CmdAddFeature.new(f))
+	_refresh_ui()
+
+
+## RPC / scripting: fillet or chamfer chains picked by a point near each
+## edge (world mm). Returns the feature id, "" when nothing matched.
+func add_edge_fillet(body: String, treat: String, size: float, near_points: Array) -> String:
+	var entry := world.body_entry(body)
+	if entry.is_empty():
+		return ""
+	var chains := SolidKernel.edge_chains(entry)
+	var refs: Array = []
+	for p: Vector3 in near_points:
+		var best := {}
+		var best_d := INF
+		for ch: Dictionary in chains:
+			var pts: PackedVector3Array = ch["points"]
+			var n := pts.size()
+			var count := n if bool(ch["closed"]) else n - 1
+			for i in count:
+				var q := Geometry3D.get_closest_point_to_segment(p, pts[i], pts[(i + 1) % n])
+				var dd := q.distance_to(p)
+				if dd < best_d:
+					best_d = dd
+					best = ch
+		if best.is_empty() or best_d > 1.0:
+			continue
+		var parts: PackedStringArray = String(best["key"]).split("|")
+		var ref := {"fa": int(best["fa"]), "fb": int(best["fb"]), "k": int(parts[2]),
+			"hint": EdgeFilletFeature.chain_midpoint(best)}
+		if not refs.has(ref):
+			refs.append(ref)
+	if refs.is_empty():
+		return ""
+	var f := EdgeFilletFeature.new()
+	f.id = doc.next_feature_id()
+	f.name = doc.auto_name("Fillet" if treat == EdgeFilletFeature.KIND_FILLET else "Chamfer")
+	f.body = body
+	f.treat = treat
+	f.size_mm = size
+	f.edges = refs
+	stack.push_no_merge(CmdAddFeature.new(f))
+	return f.id
+
+
 ## --- construction planes (M22) -------------------------------------------------
 
 ## Create an offset construction plane (undoable). `base` is an origin-plane
@@ -3794,6 +4034,8 @@ func edit_feature(fid: String) -> void:
 		open_pattern_dialog(fid)
 	elif f is EdgeTreatFeature:
 		open_edge_treat_dialog(fid)
+	elif f is EdgeFilletFeature:
+		open_fillet_dialog(fid)
 	else:
 		set_status_hint("%s: nothing to edit here yet — delete and recreate" % f.name)
 
@@ -3803,7 +4045,7 @@ func can_edit_feature(fid: String) -> bool:
 	return f is SketchFeature or f is ExtrudeFeature or f is HoleFeature \
 		or (f is PlaneFeature and (f as PlaneFeature).plane_kind == PlaneFeature.KIND_OFFSET) \
 		or f is CanvasFeature or f is TransformFeature or f is CopyBodyFeature \
-		or f is PatternBodyFeature or f is EdgeTreatFeature
+		or f is PatternBodyFeature or f is EdgeTreatFeature or f is EdgeFilletFeature
 
 
 ## Open the offset editor for an existing plane (browser/timeline
@@ -6011,6 +6253,15 @@ func _on_viewport_input(event: InputEvent) -> void:
 				world.show_treat_edges(_treat_pick_edges, _treat_selected,
 					_axis_hover_width_mm())
 				_update_treat_pick_count()
+		elif mb.pressed and picking_fillet_edges and mb.button_index == MOUSE_BUTTON_RIGHT:
+			(_fillet_dialog.find_child("FilletPickBtn", true, false) as Button).button_pressed = false
+		elif mb.pressed and picking_fillet_edges and mb.button_index == MOUSE_BUTTON_LEFT:
+			var rayfe := rig.pixel_ray(mb.position)
+			var ckey := _fillet_chain_under_ray(rayfe[0], rayfe[1])
+			if ckey == "":
+				set_status_hint("Fillet: click an edge (Enter or right-click when done)")
+			else:
+				_fillet_toggle_chain(ckey)
 		elif mb.pressed and picking_hole_face and mb.button_index == MOUSE_BUTTON_LEFT:
 			var rayh := rig.pixel_ray(mb.position)
 			var faceh := world.pick_face(rayh[0], rayh[1])
@@ -6112,6 +6363,10 @@ func _on_viewport_input(event: InputEvent) -> void:
 		elif picking_offset_base:
 			var rayb := rig.pixel_ray(mm.position)
 			world.set_plane_hover(world.pick_plane(rayb[0], rayb[1]))
+		elif picking_fillet_edges:
+			var rayfh := rig.pixel_ray(mm.position)
+			var chk := _fillet_chain_under_ray(rayfh[0], rayfh[1])
+			world.set_treat_edge_hover(chk, _fillet_segments, _axis_hover_width_mm())
 		elif picking_hole_face:
 			var rayhf := rig.pixel_ray(mm.position)
 			var facehf := world.pick_face(rayhf[0], rayhf[1])
@@ -6265,6 +6520,9 @@ func handle_app_key(k: InputEventKey) -> bool:
 			if sketch_orbit:
 				return_to_sketch_plane()
 				return true
+		if picking_fillet_edges:
+			(_fillet_dialog.find_child("FilletPickBtn", true, false) as Button).button_pressed = false
+			return true
 		if picking_hole_face:
 			(_hole_dialog.find_child("HoleFaceBtn", true, false) as Button).button_pressed = false
 			return true
@@ -6317,6 +6575,9 @@ func handle_app_key(k: InputEventKey) -> bool:
 		return false
 	if (k.keycode == KEY_ENTER or k.keycode == KEY_KP_ENTER) and picking_targets:
 		end_target_pick()
+		return true
+	if (k.keycode == KEY_ENTER or k.keycode == KEY_KP_ENTER) and picking_fillet_edges:
+		(_fillet_dialog.find_child("FilletPickBtn", true, false) as Button).button_pressed = false
 		return true
 	if (k.keycode == KEY_ENTER or k.keycode == KEY_KP_ENTER) and picking_hole_points:
 		(_hole_dialog.find_child("HolePlaceBtn", true, false) as Button).button_pressed = false
@@ -6811,6 +7072,10 @@ func _refresh_ui() -> void:
 	if picking_look_at:
 		_status_hint.text = ("Look At: select a plane or a flat body face "
 			+ "(Esc to cancel)")
+	elif picking_fillet_edges:
+		_status_hint.text = ("%s: click edges to add/remove (%d picked; a click takes the "
+			+ "whole smooth chain) — Enter or right-click when done") % [
+			_fillet_dialog.title, _fillet_selected.size()]
 	elif picking_hole_face:
 		_status_hint.text = "Hole: click the flat face to drill into — Esc to cancel"
 	elif picking_hole_points:

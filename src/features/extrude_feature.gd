@@ -221,18 +221,13 @@ func build_mesh(doc: CadDocument) -> ArrayMesh:
 	return _prism_mesh(doc, _lo, _hi, 0.0)
 
 
-## M38: the solid the kernel booleans with. Cut prisms overshoot both caps
-## by EPS_MM so a cut flush with the target's cap removes it cleanly; the
-## overshoot lies outside the body, so the cut's dimensions stay exact (no
-## sideways growth — coplanar walls are the kernel's job, see
-## SolidKernel.TOLERANCE_MM).
+## M38/M41: the solid the kernel booleans with — the exact prism.
 func kernel_mesh(doc: CadDocument, _part: Dictionary) -> ArrayMesh:
-	if operation != OP_CUT:
-		return build_mesh(doc)
-	if not needs_bodies():
-		prepare(doc, [])
-	var s := 1.0 if _hi >= _lo else -1.0
-	return _prism_mesh(doc, _lo - EPS_MM * s, _hi + EPS_MM * s, 0.0)
+	# M41: EXACT — no overshoot either way. A blind pocket's floor must sit
+	# at the dimension, and the kernel's tolerance already resolves caps
+	# that are flush with the body (the M38 overshoot deepened every blind
+	# cut by EPS_MM).
+	return build_mesh(doc)
 
 
 ## The prism between plane offsets `lo` and `hi` (signed, along the plane

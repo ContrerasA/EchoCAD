@@ -84,6 +84,7 @@ const FALLBACK_COLORS := {
 	"view_cube": "#ececea", "view_cube_text": "#2a2827",
 	"view_cube_nav": "#c4c0bd",
 	"hover": "#ffe08c59",
+	"edge_candidate": "#8cbfff",
 	# sketch ink
 	"ink_free": "#f0edeb", "ink_constrained": "#7fc97f",
 	"ink_construction": "#b88cf2", "ink_projected": "#d973d9",
