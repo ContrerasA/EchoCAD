@@ -12,6 +12,80 @@ var shortcut: Key = KEY_NONE
 
 ## Injected by ToolManager.
 var app: AppRoot = null
+## Hidden tools get no ribbon button / shortcut slot: they are armed by
+## other chrome (the constraint buttons arm ConstraintTool).
+var hidden := false
+
+## --- arm-then-pick (CHANGES #6) ---------------------------------------------
+## HARD REQUIREMENT for every tool that operates on existing geometry: the
+## user may pick the operands AFTER arming the tool, not only before. A tool
+## whose operands are missing on activate enters the GATHER stage: clicks
+## toggle entities into app.selection (hover pre-highlighted), Enter or a
+## right-click confirms and the tool carries on exactly as if the selection
+## had been made first. Esc clears the gathered picks, then leaves the tool.
+var gathering := false
+var _gather_hint := ""
+const GATHER_HIT_PX := 6.0
+
+
+## Enter the gather stage. `hint` names what to pick; the confirm keys are
+## appended so every tool says it the same way.
+func gather_begin(hint: String) -> void:
+	gathering = true
+	_gather_hint = hint
+	if app != null:
+		app.set_status_hint(hint + " — Enter or right-click when done")
+
+
+## Pointer-down while gathering. Left-click toggles the entity under the
+## cursor (nothing under it: no change); right-click confirms. Returns true
+## when the stage has been CONFIRMED (the caller then proceeds).
+func gather_pointer_down(world: Vector2, e: InputEventMouseButton) -> bool:
+	if e.button_index == MOUSE_BUTTON_RIGHT:
+		return gather_confirm()
+	if e.button_index != MOUSE_BUTTON_LEFT:
+		return false
+	var sk := sketch()
+	var hit := SketchGeometry.entity_at(sk, world, GATHER_HIT_PX / view().zoom())
+	if hit == "" or not gather_accepts(hit):
+		return false
+	var sel := app.selection.duplicate()
+	if sel.has(hit):
+		sel.erase(hit)
+	else:
+		sel.append(hit)
+	app.set_selection(sel)
+	return false
+
+
+## Override to refuse entity kinds the tool cannot use (e.g. bare points
+## for a pattern). Default: anything.
+func gather_accepts(_id: String) -> bool:
+	return true
+
+
+## Confirm the gather stage if something was picked. Returns true when the
+## tool may proceed; an empty pick just restates the hint.
+func gather_confirm() -> bool:
+	if app == null or app.selection.is_empty():
+		if app != null:
+			app.set_status_hint(_gather_hint + " — nothing picked yet")
+		return false
+	gathering = false
+	return true
+
+
+## Esc while gathering: clear the picks (true = consumed), or report false
+## when there was nothing to clear so the app can leave the tool.
+func gather_cancel() -> bool:
+	if not gathering:
+		return false
+	if not app.selection.is_empty():
+		app.set_selection([])
+		app.set_status_hint(_gather_hint)
+		return true
+	gathering = false
+	return false
 
 ## Entity under the cursor that a click would pick right now, "" for none.
 ## Lives on the base class so EVERY picking tool pre-highlights the same way —

@@ -24,8 +24,14 @@ func register(tool: SketchTool) -> void:
 	_order.append(tool.id)
 
 
+## Ids of the tools that get ribbon buttons / shortcut slots (hidden tools
+## such as ConstraintTool are armed by other chrome and stay off this list).
 func tool_ids() -> Array[String]:
-	return _order.duplicate()
+	var out: Array[String] = []
+	for id in _order:
+		if not (_tools[id] as SketchTool).hidden:
+			out.append(id)
+	return out
 
 
 func get_tool(id: String) -> SketchTool:

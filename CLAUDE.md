@@ -42,6 +42,13 @@ macOS/web still require binaries built in the sibling repos first.
   colors baked into materials are rebuilt in the owner's `apply_theme()`.
   Controls opt into the named type variations (`ToolButton`, `HudPanel`,
   …) instead of carrying `add_theme_*_override` literals.
+- **Arm first, pick after — mandatory for every operand-taking tool.** Any
+  tool/command that acts on existing geometry (constraints, mirror, patterns,
+  fillet/chamfer, body move/copy/pattern/mirror, …) MUST work both ways:
+  select-then-arm AND arm-then-pick. Sketch tools use the `SketchTool`
+  gather stage (`gather_begin/gather_pointer_down/gather_confirm`, Enter or
+  right-click confirms); body commands go through `AppRoot.require_body`.
+  A tool that only says "select X first" is a bug — new tools included.
 - **Hover feedback is mandatory on every pick stage.** Any tool step that
   waits for the user to click something (profile, path, axis, plane, face,
   edge, body...) MUST pre-highlight the candidate under the cursor on mouse

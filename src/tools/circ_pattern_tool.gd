@@ -21,17 +21,38 @@ func _init() -> void:
 func activate() -> void:
 	_hover = false
 	_fields.reset()
+	gathering = false
+	_take_source()
+	if _source.is_empty():
+		gather_begin("Circ Pattern: click the geometry to pattern")
+		return
+	_arm()
+
+
+func _take_source() -> void:
 	_source = app.selection.duplicate()
 	_source = _source.filter(func(sid: String) -> bool:
 		var e := sketch().entity(sid)
 		return e != null and e.kind() != "point")
-	if _source.is_empty():
-		app.set_status_hint(
-			"Circ Pattern: select geometry first, then pick the tool")
-		return
+
+
+func _arm() -> void:
 	app.set_status_hint(
 		"Circ Pattern: type Count (and total Angle°, Tab cycles), "
 		+ "click the center")
+
+
+func gather_accepts(id: String) -> bool:
+	var e := sketch().entity(id)
+	return e != null and e.kind() != "point"
+
+
+func commit() -> bool:
+	if gathering and gather_confirm():
+		_take_source()
+		_arm()
+		return true
+	return false
 
 
 func deactivate() -> void:
@@ -39,6 +60,8 @@ func deactivate() -> void:
 
 
 func cancel() -> bool:
+	if gathering:
+		return gather_cancel()
 	if _fields.has_text(0) or _fields.has_text(1):
 		_fields.reset()
 		return true
@@ -73,13 +96,21 @@ static func step_deg(count: int, total: float) -> float:
 func pointer_move(world: Vector2, _screen: Vector2, _e: InputEventMouseMotion) -> bool:
 	_preview = world
 	_hover = true
+	if gathering:
+		update_hover(world, GATHER_HIT_PX)
 	return true
 
 
 func pointer_down(world: Vector2, _screen: Vector2, e: InputEventMouseButton) -> bool:
+	if gathering:
+		if gather_pointer_down(world, e):
+			_take_source()
+			_arm()
+		return true
 	if e.button_index != MOUSE_BUTTON_LEFT:
 		return false
 	if _source.is_empty():
+		gather_begin("Circ Pattern: click the geometry to pattern")
 		return true
 	var p := _params()
 	var count := int(p["count"])

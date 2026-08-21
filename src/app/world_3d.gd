@@ -660,6 +660,41 @@ func selected_body() -> String:
 	return _selected_body
 
 
+## Ids of every body mesh currently in the scene (visible or not).
+func body_ids() -> Array:
+	var out: Array = []
+	if _sketch_root == null:
+		return out
+	for c in _sketch_root.get_children():
+		var mi := c as MeshInstance3D
+		if mi != null and mi.has_meta("is_body") and mi.has_meta("feature_id"):
+			out.append(String(mi.get_meta("feature_id")))
+	return out
+
+
+var _hover_body := ""
+
+
+## Hover pre-highlight for a body pick stage (CHANGES #6): the hovered body
+## tints toward the selection colour; "" clears. View state only.
+func set_body_hover(fid: String) -> void:
+	if _hover_body == fid:
+		return
+	var prev := _hover_body
+	_hover_body = fid
+	for id in [prev, fid]:
+		if id == "" or id == _selected_body:
+			continue
+		var mi := _body_mesh(id)
+		if mi == null:
+			continue
+		var mat := mi.get_surface_override_material(0) as StandardMaterial3D
+		if mat == null:
+			continue
+		mat.albedo_color = _body_base_color(id).lerp(COLOR_BODY_SELECTED(), 0.45) \
+			if id == fid else _body_base_color(id)
+
+
 ## The shaded color a body wears when not selected: its per-body color
 ## (M32) when one is set, the shared default otherwise.
 func _body_base_color(fid: String) -> Color:

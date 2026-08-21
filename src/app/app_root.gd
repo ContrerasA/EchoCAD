@@ -106,6 +106,7 @@ var _construction_check: CheckBox = null
 var construction_mode := false
 var _constraint_bar: Control
 var _tool_buttons := {}
+var _con_buttons := {}       # SketchConstraint.Type -> ribbon button
 var _btn_create: Button
 var _btn_extrude: Button
 var _btn_finish: Button
@@ -227,6 +228,7 @@ func _ready() -> void:
 	tools.register(CircPatternTool.new())
 	tools.register(ProjectTool.new())
 	tools.register(SmartDimensionTool.new())
+	tools.register(ConstraintTool.new())   # hidden: armed by the constraint buttons
 	tools.overlay_needs_redraw.connect(func() -> void: overlay.queue_redraw())
 	tools.active_changed.connect(func(_id: String) -> void: _refresh_ui())
 	threaded_solver = ThreadedSolver.new()
@@ -348,6 +350,32 @@ func apply_constraint(type: SketchConstraint.Type, value := NAN) -> String:
 			else ConstraintRules.measured_value(sk, type, ops)
 	add_constraint(c)
 	return ""
+
+
+## A constraint button was pressed (CHANGES #6). With a selection that
+## already validates the constraint applies at once — select-first still
+## works. Otherwise the ConstraintTool arms for this type and the user picks
+## the operands with the tool live (hover + click), Fusion-style.
+func arm_constraint(type: SketchConstraint.Type, type_title: String) -> void:
+	var sk := active_sketch()
+	if sk == null:
+		return
+	var sel: Array = []
+	for id in selection:
+		var e := sk.entity(id)
+		if e != null:
+			sel.append(e)
+	if not sel.is_empty() and ConstraintRules.validate(sk, type, sel) == "":
+		apply_constraint(type)
+		_refresh_ui()   # the button is a toggle; give it back to the live tool
+		return
+	var ct := tools.get_tool("constraint") as ConstraintTool
+	ct.arm(type, type_title)
+	if tools.active_id() != "constraint":
+		tools.set_active("constraint")
+	else:
+		ct.activate()
+	_refresh_ui()
 
 
 ## Push a built constraint + its re-solve as one undo step.
@@ -1300,8 +1328,11 @@ func _build_ribbon(parent: Control) -> void:
 	]
 	for def in cons_defs:
 		var cb := _tool_button(cons_grid, def[0],
-			func() -> void: apply_constraint(def[1]), String(def[2]))
+			func() -> void: arm_constraint(def[1], String(def[0])), String(def[2]))
 		cb.name = String(def[0]) + "ConBtn"
+		cb.toggle_mode = true
+		cb.button_group = group
+		_con_buttons[def[1]] = cb
 
 	# Snap + inference toggles. These already existed as `prefs` entries that
 	# only `action.set_pref` could reach, which made them unusable by hand and
@@ -3608,7 +3639,8 @@ func _start_edge_treat_pick(p_kind: String) -> void:
 	_treat_kind = p_kind if p_kind != "" else EdgeTreatFeature.KIND_FILLET
 	_treat_body = world.selected_body()
 	if _treat_body == "":
-		set_status_hint("Fillet/Chamfer: select a body first (click it)")
+		require_body("Fillet" if _treat_kind == EdgeTreatFeature.KIND_FILLET
+			else "Chamfer", func() -> void: _start_edge_treat_pick(p_kind))
 		return
 	var root := _edge_treat_root(_treat_body)
 	if root == null:
@@ -4088,6 +4120,12 @@ func loft(p_sections: Array, op := SolidFeature.OP_NEW_BODY) -> String:
 ## --- solid mirror + patterns (M33) -------------------------------------------
 
 var picking_mirror_plane := false
+## Arm-then-pick for body commands (CHANGES #6): a command that needs a body
+## with none selected arms a body pick; the click selects it and runs the
+## command. See require_body.
+var picking_body := false
+var _body_pick_then: Callable = Callable()
+var _body_pick_label := ""
 var _mirror_source := ""
 var _pattern_dialog: Window = null
 var _pattern_fields := {}
@@ -4095,12 +4133,36 @@ var _pattern_edit_fid := ""
 var _pattern_source := ""
 
 
+## Run `then` with a body selected: right away when one is, otherwise arm
+## a body pick (hover-highlighted; Esc cancels) whose click selects the body
+## and then runs `then`. Every body command goes through here so "arm the
+## tool, then pick" holds for all of them. Returns true when run at once.
+func require_body(label: String, then: Callable) -> bool:
+	if world.selected_body() != "":
+		then.call()
+		return true
+	if world.body_ids().is_empty():
+		set_status_hint("%s: no bodies in the model yet" % label)
+		return false
+	picking_body = true
+	_body_pick_then = then
+	_body_pick_label = label
+	_refresh_ui()
+	return false
+
+
+func _end_body_pick() -> void:
+	picking_body = false
+	_body_pick_then = Callable()
+	world.set_body_hover("")
+
+
 func _on_mirror_body_pressed() -> void:
 	if mode != Mode.MODEL:
 		return
 	_mirror_source = world.selected_body()
 	if _mirror_source == "":
-		set_status_hint("Mirror Body: select a body first (click it)")
+		require_body("Mirror Body", _on_mirror_body_pressed)
 		return
 	picking_mirror_plane = true
 	world.set_planes_visible(true)
@@ -4125,7 +4187,7 @@ func open_pattern_dialog(edit_fid: String) -> void:
 	_pattern_edit_fid = edit_fid if pf != null else ""
 	_pattern_source = pf.source if pf != null else world.selected_body()
 	if _pattern_source == "":
-		set_status_hint("Pattern: select a body first (click it)")
+		require_body("Pattern", func() -> void: open_pattern_dialog(""))
 		return
 	if _pattern_dialog == null:
 		_pattern_dialog = Window.new()
@@ -4323,7 +4385,7 @@ func open_move_dialog(edit_fid: String) -> void:
 	_move_edit_fid = edit_fid if tf != null else ""
 	_move_target_body = tf.body if tf != null else world.selected_body()
 	if _move_target_body == "":
-		set_status_hint("Move Body: select a body first (click it)")
+		require_body("Move Body", func() -> void: open_move_dialog(""))
 		return
 	if _move_dialog == null:
 		_move_dialog = Window.new()
@@ -4440,7 +4502,7 @@ func open_copy_dialog(edit_fid: String) -> void:
 	_copy_edit_fid = edit_fid if cf != null else ""
 	_copy_source_body = cf.source if cf != null else world.selected_body()
 	if _copy_source_body == "":
-		set_status_hint("Copy Body: select a body first (click it)")
+		require_body("Copy Body", func() -> void: open_copy_dialog(""))
 		return
 	if _copy_dialog == null:
 		_copy_dialog = Window.new()
@@ -5206,6 +5268,19 @@ func _on_viewport_input(event: InputEvent) -> void:
 				world.show_treat_edges(_treat_pick_edges, _treat_selected,
 					_axis_hover_width_mm())
 				_update_treat_pick_count()
+		elif mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT \
+				and picking_body:
+			var rayb := rig.pixel_ray(mb.position)
+			var bid := world.pick_body(rayb[0], rayb[1])
+			if bid == "":
+				set_status_hint("%s: click a body (Esc to cancel)" % _body_pick_label)
+			else:
+				var then := _body_pick_then
+				_end_body_pick()
+				select_body(bid)
+				if then.is_valid():
+					then.call()
+				_refresh_ui()
 		elif mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT:
 			# Plain click in model mode: pick a body, or clear on a miss.
 			var ray3 := rig.pixel_ray(mb.position)
@@ -5242,6 +5317,10 @@ func _on_viewport_input(event: InputEvent) -> void:
 		elif picking_offset_base:
 			var rayb := rig.pixel_ray(mm.position)
 			world.set_plane_hover(world.pick_plane(rayb[0], rayb[1]))
+		elif picking_body:
+			# Pre-highlight the body the click would take.
+			var rayh := rig.pixel_ray(mm.position)
+			world.set_body_hover(world.pick_body(rayh[0], rayh[1]))
 		elif picking_profile or picking_revolve or picking_sweep_profile \
 				or picking_loft:
 			# Pre-highlight the region the click would take.
@@ -5346,6 +5425,11 @@ func handle_app_key(k: InputEventKey) -> bool:
 			if sketch_orbit:
 				return_to_sketch_plane()
 				return true
+		if picking_body:
+			_end_body_pick()
+			set_status_hint("Cancelled")
+			_refresh_ui()
+			return true
 		if picking_plane or picking_profile or picking_offset_base \
 				or picking_revolve or picking_revolve_axis or picking_look_at \
 				or picking_mirror_plane or picking_sweep_profile \
@@ -5841,6 +5925,10 @@ func _refresh_ui() -> void:
 	for tid: String in _tool_buttons:
 		(_tool_buttons[tid] as Button).set_pressed_no_signal(
 			tid == tools.active_id())
+	var ct := tools.get_tool("constraint") as ConstraintTool
+	for t in _con_buttons:
+		(_con_buttons[t] as Button).set_pressed_no_signal(
+			tools.active_id() == "constraint" and ct != null and ct.type == t)
 	# A stack's face follows whichever of its tools is active (keyboard
 	# shortcuts and RPC reach variants the face is not showing).
 	var active_stack := _stack_for_tool(tools.active_id())
@@ -5862,6 +5950,8 @@ func _refresh_ui() -> void:
 	if picking_look_at:
 		_status_hint.text = ("Look At: select a plane or a flat body face "
 			+ "(Esc to cancel)")
+	elif picking_body:
+		_status_hint.text = "%s: click a body (Esc to cancel)" % _body_pick_label
 	elif picking_mirror_plane:
 		_status_hint.text = "Mirror: select the mirror plane (Esc to cancel)"
 	elif picking_sweep_profile:

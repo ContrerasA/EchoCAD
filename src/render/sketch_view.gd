@@ -201,7 +201,10 @@ func _gui_input(event: InputEvent) -> void:
 		elif mb.pressed and mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:
 			zoom_at(1.0 / 1.1, mb.position)
 			accept_event()
-		elif mb.button_index == MOUSE_BUTTON_LEFT and tool_input.is_valid():
+		elif (mb.button_index == MOUSE_BUTTON_LEFT
+				or mb.button_index == MOUSE_BUTTON_RIGHT) and tool_input.is_valid():
+			# Right-click reaches tools too: it confirms a gather stage
+			# (CHANGES #6). Tools that do not use it return false.
 			# Clicking the canvas takes keyboard focus back. Focus was grabbed
 			# only once, when the sketch opened, so anything that moved it
 			# afterwards — clicking a toolbar button, for instance — left the

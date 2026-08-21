@@ -23,6 +23,22 @@ func activate() -> void:
 	_hover = false
 	_hover_axis = ""
 	clear_hover()
+	gathering = false
+	if app.selection.is_empty():
+		gather_begin("Mirror: click the entities to mirror")
+	else:
+		app.set_status_hint("Mirror: click the axis line (or the X/Y origin axis)")
+
+
+func cancel() -> bool:
+	return gather_cancel()
+
+
+func commit() -> bool:
+	if gathering and gather_confirm():
+		app.set_status_hint("Mirror: click the axis line (or the X/Y origin axis)")
+		return true
+	return false
 
 
 ## Nearest LINE within tol — entity_at would prefer points, which cannot be a
@@ -43,6 +59,9 @@ func _line_at(sk: Sketch, world: Vector2) -> String:
 func pointer_move(world: Vector2, _screen: Vector2, _e: InputEventMouseMotion) -> bool:
 	_preview = world
 	_hover = true
+	if gathering:
+		update_hover(world, GATHER_HIT_PX)
+		return true
 	var sk := sketch()
 	hover_id = _line_at(sk, world)
 	_hover_axis = ""
@@ -56,12 +75,16 @@ func pointer_move(world: Vector2, _screen: Vector2, _e: InputEventMouseMotion) -
 
 
 func pointer_down(world: Vector2, _screen: Vector2, e: InputEventMouseButton) -> bool:
+	if gathering:
+		if gather_pointer_down(world, e):
+			app.set_status_hint("Mirror: click the axis line (or the X/Y origin axis)")
+		return true
 	if e.button_index != MOUSE_BUTTON_LEFT:
 		return false
 	pointer_move(world, _screen, null)
 	var sk := sketch()
 	if app.selection.is_empty():
-		app.set_status_hint("Mirror: select entities first, then the axis")
+		gather_begin("Mirror: click the entities to mirror")
 		return true
 	var axis := sk.entity(hover_id) as SketchLine
 	if axis != null:
