@@ -118,6 +118,11 @@ func to_dict() -> Dictionary:
 	}
 
 
+## True when `d` was written by a newer EchoCAD than this one.
+static func is_newer_schema(d: Dictionary) -> bool:
+	return int(d.get("version", 1)) > SCHEMA_VERSION
+
+
 static func from_dict(d: Dictionary) -> CadDocument:
 	var on_disk := int(d.get("version", 1))
 	_migrate(on_disk, d)
@@ -191,6 +196,11 @@ static func feature_from_dict(d: Dictionary) -> Feature:
 ## Cumulative in-place migration of `d` from `on_disk` version to
 ## SCHEMA_VERSION. Always runs before field reads; each future version adds
 ## its step here and never edits earlier ones.
+## M46: set by from_dict when the file's schema is newer than this build
+## understands — callers refuse to open it instead of mangling it.
+static var last_load_error := ""
+
+
 static func _migrate(on_disk: int, _d: Dictionary) -> void:
 	if on_disk > SCHEMA_VERSION:
 		push_warning("[CadDocument] file version %d is newer than app schema %d"

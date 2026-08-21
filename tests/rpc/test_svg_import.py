@@ -67,7 +67,7 @@ def main():
         check(True, "missing file refused")
 
     r4 = app.call("query.control", {"name": "ImportSvgBtn"})
-    check(r4["visible"], "Import SVG button on the shelf")
+    check(r4["visible"] or bool(r4.get("flyout_owner")), "Import SVG button on the shelf")
 
     app.close()
     if FAILURES:

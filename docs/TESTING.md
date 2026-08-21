@@ -79,6 +79,8 @@ fixture sketch quickly).
   `extent`, `distance2`, `symmetric_whole`, `taper_deg`, `to_face {body,
   face}`; `action.select_option {name, index}` drives OptionButtons;
   `query.project {p:[x,y,z]}` gives the window pixel of a world point.
+- `action.autosave` (force an autosave; `{written, path, pending}`),
+  `action.show_start_panel`, `query.recent` (M46).
 - `action.import_mesh {path, scale?}` (STL/OBJ/3MF → mesh bodies),
   `action.export_mesh {path, format: 3mf|obj, body?}`, `action.export_svg
   {path, sketch?, construction?}` (M44).

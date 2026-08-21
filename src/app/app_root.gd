@@ -933,6 +933,31 @@ func _build_ui() -> void:
 
 	_build_status_bar(vbox)
 	_apply_theme_metrics()
+	# M46: autosave + close guard; recovery offer and the start panel wait a
+	# frame so the window and theme are up. Scratch runs (tests, automation)
+	# skip the panel and the recovery prompt.
+	_setup_doc_safety()
+	if not ThemeService.is_scratch_run():
+		call_deferred("_startup_prompts")
+
+
+func _startup_prompts() -> void:
+	if not pending_recoveries().is_empty():
+		offer_recovery()
+	elif doc.features.is_empty() and bool(ThemeService.get_pref("start_panel", true)):
+		show_start_panel()
+
+
+## A modal notice (errors the status bar is too small for).
+func _alert(title: String, text: String) -> void:
+	var d := AcceptDialog.new()
+	d.name = "AlertDialog"
+	d.title = title
+	d.dialog_text = text
+	d.confirmed.connect(d.queue_free)
+	d.canceled.connect(d.queue_free)
+	add_child(d)
+	d.popup_centered()
 
 
 ## Menu bar (M36): brand mark, File / Edit / View / Help menus that mirror
@@ -985,7 +1010,13 @@ func _build_menu_bar(parent: Control) -> void:
 
 	var file := PopupMenu.new()
 	file.name = "File"
-	_menu_add(file, "Open…", open_interactive, "Ctrl+O")
+	_menu_add(file, "New", new_document_interactive, "Ctrl+N")
+	_menu_add(file, "Open…", open_interactive_guarded, "Ctrl+O")
+	_recent_menu = PopupMenu.new()
+	_recent_menu.name = "OpenRecent"
+	_recent_menu.id_pressed.connect(_on_recent_pressed)
+	file.add_submenu_node_item("Open Recent", _recent_menu)
+	_refresh_recent_menu()
 	_menu_add(file, "Save", func() -> void: save_interactive(false), "Ctrl+S")
 	_menu_add(file, "Save As…", func() -> void: save_interactive(true),
 		"Ctrl+Shift+S")
@@ -994,8 +1025,13 @@ func _build_menu_bar(parent: Control) -> void:
 	_menu_add(file, "Import SVG…", import_svg_interactive)
 	_menu_add(file, "Insert Canvas…", import_canvas_interactive)
 	file.add_separator()
-	_menu_add(file, "Export DXF…", export_dxf_interactive)
+	_menu_add(file, "Import Mesh…", import_mesh_interactive)
+	file.add_separator()
+	_menu_add(file, "Export 3MF…", func() -> void: export_mesh_interactive("3mf"))
 	_menu_add(file, "Export STL…", func() -> void: export_stl_interactive())
+	_menu_add(file, "Export OBJ…", func() -> void: export_mesh_interactive("obj"))
+	_menu_add(file, "Export DXF…", export_dxf_interactive)
+	_menu_add(file, "Export SVG…", func() -> void: export_svg_interactive())
 	file.add_separator()
 	_menu_add(file, "Preferences…", _open_prefs_dialog)
 	_menu_bar.add_child(file)
@@ -1251,19 +1287,18 @@ func _build_ribbon(parent: Control) -> void:
 
 	_divider(model)
 	var g_insert := _tool_grid(_shelf_group(model, "Insert"), 2)
-	var dxfi := _tool_button(g_insert, "Import DXF", import_dxf_interactive,
-		"import_dxf")
-	dxfi.name = "ImportDxfBtn"
-	var svgi := _tool_button(g_insert, "Import SVG", import_svg_interactive,
-		"import_svg")
-	svgi.name = "ImportSvgBtn"
+	_tool_stack(g_insert, [
+		{"id": "import_mesh", "name": "ImportMeshBtn", "title": "Import Mesh", "icon": "import_mesh",
+			"tooltip": "Insert an STL / OBJ / 3MF mesh as a body (a closed mesh takes booleans like any body)",
+			"handler": import_mesh_interactive},
+		{"id": "import_dxf", "name": "ImportDxfBtn", "title": "Import DXF", "icon": "import_dxf",
+			"tooltip": "Import a DXF drawing as a sketch", "handler": import_dxf_interactive},
+		{"id": "import_svg", "name": "ImportSvgBtn", "title": "Import SVG", "icon": "import_svg",
+			"tooltip": "Import an SVG as a sketch", "handler": import_svg_interactive}])
 	var canvb := _tool_button(g_insert, "Canvas", import_canvas_interactive,
 		"canvas")
 	canvb.name = "ImportCanvasBtn"
 	canvb.tooltip_text = "Insert a reference image (PNG/JPEG) on a plane"
-	var meshi := _tool_button(g_insert, "Import Mesh", import_mesh_interactive, "import_mesh")
-	meshi.name = "ImportMeshBtn"
-	meshi.tooltip_text = "Insert an STL / OBJ / 3MF mesh as a body (a closed mesh takes booleans like any body)"
 
 	_divider(model)
 	var g_make := _tool_grid(_shelf_group(model, "Make"), 2)
@@ -5104,6 +5139,325 @@ func _delete_param() -> void:
 		_refresh_params_tree()
 
 
+
+## --- M46 document safety: autosave, recovery, guards, recent files ---------------
+
+const AUTOSAVE_DIR := "user://autosave"
+const RECENT_MAX := 10
+var _autosave_timer: Timer = null
+var _autosave_session := ""
+var _guard_dialog: ConfirmationDialog = null
+var _guard_then := Callable()
+var _recover_dialog: ConfirmationDialog = null
+var _start_panel: PanelContainer = null
+var _recent_menu: PopupMenu = null
+
+
+func _setup_doc_safety() -> void:
+	_autosave_session = "untitled-%d" % (Time.get_unix_time_from_system() as int)
+	_autosave_timer = Timer.new()
+	_autosave_timer.name = "AutosaveTimer"
+	_autosave_timer.wait_time = maxf(float(ThemeService.get_pref("autosave_seconds", 120)), 10.0)
+	_autosave_timer.timeout.connect(autosave_now)
+	add_child(_autosave_timer)
+	if not ThemeService.is_scratch_run():
+		_autosave_timer.start()
+	# Closing the window asks about unsaved work instead of quitting.
+	get_tree().auto_accept_quit = false
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_CLOSE_REQUEST:
+		guard_unsaved("Quit", func() -> void:
+			_autosave_forget()
+			get_tree().quit())
+
+
+## The autosave file for the current document.
+func autosave_path() -> String:
+	var key := _save_path.get_file().get_basename() if _save_path != "" else _autosave_session
+	return AUTOSAVE_DIR.path_join("%s.autosave.ecad" % key.validate_filename())
+
+
+## Write the autosave when there is unsaved work (and nothing when clean).
+func autosave_now() -> bool:
+	if not stack.is_dirty():
+		return false
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(AUTOSAVE_DIR))
+	stash_camera()
+	var ok := Serializer.save(doc, autosave_path())
+	if ok:
+		# Remember where the original lives so recovery can offer "Save to".
+		var meta := ConfigFile.new()
+		meta.set_value("autosave", "source", _save_path)
+		meta.set_value("autosave", "time", Time.get_datetime_string_from_system())
+		meta.save(autosave_path() + ".meta")
+	return ok
+
+
+func _autosave_forget() -> void:
+	for p in [autosave_path(), autosave_path() + ".meta"]:
+		if FileAccess.file_exists(p):
+			DirAccess.remove_absolute(ProjectSettings.globalize_path(p))
+
+
+## Autosaves left behind by a session that did not end cleanly.
+func pending_recoveries() -> Array:
+	var out: Array = []
+	var dir := DirAccess.open(AUTOSAVE_DIR)
+	if dir == null:
+		return out
+	for f in dir.get_files():
+		if f.ends_with(".autosave.ecad"):
+			var meta := ConfigFile.new()
+			meta.load(AUTOSAVE_DIR.path_join(f + ".meta"))
+			out.append({"path": AUTOSAVE_DIR.path_join(f),
+				"source": String(meta.get_value("autosave", "source", "")),
+				"time": String(meta.get_value("autosave", "time", ""))})
+	return out
+
+
+## Offer to recover the newest autosave (startup).
+func offer_recovery() -> void:
+	var pend := pending_recoveries()
+	if pend.is_empty():
+		return
+	var rec: Dictionary = pend[0]
+	if _recover_dialog == null:
+		_recover_dialog = ConfirmationDialog.new()
+		_recover_dialog.name = "RecoverDialog"
+		_recover_dialog.title = "Recover unsaved work?"
+		_recover_dialog.ok_button_text = "Recover"
+		_recover_dialog.cancel_button_text = "Discard"
+		add_child(_recover_dialog)
+	for c in _recover_dialog.confirmed.get_connections():
+		_recover_dialog.confirmed.disconnect(c["callable"])
+	for c in _recover_dialog.canceled.get_connections():
+		_recover_dialog.canceled.disconnect(c["callable"])
+	var src := String(rec["source"])
+	_recover_dialog.dialog_text = "EchoCAD did not close cleanly. An autosave of %s from %s was found." % [
+		src.get_file() if src != "" else "an untitled document", String(rec["time"])]
+	_recover_dialog.confirmed.connect(func() -> void: recover_from(rec))
+	_recover_dialog.canceled.connect(func() -> void:
+		for p in [String(rec["path"]), String(rec["path"]) + ".meta"]:
+			if FileAccess.file_exists(p):
+				DirAccess.remove_absolute(ProjectSettings.globalize_path(p)))
+	_recover_dialog.popup_centered()
+
+
+func recover_from(rec: Dictionary) -> bool:
+	var loaded := Serializer.load_file(String(rec["path"]))
+	if loaded == null:
+		set_status_hint("Recovery failed: " + Serializer.last_error)
+		return false
+	if mode == Mode.SKETCH:
+		finish_sketch()
+	load_document(loaded)
+	_save_path = String(rec["source"])
+	# Recovered work is unsaved by definition: leave the stack dirty so the
+	# guard and the title mark say so.
+	stack.push_no_merge(CmdSetMarker.new(doc.timeline_marker, doc.timeline_marker))
+	for p in [String(rec["path"]), String(rec["path"]) + ".meta"]:
+		if FileAccess.file_exists(p):
+			DirAccess.remove_absolute(ProjectSettings.globalize_path(p))
+	browser.refresh()
+	set_status_hint("Recovered unsaved work — save it to keep it")
+	return true
+
+
+## Run `then` now when the document is clean, else ask Save / Don't save /
+## Cancel first. Used by Quit, New and Open.
+func guard_unsaved(what: String, then: Callable) -> void:
+	if not stack.is_dirty():
+		then.call()
+		return
+	_guard_then = then
+	if _guard_dialog == null:
+		_guard_dialog = ConfirmationDialog.new()
+		_guard_dialog.name = "UnsavedDialog"
+		_guard_dialog.ok_button_text = "Save"
+		_guard_dialog.cancel_button_text = "Cancel"
+		var dont := _guard_dialog.add_button("Don't save", true, "discard")
+		dont.name = "UnsavedDiscardBtn"
+		_guard_dialog.get_ok_button().name = "UnsavedSaveBtn"
+		_guard_dialog.get_cancel_button().name = "UnsavedCancelBtn"
+		_guard_dialog.confirmed.connect(func() -> void:
+			if _save_path != "":
+				if save_to(_save_path):
+					_guard_then.call()
+			else:
+				# Save As, then continue once the file lands.
+				_open_file_dialog(true)
+				_file_dialog.file_selected.connect(func(_p: String) -> void:
+					if not stack.is_dirty():
+						_guard_then.call(), CONNECT_ONE_SHOT))
+		_guard_dialog.custom_action.connect(func(action: StringName) -> void:
+			if action == &"discard":
+				_guard_dialog.hide()
+				_guard_then.call())
+		add_child(_guard_dialog)
+	_guard_dialog.title = what
+	_guard_dialog.dialog_text = "%s has unsaved changes. Save them first?" % document_title()
+	_guard_dialog.popup_centered()
+
+
+func new_document_interactive() -> void:
+	guard_unsaved("New document", func() -> void:
+		_autosave_forget()
+		load_document(CadDocument.new())
+		_save_path = ""
+		_autosave_session = "untitled-%d" % (Time.get_unix_time_from_system() as int)
+		stack.mark_saved()
+		browser.refresh()
+		set_status_hint("New document"))
+
+
+func open_interactive_guarded() -> void:
+	guard_unsaved("Open", open_interactive)
+
+
+## --- recent files ------------------------------------------------------------------
+
+func recent_files() -> Array:
+	var v: Variant = ThemeService.get_pref("recent_files", [])
+	var out: Array = []
+	if v is Array:
+		for p in (v as Array):
+			if FileAccess.file_exists(String(p)):
+				out.append(String(p))
+	return out
+
+
+func _remember_recent(path: String) -> void:
+	var lst := recent_files()
+	lst.erase(path)
+	lst.push_front(path)
+	while lst.size() > RECENT_MAX:
+		lst.pop_back()
+	ThemeService.set_pref("recent_files", lst)
+	_refresh_recent_menu()
+
+
+func _refresh_recent_menu() -> void:
+	if _recent_menu == null:
+		return
+	_recent_menu.clear()
+	var lst := recent_files()
+	if lst.is_empty():
+		_recent_menu.add_item("(no recent files)")
+		_recent_menu.set_item_disabled(0, true)
+		return
+	for i in lst.size():
+		_recent_menu.add_item(String(lst[i]).get_file(), i)
+		_recent_menu.set_item_tooltip(i, String(lst[i]))
+	_recent_menu.add_separator()
+	_recent_menu.add_item("Clear list", 1000)
+
+
+func _on_recent_pressed(id: int) -> void:
+	if id == 1000:
+		ThemeService.set_pref("recent_files", [])
+		_refresh_recent_menu()
+		return
+	var lst := recent_files()
+	if id >= 0 and id < lst.size():
+		var path := String(lst[id])
+		guard_unsaved("Open", func() -> void: open_from(path))
+
+
+## --- start panel -------------------------------------------------------------------
+
+## A small panel over the viewport on an empty document: New / Open /
+## recent files. Any action dismisses it; it never shows once the document
+## has content.
+func show_start_panel() -> void:
+	if _start_panel != null:
+		_start_panel.queue_free()
+	_start_panel = PanelContainer.new()
+	_start_panel.name = "StartPanel"
+	_start_panel.theme_type_variation = "HudPanel"
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", int(ThemeService.metric("dialog_gap", 6.0)))
+	_start_panel.add_child(col)
+	var title := Label.new()
+	title.text = "EchoCAD"
+	title.theme_type_variation = "HeaderLabel"
+	col.add_child(title)
+	var hint := Label.new()
+	hint.text = "Start with a sketch (N), open a file, or pick a recent one."
+	hint.theme_type_variation = "DialogLabel"
+	col.add_child(hint)
+	var row := HBoxContainer.new()
+	col.add_child(row)
+	var nb := Button.new()
+	nb.name = "StartNewSketchBtn"
+	nb.text = "New Sketch"
+	nb.icon = ThemeService.icon("create_sketch")
+	nb.theme_type_variation = "PrimaryButton"
+	nb.focus_mode = Control.FOCUS_NONE
+	nb.pressed.connect(func() -> void:
+		hide_start_panel()
+		_on_create_sketch())
+	row.add_child(nb)
+	var ob := Button.new()
+	ob.name = "StartOpenBtn"
+	ob.text = "Open…"
+	ob.icon = ThemeService.icon("open")
+	ob.focus_mode = Control.FOCUS_NONE
+	ob.pressed.connect(func() -> void:
+		hide_start_panel()
+		open_interactive())
+	row.add_child(ob)
+	var ib := Button.new()
+	ib.name = "StartImportBtn"
+	ib.text = "Import Mesh…"
+	ib.icon = ThemeService.icon("import_mesh")
+	ib.focus_mode = Control.FOCUS_NONE
+	ib.pressed.connect(func() -> void:
+		hide_start_panel()
+		import_mesh_interactive())
+	row.add_child(ib)
+	var lst := recent_files()
+	if not lst.is_empty():
+		var rl := Label.new()
+		rl.text = "Recent"
+		rl.theme_type_variation = "CaptionLabel"
+		col.add_child(rl)
+		for i in mini(lst.size(), 6):
+			var path := String(lst[i])
+			var rb := Button.new()
+			rb.name = "StartRecent%d" % i
+			rb.text = path.get_file()
+			rb.tooltip_text = path
+			rb.alignment = HORIZONTAL_ALIGNMENT_LEFT
+			rb.theme_type_variation = "FlyoutButton"
+			rb.focus_mode = Control.FOCUS_NONE
+			rb.pressed.connect(func() -> void:
+				hide_start_panel()
+				open_from(path))
+			col.add_child(rb)
+	var dismiss := Button.new()
+	dismiss.name = "StartDismissBtn"
+	dismiss.text = "Dismiss"
+	dismiss.flat = true
+	dismiss.focus_mode = Control.FOCUS_NONE
+	dismiss.pressed.connect(hide_start_panel)
+	col.add_child(dismiss)
+	_viewport_host().add_child(_start_panel)
+	_start_panel.reset_size()
+	_start_panel.set_anchors_and_offsets_preset(Control.PRESET_CENTER)
+
+
+func hide_start_panel() -> void:
+	if _start_panel != null:
+		_start_panel.queue_free()
+		_start_panel = null
+
+
+func _viewport_host() -> Control:
+	return _hud.get_parent() if _hud != null else self
+
+
 ## --- save / open ---------------------------------------------------------------
 
 ## Write the document to `path` (.ecad). Returns true on success.
@@ -5114,10 +5468,13 @@ func save_to(path: String) -> bool:
 	if not Serializer.save(doc, path):
 		set_status_hint("Save failed: " + path)
 		return false
+	_autosave_forget()   # the autosave keyed by the OLD name/session
 	_save_path = path
 	stack.mark_saved()
 	browser.refresh()   # root component row carries the file name
 	set_status_hint("Saved " + path)
+	_remember_recent(path)
+	_autosave_forget()   # and by the new one
 	return true
 
 
@@ -5125,15 +5482,18 @@ func save_to(path: String) -> bool:
 func open_from(path: String) -> bool:
 	var loaded := Serializer.load_file(path)
 	if loaded == null:
-		set_status_hint("Open failed: " + path)
+		set_status_hint("Open failed: %s" % (Serializer.last_error if Serializer.last_error != "" else path))
+		_alert("Cannot open %s" % path.get_file(), Serializer.last_error)
 		return false
 	if mode == Mode.SKETCH:
 		finish_sketch()
+	_autosave_forget()
 	load_document(loaded)
 	_save_path = path
 	stack.mark_saved()
 	browser.refresh()
 	set_status_hint("Opened " + path)
+	_remember_recent(path)
 	return true
 
 
@@ -7544,8 +7904,11 @@ func handle_app_key(k: InputEventKey) -> bool:
 	if k.keycode == KEY_S and k.ctrl_pressed:
 		save_interactive(k.shift_pressed)
 		return true
+	if k.keycode == KEY_N and k.ctrl_pressed and mode == Mode.MODEL:
+		new_document_interactive()
+		return true
 	if k.keycode == KEY_O and k.ctrl_pressed:
-		open_interactive()
+		open_interactive_guarded()
 		return true
 	# Axis shortcut while revolve waits for one: X/Y pick the sketch axes.
 	if picking_revolve_axis and not k.ctrl_pressed \

@@ -49,7 +49,7 @@ exported to 3MF and STL, sliced without repair warnings:
    bosses, section check of wall thickness, interference check of lid fit.
 3. **Flange** — revolve, circular bolt-hole pattern that *re-cuts* per
    instance, tapped center hole (modelled thread), draft on the hub.
-4. **Spacer stack** — components: two bodies in separate components,
+4. **Spacer stack** — two bodies (components deferred, see M45 note),
    moved, measured, exported as multi-object 3MF.
 5. **Vendor fit** — import an STL of a bearing, cut its pocket *to object*,
    verify with interference check, export.
@@ -503,6 +503,19 @@ leftovers; release engineering (M49) last, alpha gate (M50).
   3MF▸STL▸OBJ and DXF▸SVG stacks. RPC: `action.import_mesh`,
   `action.export_mesh`, `action.export_svg`. 3MF colours are written but
   not read back into body appearance (read keeps names/meshes only).
+
+- **M45 — DEFERRED past alpha** (scope call, 2026-08-20): components are
+  a serializer + browser rework that the alpha's functional-part workflow
+  does not strictly need; the alpha benchmark "spacer stack" becomes two
+  bodies moved/measured and exported as a multi-object 3MF. Stays first in
+  the beta backlog.
+- **M46** (2026-08-20): autosave timer (`autosave_seconds` pref, only when
+  dirty, cleared by save/open), crash recovery prompt at startup with
+  source path + time, Save / Don't save / Cancel guard on quit / New /
+  Open / recent, File ▸ New + Open Recent, start panel (New Sketch / Open
+  / Import Mesh / recent), newer-schema files refused with a dialog,
+  `ThemeService.get_pref/set_pref` durability. Document tabs were not
+  built. RPC: `action.autosave`, `action.show_start_panel`, `query.recent`.
 
 ## Deferred past alpha (beta backlog)
 

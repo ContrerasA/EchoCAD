@@ -419,3 +419,41 @@ Status: PENDING
 ### Fix log
 
 (none yet)
+
+---
+
+## §M46 — Document safety
+
+Status: PENDING
+
+- [ ] 1. **Start panel.** Launch with no file. **Expect:** a centred panel
+   over the viewport — New Sketch / Open… / Import Mesh… and (after you
+   have saved something) a Recent list; Dismiss hides it; pressing any
+   ribbon tool also hides it. It never shows for a loaded document.
+- [ ] 2. **Autosave.** Draw something, wait 2 minutes (the interval; set
+   `autosave_seconds` in the settings file to shorten). **Expect:**
+   `user://autosave/<name>.autosave.ecad` appears; saving the document
+   removes it; a clean document never writes one.
+- [ ] 3. **Recovery.** Draw, wait for the autosave, then `kill -9` the app.
+   Relaunch. **Expect:** "Recover unsaved work?" names the file and time;
+   Recover loads it with the unsaved mark set and the original file name
+   (Ctrl+S writes to it); Discard deletes the autosave and opens normally.
+- [ ] 4. **Unsaved guard.** With unsaved changes: close the window, File ▸
+   New (Ctrl+N), File ▸ Open (Ctrl+O) and a Recent file. **Expect:** each
+   asks Save / Don't save / Cancel; Save with no file name opens Save As
+   and continues after it; Cancel does nothing; a clean document skips the
+   question.
+- [ ] 5. **Recent files.** File ▸ Open Recent lists the last 10 saved/opened
+   files (newest first, tooltips show the path, missing files are dropped);
+   Clear list empties it.
+- [ ] 6. **Newer file.** Hand-edit a .ecad's `"version"` to 99 and open it.
+   **Expect:** refused with "saved by a newer EchoCAD…" in a dialog and the
+   status bar; the current document is untouched.
+- [ ] 7. **Settings.** Change the theme, quit, run the test suites, relaunch:
+   theme, ortho, tool names, print bed and recent files all survive (prefs
+   live in `[prefs]` of the same settings file; tests use their own file).
+- [ ] 8. Both themes: the start panel, the recovery and unsaved dialogs.
+
+### Fix log
+
+(none yet)

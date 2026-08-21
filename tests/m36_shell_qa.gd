@@ -156,9 +156,13 @@ func _run() -> bool:
 	if _root._menu_bar.is_processing_shortcut_input():
 		return _fail("D: menu bar would fire accelerators (double key handling)")
 	var file_menu := _root._menu_bar.get_menu_popup(0)
-	if file_menu.get_item_accelerator(0) != (KEY_O | KEY_MASK_CTRL):
-		return _fail("D: Open lacks its Ctrl+O accelerator (got %d)"
+	# M46: File starts with New (Ctrl+N); Open follows.
+	if file_menu.get_item_accelerator(0) != (KEY_N | KEY_MASK_CTRL):
+		return _fail("D: New lacks its Ctrl+N accelerator (got %d)"
 			% file_menu.get_item_accelerator(0))
+	if file_menu.get_item_accelerator(1) != (KEY_O | KEY_MASK_CTRL):
+		return _fail("D: Open lacks its Ctrl+O accelerator (got %d)"
+			% file_menu.get_item_accelerator(1))
 	if file_menu.get_item_text(0).contains("\t"):
 		return _fail("D: shortcut still baked into the label")
 	var edit_menu := _root._menu_bar.get_menu_popup(1)

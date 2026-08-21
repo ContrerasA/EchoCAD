@@ -463,6 +463,22 @@ func _edge_treat(a: Dictionary, p: StreamPeerTCP, id: Variant,
 	return {"feature": fid}
 
 
+## --- M46 document safety ------------------------------------------------------------
+
+func _cmd_action_show_start_panel(_a: Dictionary, _p: StreamPeerTCP, _id: Variant) -> Dictionary:
+	app.show_start_panel()
+	return {}
+
+
+func _cmd_action_autosave(_a: Dictionary, _p: StreamPeerTCP, _id: Variant) -> Dictionary:
+	return {"written": app.autosave_now(), "path": app.autosave_path(),
+		"pending": app.pending_recoveries().size()}
+
+
+func _cmd_query_recent(_a: Dictionary, _p: StreamPeerTCP, _id: Variant) -> Dictionary:
+	return {"recent": app.recent_files(), "dirty": app.stack.is_dirty()}
+
+
 ## --- M44 exchange ------------------------------------------------------------------
 
 ## {path, scale?} -> {features: [ids], count}
