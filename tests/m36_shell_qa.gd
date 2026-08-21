@@ -212,25 +212,26 @@ func _run() -> bool:
 	var fr := cube.face_screen_px(Vector3(0, -1, 0))
 	if not bool(fr["ok"]):
 		return _fail("G: FRONT face not clickable from the home view")
-	# Navigation widgets (CHANGES #5): four quarter-turn arrows + home, each
-	# with a hit rect inside the widget; a step turns the rig, home restores.
+	# Navigation widgets (CHANGES #5): home + swooping ccw/cw quarter-turn
+	# arrows, each with a hit rect inside the widget; a turn steps the rig's
+	# yaw, home restores.
 	var rects := cube.nav_rects()
-	for k in ["home", "left", "right", "up", "down"]:
+	for k in ["home", "ccw", "cw"]:
 		if not rects.has(k) or not Rect2(Vector2.ZERO, cube.size).encloses(rects[k]):
 			return _fail("G: nav widget %s missing or outside the cube" % k)
 	var yaw0: float = _root.rig.yaw
-	cube.nav_requested.emit("left")
+	cube.nav_requested.emit("ccw")
 	await _idle()
 	if absf(wrapf(_root.rig.yaw - yaw0 - PI / 2.0, -PI, PI)) > 1e-3:
-		return _fail("G: left arrow did not step the yaw by a quarter turn")
+		return _fail("G: ccw arrow did not step the yaw by a quarter turn")
 	cube.nav_requested.emit("home")
 	await _idle()
 	if absf(_root.rig.yaw - OrbitCamera.HOME_YAW) > 1e-3 \
 			or absf(_root.rig.pitch - OrbitCamera.HOME_PITCH) > 1e-3:
 		return _fail("G: home widget did not restore the 3/4 view")
 	# Hover feedback: motion over a glyph marks it hot.
-	cube._on_nav_input(_motion((rects["up"] as Rect2).get_center()))
-	if cube._nav_hover != "up":
+	cube._on_nav_input(_motion((rects["cw"] as Rect2).get_center()))
+	if cube._nav_hover != "cw":
 		return _fail("G: nav glyph has no hover feedback")
 	cube._on_nav_input(_motion(Vector2(-50, -50)))
 

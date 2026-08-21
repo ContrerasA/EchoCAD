@@ -4,7 +4,9 @@ Fusion 360–style parametric CAD in Godot 4.7. Phase 1: constrained/dimensioned
 2D sketches on planes in a 3D viewport, feature timeline. Read `docs/PLAN.md`
 (architecture + locked decisions), `docs/MILESTONES.md` (M0–M12, one git branch
 each), `docs/TESTING.md` (test strategy + automation RPC spec) and
-`docs/THEMING.md` (theme file format) before working.
+`docs/THEMING.md` (theme file format) before working. Volume 2 lives in
+`docs/MILESTONES2.md` (M26–M36), volume 3 — the alpha plan — in
+`docs/MILESTONES3.md` (M38–M50 + polish rounds P1–P4).
 
 ## Commands
 
