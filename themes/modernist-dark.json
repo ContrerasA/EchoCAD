@@ -71,6 +71,13 @@
 
     "bg3d":          "#232222",
     "ambient":       "#a6a3a1",
+    "light_key":     "#fff3e6",
+    "light_fill":    "#dce6f2",
+    "light_rim":     "#ffffff",
+    "light_bounce":  "#cfc9c3",
+    "sky_top":       "#e8eaee",
+    "sky_horizon":   "#8a8c90",
+    "sky_ground":    "#242323",
     "sketch_bg":     "@ink-5",
     "grid_minor":    "@white*0.06",
     "grid_major":    "@white*0.10",
@@ -122,6 +129,14 @@
   },
 
   "metrics": {
+    "light_key_energy": 1.35,
+    "light_fill_energy": 0.42,
+    "light_rim_energy": 0.35,
+    "light_bounce_energy": 0.14,
+    "ambient_energy": 0.62,
+    "body_roughness": 0.45,
+    "body_metallic": 0.0,
+
     "radius": 3,
     "radius_small": 2,
     "border_width": 1,

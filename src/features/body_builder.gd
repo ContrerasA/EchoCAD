@@ -888,12 +888,30 @@ static func _finish_csg_mesh(baked: ArrayMesh) -> ArrayMesh:
 			var kb: String = vkey.call(b)
 			var k := ka + "|" + kb if ka < kb else kb + "|" + ka
 			if not edge_rec.has(k):
-				edge_rec[k] = {"a": a, "b": b, "n": []}
+				edge_rec[k] = {"a": a, "b": b, "n": [], "t": []}
 			((edge_rec[k] as Dictionary)["n"] as Array).append(face_n[t / 3])
+			((edge_rec[k] as Dictionary)["t"] as Array).append(t / 3)
 	var edges := PackedVector3Array()
 	# Same 15° sharpness threshold ExtrudeFeature uses for its wall seams, so
 	# tessellated circles stay seam-free on boolean bodies too.
 	var flat_dot := cos(deg_to_rad(15.0))
+	# Smoothing groups: triangles joined across every edge that is NOT drawn
+	# belong to the same curved surface, so their shared vertices average to
+	# one normal (union-find, path-halved). Without this a CSG cylinder shades
+	# as a fan of flat facets — see SolidKernel.to_mesh for the same fix on
+	# the kernel path, where face ids supply the grouping directly.
+	# A plain Array, not PackedInt32Array: GDScript lambdas capture by value,
+	# and a packed array IS a value — `find` would get its own frozen copy.
+	var parent: Array = []
+	parent.resize(face_n.size())
+	for i in parent.size():
+		parent[i] = i
+	var find := func(x: int) -> int:
+		var r := x
+		while parent[r] != r:
+			parent[r] = parent[parent[r]]
+			r = parent[r]
+		return r
 	for k: String in edge_rec:
 		var rec: Dictionary = edge_rec[k]
 		var ns: Array = rec["n"]
@@ -903,6 +921,25 @@ static func _finish_csg_mesh(baked: ArrayMesh) -> ArrayMesh:
 		if draw:
 			edges.append(rec["a"])
 			edges.append(rec["b"])
+		else:
+			var ts: Array = rec["t"]
+			var ra: int = find.call(int(ts[0]))
+			var rb: int = find.call(int(ts[1]))
+			if ra != rb:
+				parent[rb] = ra
+	var acc := {}
+	for t in range(0, tris.size(), 3):
+		var grp: int = find.call(t / 3)
+		var wn := (tris[t + 1] - tris[t]).cross(tris[t + 2] - tris[t])
+		for e in 3:
+			var vk: String = vkey.call(tris[t + e]) + "#" + str(grp)
+			acc[vk] = (acc.get(vk, Vector3.ZERO) as Vector3) + wn
+	for t in range(0, tris.size(), 3):
+		var grp2: int = find.call(t / 3)
+		for e in 3:
+			var s: Vector3 = acc[vkey.call(tris[t + e]) + "#" + str(grp2)]
+			if s.length_squared() > 1e-12 					and s.normalized().dot(face_n[t / 3]) > 0.2:
+				normals[t + e] = s.normalized()
 	var mesh := ArrayMesh.new()
 	var arrays2 := []
 	arrays2.resize(Mesh.ARRAY_MAX)

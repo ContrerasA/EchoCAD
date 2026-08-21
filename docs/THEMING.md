@@ -94,6 +94,18 @@ against `bg3d`), `edge_candidate` (pickable edge lines while a fillet /
 chamfer pick is armed; picked edges use `body_selected`, the hovered chain
 `hover`), `section_cap` (the cut face of bodies in section analysis)
 
+**Studio lighting** — the model-mode 3D scene is lit by a four-light rig
+standing inside an ambient dome, both theme-driven. `light_key` (the main
+light, upper-left of the view), `light_fill` (the soft opposite side),
+`light_rim` (behind and above, so a silhouette separates from `bg3d`),
+`light_bounce` (a faint up-light standing in for ground bounce). The dome
+supplies the ambient: `sky_top` (the ceiling), `sky_horizon` (the walls) and
+`sky_ground` (the floor). The dome is never drawn — the backdrop stays the
+flat `bg3d` — so treat these as the studio the part sits in, not as sky. The
+rig spins with the camera azimuth, so the key light stays upper-left however
+the model is orbited; `ambient` remains the flat-ambient colour used by
+renderers without a sky.
+
 **Sketch ink** — `ink_free` (under-constrained), `ink_constrained`,
 `ink_construction`, `ink_projected`, `ink_reference`, `region_fill`,
 `dim_line`, `dim_driven`, `constraint_ok`, `constraint_unsolved`,
@@ -111,6 +123,15 @@ bar), `dialog_label_w` / `dialog_pad` / `dialog_gap` / `dialog_min_w` /
 `dialog_field_w` (feature dialog row label width, outer padding, row gap,
 minimum width, field width) — all in pixels. `small_button_w/h` is the icon-only ribbon square,
 `big_button_w/h` the footprint once *Show tool names* is on.
+
+Shading metrics are unitless multipliers, not pixels: `light_key_energy`,
+`light_fill_energy`, `light_rim_energy` and `light_bounce_energy` are the four
+rig lights' strengths, `ambient_energy` scales the whole ambient dome (it
+drives the sky material's own energy — `Environment.ambient_light_energy`
+does nothing to sky-sourced ambient under the compatibility renderer), and
+`body_roughness` / `body_metallic` set the surface finish of solids. Raising
+`ambient_energy` against the light energies flattens the model; lowering it
+deepens the shadow side.
 
 ## Type variations
 

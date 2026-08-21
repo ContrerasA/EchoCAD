@@ -300,6 +300,31 @@ static func to_mesh(solid: RefCounted) -> Dictionary:
 		normals[t * 3] = n
 		normals[t * 3 + 1] = n
 		normals[t * 3 + 2] = n
+	# Smooth-shade WITHIN a face. Flat per-triangle normals made every
+	# tessellated cylinder read as a fan of discrete facets — banding that no
+	# amount of lighting can fix, because the surface really is being shaded
+	# as a polygon. Kernel face ids give the grouping for free: a cylindrical
+	# wall is ONE face, so averaging the normals of the triangles that share
+	# a vertex AND a face id makes it a smooth gradient, while every face
+	# boundary (wall-to-cap, cut faces, fillet edges) stays perfectly hard.
+	# Triangle area falls out of the cross product, so the raw sum is already
+	# area-weighted — the correct weighting for uneven tessellation.
+	var acc := {}
+	for t in nt:
+		var fid: int = fids[t] if t < fids.size() else 0
+		var a2 := verts[idx[t * 3]]
+		var wn := (verts[idx[t * 3 + 1]] - a2).cross(verts[idx[t * 3 + 2]] - a2)
+		for e in 3:
+			var k := Vector2i(idx[t * 3 + e], fid)
+			acc[k] = (acc.get(k, Vector3.ZERO) as Vector3) + wn
+	for t in nt:
+		var fid2: int = fids[t] if t < fids.size() else 0
+		for e in 3:
+			var s: Vector3 = acc[Vector2i(idx[t * 3 + e], fid2)]
+			# A sum that cancels out (a degenerate sliver, a face that folds
+			# back on itself) keeps the honest flat normal.
+			if s.length_squared() > 1e-12 and s.normalized().dot(face_n[t]) > 0.2:
+				normals[t * 3 + e] = s.normalized()
 	# Edge overlay from the welded index topology: an edge draws when its two
 	# triangles belong to different faces, or meet sharply anyway (a
 	# boolean can leave two same-id triangles at a crease), or it is open.

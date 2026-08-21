@@ -48,6 +48,13 @@
 
     "bg3d":          "#e9e8e8",
     "ambient":       "#b8b6b4",
+    "light_key":     "#fffaf2",
+    "light_fill":    "#e6ecf5",
+    "light_rim":     "#ffffff",
+    "light_bounce":  "#d8d4d0",
+    "sky_top":       "#f4f5f7",
+    "sky_horizon":   "#9c9ea2",
+    "sky_ground":    "#4a4948",
     "sketch_bg":     "#f3f2f2",
     "grid_minor":    "@black*0.08",
     "grid_major":    "@black*0.16",

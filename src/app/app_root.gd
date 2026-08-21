@@ -871,6 +871,9 @@ func _build_ui() -> void:
 			view_cube.sync_orientation(rig.rotation)
 		# Grid density follows the camera, like the sketch canvas's follows zoom.
 		world.update_grid(rig.view_height_mm(), rig.target)
+		# The studio rig turns with the view azimuth, so no orbit angle can
+		# leave the model on its unlit side.
+		world.sync_lights(rig.yaw)
 		# Off-axis sketching projects the overlay chrome (vertex markers,
 		# selection, badges) through this camera — every camera move must
 		# repaint it, or the points trail the 3D lines until the orbit ends.
@@ -878,6 +881,7 @@ func _build_ui() -> void:
 			overlay.queue_redraw())
 	# Pivot sources: Fusion's body-center default and Blender's under-cursor
 	# orbit point. VIEW_CENTER needs neither.
+	world.sync_lights(rig.yaw)
 	rig.bounds_provider = func() -> AABB: return world.model_bounds()
 	rig.orbit_point_provider = func(screen: Vector2) -> Dictionary:
 		var r := rig.pixel_ray(screen)

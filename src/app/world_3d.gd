@@ -41,6 +41,28 @@ static func COLOR_BODY_SELECTED() -> Color:
 ## Solid edge overlay — dark, Fusion-style, so silhouettes read at any angle.
 static func COLOR_BODY_EDGE() -> Color:
 	return ThemeService.col("body_edge")
+## Studio light rig, Fusion-style. The whole lighting model used to be ONE
+## directional light plus a flat ambient colour, and that cannot describe
+## curvature: flat ambient adds the identical term to every normal, so
+## whatever the single light missed came out as one uniform silhouette — the
+## "can't see any detail" spacer-stack shot. (The other half of that report
+## was the inverted render winding; see `_display_mesh`.) Four lights spread
+## around the view give walls a real gradient, a bright top, a soft opposite
+## fill, and a rim that separates the silhouette from the backdrop.
+##
+## Directions are authored in the VIEW frame — x = camera right, y = into the
+## screen, z = world up — and spun by the camera azimuth in `sync_lights`, so
+## orbiting can never park the model on its unlit side. Up stays world up, so
+## tops read as tops however the model is turned.
+##
+## Each entry: [theme colour role, direction the light comes FROM,
+## energy metric, specular].
+const LIGHT_RIG := [
+	["light_key", Vector3(-0.32, -0.28, 0.90), "light_key_energy", 0.55],
+	["light_fill", Vector3(0.85, -0.30, 0.30), "light_fill_energy", 0.10],
+	["light_rim", Vector3(0.15, 0.85, 0.50), "light_rim_energy", 0.30],
+	["light_bounce", Vector3(-0.15, -0.10, -0.98), "light_bounce_energy", 0.0],
+]
 const AXIS_LEN := 150.0
 ## Transparent draw order: the grid draws early among transparents.
 const GRID_RENDER_PRIORITY := -1
@@ -96,6 +118,14 @@ var _sketch_root: Node3D = null
 var _grid: MeshInstance3D = null
 ## Kept so a theme switch (M26) can recolor the background without a rebuild.
 var _env: Environment = null
+## Studio rig, parallel to LIGHT_RIG, plus the dome material driving ambient.
+var _lights: Array[DirectionalLight3D] = []
+var _sky_mat: ProceduralSkyMaterial = null
+## Camera azimuth the rig is currently aimed for; INF forces the next sync.
+var _light_yaw := INF
+## Last azimuth handed to `sync_lights`, so a rebuild can re-aim without the
+## camera having to move again.
+var _view_yaw := 0.0
 
 ## The plane the ground grid currently lies on. Model mode shows XY (the
 ## ground); sketch mode moves it onto the sketch's own plane so the grid
@@ -170,28 +200,109 @@ signal bodies_rebuilt
 
 
 func _ready() -> void:
-	var light := DirectionalLight3D.new()
-	light.name = "Sun"
-	# Z-up world: aim the key light down from above (-Z) and slightly to the
-	# side, so the ground plane and solid tops are the lit surfaces.
-	light.basis = Basis.looking_at(Vector3(-0.4, 0.6, -1.0), Vector3(0, 0, 1))
-	add_child(light)
+	_build_lights()
 	var env := WorldEnvironment.new()
 	var e := Environment.new()
 	e.background_mode = Environment.BG_COLOR
 	e.background_color = ThemeService.col("bg3d")
-	e.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	e.ambient_light_color = ThemeService.col("ambient")
-	e.ambient_light_energy = 0.6
+	# Hemispheric ambient from a studio dome, not one flat colour. Flat
+	# ambient is normal-independent, so it FLATTENS curvature — every facet of
+	# a cylinder gets the identical term. A sky dome (bright ceiling, mid
+	# horizon, dark floor) shades by which way a surface faces, which is what
+	# keeps an unlit wall reading as round. The backdrop stays the theme's
+	# flat `bg3d`: the dome is the environment the model stands in, not
+	# something the user should see.
+	_sky_mat = ProceduralSkyMaterial.new()
+	var sky := Sky.new()
+	sky.sky_material = _sky_mat
+	e.sky = sky
+	e.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+	e.reflected_light_source = Environment.REFLECTION_SOURCE_SKY
 	env.environment = e
 	_env = e
 	add_child(env)
+	_apply_environment_theme()
 	_build_grid()
 	_build_axes()
 	_build_planes()
 	_sketch_root = Node3D.new()
 	_sketch_root.name = "Sketches"
 	add_child(_sketch_root)
+
+
+## (Re)create the four rig lights from the theme. Shadows stay OFF: a cast
+## shadow chopping a part into light and dark reads as geometry that is not
+## there, and CAD viewports have always been ambient-occlusion-ish rather
+## than sun-and-shadow.
+func _build_lights() -> void:
+	for l in _lights:
+		l.queue_free()
+	_lights.clear()
+	for spec: Array in LIGHT_RIG:
+		var l := DirectionalLight3D.new()
+		l.name = "Light_" + String(spec[0])
+		l.light_color = ThemeService.col(String(spec[0]))
+		l.light_energy = ThemeService.metric(String(spec[2]), 1.0)
+		l.light_specular = float(spec[3])
+		l.shadow_enabled = false
+		add_child(l)
+		_lights.append(l)
+	_light_yaw = INF
+	sync_lights(_view_yaw)
+
+
+## Spin the rig to the camera's azimuth (radians about world +Z, the
+## OrbitCamera's `yaw`). Cheap and idempotent — the orbit signal fires on
+## every mouse step, so it early-outs when nothing turned.
+func sync_lights(yaw: float) -> void:
+	_view_yaw = yaw
+	if is_equal_approx(yaw, _light_yaw):
+		return
+	_light_yaw = yaw
+	var spin := Basis(Vector3(0, 0, 1), yaw)
+	for i in _lights.size():
+		var from: Vector3 = (spin * (LIGHT_RIG[i][1] as Vector3)).normalized()
+		_lights[i].basis = _aim(-from)
+
+
+## Basis whose -Z points along `dir`, safe when `dir` is (anti)parallel to
+## world up — `Basis.looking_at` cannot use a colinear up vector.
+static func _aim(dir: Vector3) -> Basis:
+	var d := dir.normalized()
+	var up := Vector3(0, 0, 1)
+	if absf(d.dot(up)) > 0.999:
+		up = Vector3(0, 1, 0)
+	return Basis.looking_at(d, up)
+
+
+## Push theme values into the environment: backdrop, the ambient dome's three
+## bands, and its overall strength.
+func _apply_environment_theme() -> void:
+	if _env == null:
+		return
+	var strength := ThemeService.metric("ambient_energy", 0.4)
+	_env.background_color = ThemeService.col("bg3d")
+	_env.ambient_light_color = ThemeService.col("ambient")
+	_env.ambient_light_energy = strength
+	if _sky_mat == null:
+		return
+	_sky_mat.sky_top_color = ThemeService.col("sky_top")
+	_sky_mat.sky_horizon_color = ThemeService.col("sky_horizon")
+	_sky_mat.ground_horizon_color = ThemeService.col("sky_horizon")
+	_sky_mat.ground_bottom_color = ThemeService.col("sky_ground")
+	# Broad, soft bands — a studio softbox, not a sky with a hard horizon.
+	_sky_mat.sky_curve = 0.25
+	_sky_mat.ground_curve = 0.25
+	# No sun disc in the dome: the rig's key light already provides the
+	# directional term, and a second one baked into the ambient double-lights.
+	_sky_mat.sun_angle_max = 0.0
+	# `ambient_energy` has to ride the DOME, not Environment.ambient_light_energy:
+	# under the compatibility renderer that property does not scale sky-sourced
+	# ambient at all (measured — 0.45, 0.22 and 0.0 rendered byte-identical),
+	# so the token would have been dead. Scaling the material's own energy
+	# works on every renderer. It is set on both so the meaning is the same
+	# whichever backend the project is built with.
+	_sky_mat.energy_multiplier = strength
 
 
 func _build_axes() -> void:
@@ -448,9 +559,8 @@ func _push_grid_uniforms() -> void:
 
 ## Re-read the ThemeService palette (M26): background, ambient, grid colors.
 func apply_theme() -> void:
-	if _env != null:
-		_env.background_color = ThemeService.col("bg3d")
-		_env.ambient_light_color = ThemeService.col("ambient")
+	_apply_environment_theme()
+	_build_lights()
 	if _grid != null:
 		var mat := _grid.material_override as ShaderMaterial
 		if mat != null:
@@ -1044,7 +1154,10 @@ func set_feature_hover(body_fid: String, ordinal: int) -> void:
 	var entry := body_entry(body_fid)
 	if mi == null or entry.is_empty():
 		return
-	var mesh := mi.mesh as ArrayMesh
+	# The MODEL mesh, not `mi.mesh`: the displayed copy has its winding
+	# flipped for Godot (see `_display_mesh`), and this lifts the highlight
+	# along the triangle's own outward normal.
+	var mesh := entry.get("mesh") as ArrayMesh
 	var fids: PackedInt32Array = entry.get("face_ids", PackedInt32Array())
 	if mesh == null or mesh.get_surface_count() == 0 or fids.is_empty():
 		return
@@ -1776,7 +1889,7 @@ func _apply_bodies(bodies: Array) -> void:
 			continue
 		var smi := MeshInstance3D.new()
 		smi.name = b["name"]
-		smi.mesh = mesh
+		smi.mesh = _display_mesh(mesh)
 		# Feature id rides along so picks and the browser tree can map a
 		# mesh back to its feature — node names follow the display name,
 		# which the user can end up renaming.
@@ -1786,8 +1899,11 @@ func _apply_bodies(bodies: Array) -> void:
 		# Per-body appearance (M32): the root feature's color, when set.
 		mat.albedo_color = COLOR_BODY_SELECTED() if b["id"] == _selected_body \
 			else _body_base_color(String(b["id"]))
-		mat.metallic = 0.1
-		mat.roughness = 0.7
+		# Semi-gloss, like Fusion's default appearance: a highlight that
+		# travels across a curved wall as the model turns is half of what
+		# makes the wall read as curved at all. The old 0.7 roughness ate it.
+		mat.metallic = ThemeService.metric("body_metallic", 0.0)
+		mat.roughness = ThemeService.metric("body_roughness", 0.45)
 		# Double-sided: with a closed outward-wound shell the back faces are
 		# depth-hidden anyway, so this costs nothing — and it guarantees a
 		# solid can NEVER render see-through even if some profile slips
@@ -1806,7 +1922,7 @@ func _apply_bodies(bodies: Array) -> void:
 		if cap_mesh != null and cap_mesh.get_surface_count() > 0:
 			var cmi := MeshInstance3D.new()
 			cmi.name = String(b["name"]) + "SectionCap"
-			cmi.mesh = cap_mesh
+			cmi.mesh = _display_mesh(cap_mesh)
 			cmi.set_meta("is_body", true)
 			cmi.set_meta("section_cap", true)
 			var cmat := StandardMaterial3D.new()
@@ -1817,6 +1933,77 @@ func _apply_bodies(bodies: Array) -> void:
 			cmi.material_override = cmat
 			cmi.visible = smi.visible
 			_sketch_root.add_child(cmi)
+
+
+## Where a body mesh caches its render-ready copy (see `_display_mesh`).
+const DISPLAY_META := "echocad_display_mesh"
+
+
+## Godot rasterises CLOCKWISE-wound triangles as FRONT faces. Every mesh in
+## this project is counter-clockwise-outward — the convention the kernel, the
+## volume integrals and STL export all share — so a body mesh handed straight
+## to a MeshInstance3D is entirely BACK-facing. `CULL_DISABLED` kept it
+## visible, which hid the real damage: a double-sided material flips the
+## normal of every back-facing fragment, so the whole model shaded inside-out.
+## A light above lit the underside, a face turned toward the key light came
+## out dark, and no surface had any form at all — the "cannot see any detail"
+## report. (Proof, if it is ever doubted again: switch this material to
+## CULL_BACK and the solids turn inside out on screen.)
+##
+## Flipping the winding is a RENDER-boundary conversion, the same shape of
+## rule as "bezier conversion only in RenderBridge": the model keeps the one
+## winding every other consumer already agrees on, so volume, sections, STL
+## and mass properties are untouched. Triangle ORDER is preserved — face ids
+## and the pick's triangle index are keyed on it — only the two trailing
+## corners of each triangle swap.
+static func _display_mesh(mesh: ArrayMesh) -> ArrayMesh:
+	# Memoised ON the source mesh. An incremental rebuild (M47) hands back the
+	# very same ArrayMesh for every body it did not have to touch, and
+	# re-uploading those unchanged surfaces to the GPU on each rebuild is a
+	# cost the click-then-read dialogs measurably feel. Meshes here are built
+	# fresh and never mutated in place, so the copy can never go stale.
+	if mesh.has_meta(DISPLAY_META):
+		var cached: Variant = mesh.get_meta(DISPLAY_META)
+		if cached is ArrayMesh:
+			return cached
+	var out := ArrayMesh.new()
+	for s in mesh.get_surface_count():
+		var prim := mesh.surface_get_primitive_type(s)
+		var arrays := mesh.surface_get_arrays(s)
+		if prim == Mesh.PRIMITIVE_TRIANGLES:
+			var iv: Variant = arrays[Mesh.ARRAY_INDEX]
+			if iv != null and (iv as PackedInt32Array).size() > 0:
+				var idx := (iv as PackedInt32Array).duplicate()
+				var t := 0
+				while t + 2 < idx.size():
+					var tmp := idx[t + 1]
+					idx[t + 1] = idx[t + 2]
+					idx[t + 2] = tmp
+					t += 3
+				arrays[Mesh.ARRAY_INDEX] = idx
+			else:
+				var verts := (arrays[Mesh.ARRAY_VERTEX] as PackedVector3Array).duplicate()
+				var nv: Variant = arrays[Mesh.ARRAY_NORMAL]
+				var norms := PackedVector3Array()
+				if nv != null:
+					norms = (nv as PackedVector3Array).duplicate()
+				var smooth := norms.size() == verts.size()
+				var t2 := 0
+				while t2 + 2 < verts.size():
+					var tv := verts[t2 + 1]
+					verts[t2 + 1] = verts[t2 + 2]
+					verts[t2 + 2] = tv
+					if smooth:
+						var tn := norms[t2 + 1]
+						norms[t2 + 1] = norms[t2 + 2]
+						norms[t2 + 2] = tn
+					t2 += 3
+				arrays[Mesh.ARRAY_VERTEX] = verts
+				if smooth:
+					arrays[Mesh.ARRAY_NORMAL] = norms
+		out.add_surface_from_arrays(prim, arrays)
+	mesh.set_meta(DISPLAY_META, out)
+	return out
 
 
 ## The last built body list: [{id, name, mesh, feature_ids}]. Display state —

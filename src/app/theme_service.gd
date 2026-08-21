@@ -76,6 +76,10 @@ const FALLBACK_COLORS := {
 	"error": "#de6358",
 	# viewport + canvas
 	"bg3d": "#232222", "ambient": "#8d8a88", "sketch_bg": "#242322",
+	# studio light rig + the ambient dome it stands in (see docs/THEMING.md)
+	"light_key": "#fff3e6", "light_fill": "#dce6f2",
+	"light_rim": "#ffffff", "light_bounce": "#cfc9c3",
+	"sky_top": "#e8eaee", "sky_horizon": "#8a8c90", "sky_ground": "#242323",
 	"grid_minor": "#ffffff10", "grid_major": "#ffffff1a",
 	"sk_grid_minor": "#ffffff0d", "sk_grid_major": "#ffffff16",
 	"axis_x": "#e05a4a", "axis_y": "#7fc97f", "axis_z": "#6f9fd8",
@@ -109,6 +113,10 @@ const FALLBACK_METRICS := {
 	"title_height": 28.0,
 	"dialog_label_w": 84.0, "dialog_pad": 10.0, "dialog_gap": 6.0,
 	"dialog_min_w": 300.0, "dialog_field_w": 170.0,
+	# 3D shading: rig energies, ambient dome strength, body surface finish
+	"light_key_energy": 1.35, "light_fill_energy": 0.42,
+	"light_rim_energy": 0.35, "light_bounce_energy": 0.14,
+	"ambient_energy": 0.62, "body_roughness": 0.45, "body_metallic": 0.0,
 }
 
 const FALLBACK_FONT_SIZES := {
