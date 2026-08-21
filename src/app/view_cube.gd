@@ -6,16 +6,22 @@ extends SubViewportContainer
 ## Face detection is math (ray vs box), no physics.
 
 signal face_picked(normal: Vector3, up: Vector3)
+## A navigation widget around the cube was clicked: "left" / "right" /
+## "up" / "down" step the orbit by a quarter turn, "home" is the 3/4 view.
+signal nav_requested(kind: String)
 
-const SIZE_PX := 150
+const SIZE_PX := 180
 const CUBE_HALF := 20.0
-const CAM_DIST := 118.0
+const CAM_DIST := 142.0
 const AXIS_LEN := 14.0
 ## Camera-space offsets: the cube sits up-right of centre, the triad pinned
 ## to the bottom-left corner of the widget (Fusion's layout) so neither ever
 ## clips at the viewport edge whichever way the view turns.
-const CUBE_SHIFT := Vector3(-7.0, -8.0, 0.0)
-const TRIAD_AT := Vector3(-29.0, -31.0, 0.0)
+const CUBE_SHIFT := Vector3(-12.0, -10.0, 0.0)
+const TRIAD_AT := Vector3(-36.0, -38.0, 0.0)
+## Navigation widgets (CHANGES #5): glyph size + inset from the widget edge.
+const NAV_PX := 22.0
+const NAV_INSET := 4.0
 
 ## Face normal -> [label, on-screen up]. World is Z-up; the home view looks
 ## from -Y, so -Y is FRONT and +X is RIGHT (matches Fusion's default cube).
@@ -34,6 +40,8 @@ var _labels: Array = []        # Label3D per face
 var _axes: Array = []          # [{mesh: MeshInstance3D, label: Label3D, role}]
 var _edges: MeshInstance3D = null
 var _triad: Node3D = null
+var _nav: Control = null
+var _nav_hover := ""
 
 ## Orientation to adopt in `_ready`. The rig emits `moved` from its own
 ## `_ready`, which runs before this widget exists, so the first sync would
@@ -59,6 +67,8 @@ func apply_theme() -> void:
 		((a["mesh"] as MeshInstance3D).material_override as StandardMaterial3D) \
 			.albedo_color = c
 		(a["label"] as Label3D).modulate = c
+	if _nav != null:
+		_nav.queue_redraw()
 
 
 func _ready() -> void:
@@ -111,6 +121,105 @@ func _ready() -> void:
 	# rotation, but the cube must never sit in an unset pose waiting for the
 	# first orbit â€” that is exactly the bug this guards against.
 	sync_orientation(rotation_hint)
+	# 2D navigation widgets over the 3D cube. MOUSE_FILTER_PASS: clicks that
+	# miss a glyph fall through to the cube's own face picking.
+	_nav = Control.new()
+	_nav.name = "Nav"
+	_nav.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_nav.mouse_filter = Control.MOUSE_FILTER_PASS
+	_nav.draw.connect(_draw_nav)
+	_nav.gui_input.connect(_on_nav_input)
+	_nav.mouse_exited.connect(func() -> void:
+		_nav_hover = ""
+		_nav.queue_redraw())
+	add_child(_nav)
+
+
+## Hit rectangles of the navigation glyphs, keyed by kind. Arrows sit at the
+## middle of each edge (around the cube), home in the free top-left corner.
+func nav_rects() -> Dictionary:
+	var s := size
+	var n := NAV_PX
+	var i := NAV_INSET
+	return {
+		"home": Rect2(i, i, n, n),
+		"up": Rect2((s.x - n) * 0.62, i, n, n),
+		"down": Rect2((s.x - n) * 0.62, s.y - n - i, n, n),
+		"left": Rect2(i, (s.y - n) * 0.42, n, n),
+		"right": Rect2(s.x - n - i, (s.y - n) * 0.42, n, n),
+	}
+
+
+## Window-pixel centre of a navigation glyph — lets automation click it.
+func nav_screen_px(kind: String) -> Dictionary:
+	var rects := nav_rects()
+	if not rects.has(kind):
+		return {"ok": false, "x": 0.0, "y": 0.0}
+	var c: Vector2 = get_global_rect().position + (rects[kind] as Rect2).get_center()
+	return {"ok": true, "x": c.x, "y": c.y}
+
+
+func _nav_at(pos: Vector2) -> String:
+	var rects := nav_rects()
+	for k in rects:
+		if (rects[k] as Rect2).has_point(pos):
+			return String(k)
+	return ""
+
+
+func _on_nav_input(event: InputEvent) -> void:
+	if event is InputEventMouseMotion:
+		var k := _nav_at((event as InputEventMouseMotion).position)
+		if k != _nav_hover:
+			_nav_hover = k
+			_nav.queue_redraw()
+		return
+	if not (event is InputEventMouseButton):
+		return
+	var mb := event as InputEventMouseButton
+	if mb.button_index != MOUSE_BUTTON_LEFT or not mb.pressed:
+		return
+	var k := _nav_at(mb.position)
+	if k == "":
+		return
+	_nav.accept_event()
+	nav_requested.emit(k)
+
+
+func _draw_nav() -> void:
+	var ink := ThemeService.col("view_cube_nav")
+	var hot := ThemeService.col("accent")
+	var rects := nav_rects()
+	for k in rects:
+		var r: Rect2 = rects[k]
+		var hovered := String(k) == _nav_hover
+		var c := hot if hovered else ink
+		if hovered:
+			var bg := ThemeService.col("hud")
+			_nav.draw_rect(r.grow(2.0), bg)
+			_nav.draw_rect(r.grow(2.0), hot, false, 1.0)
+		var m := r.get_center()
+		var h := r.size.x * 0.32
+		match String(k):
+			"home":
+				# Roof + walls.
+				var roof := PackedVector2Array([m + Vector2(-h, 0),
+					m + Vector2(0, -h), m + Vector2(h, 0)])
+				_nav.draw_polyline(roof, c, 2.0, true)
+				_nav.draw_rect(Rect2(m + Vector2(-h * 0.7, 0), Vector2(h * 1.4, h)),
+					c, false, 2.0)
+			"up":
+				_nav.draw_colored_polygon(PackedVector2Array([m + Vector2(0, -h),
+					m + Vector2(h, h * 0.6), m + Vector2(-h, h * 0.6)]), c)
+			"down":
+				_nav.draw_colored_polygon(PackedVector2Array([m + Vector2(0, h),
+					m + Vector2(-h, -h * 0.6), m + Vector2(h, -h * 0.6)]), c)
+			"left":
+				_nav.draw_colored_polygon(PackedVector2Array([m + Vector2(-h, 0),
+					m + Vector2(h * 0.6, -h), m + Vector2(h * 0.6, h)]), c)
+			"right":
+				_nav.draw_colored_polygon(PackedVector2Array([m + Vector2(h, 0),
+					m + Vector2(-h * 0.6, h), m + Vector2(-h * 0.6, -h)]), c)
 
 
 ## Hairline cube edges so the faces read as a box even where two lit faces

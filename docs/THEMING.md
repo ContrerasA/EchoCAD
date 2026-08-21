@@ -88,7 +88,9 @@ Rules:
 **Viewport** — `bg3d`, `ambient`, `sketch_bg`, `grid_minor`, `grid_major`,
 `sk_grid_minor`, `sk_grid_major`, `axis_x`, `axis_y`, `axis_z`, `plane`,
 `plane_hover`, `body`, `body_selected`, `body_edge`, `hover`, `view_cube`
-(cube faces, a light grey), `view_cube_text` (face labels + edges)
+(cube faces, a light grey), `view_cube_text` (face labels + edges),
+`view_cube_nav` (the arrow / home glyphs around the cube — pick one that
+reads against `bg3d`)
 
 **Sketch ink** — `ink_free` (under-constrained), `ink_constrained`,
 `ink_construction`, `ink_projected`, `ink_reference`, `region_fill`,

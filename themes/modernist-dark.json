@@ -86,6 +86,7 @@
     "body_edge":     "@ink-3",
     "view_cube":     "#cfcbc8",
     "view_cube_text": "#2a2827",
+    "view_cube_nav":  "#b5b1ae",
     "hover":         "#ffe08c*0.35",
 
     "ink_free":            "@paper-5",

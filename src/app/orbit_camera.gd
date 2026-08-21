@@ -82,9 +82,20 @@ func _ready() -> void:
 	camera.near = 0.05
 	add_child(camera)
 	# Home view: Fusion-like 3/4 view onto the XY ground plane, from above.
-	yaw = -PI / 6.0
-	pitch = PI / 5.0
+	yaw = HOME_YAW
+	pitch = HOME_PITCH
 	_apply()
+
+
+## The standard 3/4 home view: FRONT, RIGHT and TOP faces visible, Z up.
+## (Positive yaw puts the eye on the +X side; see `_eye`.)
+const HOME_YAW := PI / 6.0
+const HOME_PITCH := PI / 5.0
+
+
+## Animate to the home view, keeping target + distance.
+func frame_home(animate := true) -> void:
+	_animate_to(HOME_YAW, HOME_PITCH, target, distance, animate)
 
 
 ## Rig rotation (Godot Euler) for the current yaw/pitch.
@@ -230,6 +241,14 @@ func _animate_to(to_yaw: float, to_pitch: float, at_target: Vector3,
 	_tween.tween_property(self, "target", at_target, ANIM_TIME)
 	_tween.tween_property(self, "distance", d, ANIM_TIME)
 	_tween.chain().tween_callback(func() -> void: yaw = wrapf(yaw, -PI, PI))
+
+
+## Step the orbit by whole angles (view-cube arrows): yaw turns about the
+## world up axis, pitch is clamped like a drag. Animated like frame_view.
+func step_view(dyaw: float, dpitch: float, animate := true) -> void:
+	_animate_to(yaw + dyaw,
+		clampf(pitch + dpitch, -PITCH_LIMIT, PITCH_LIMIT), target, distance,
+		animate)
 
 
 ## The running frame_view tween, or null when the last move was instant or has

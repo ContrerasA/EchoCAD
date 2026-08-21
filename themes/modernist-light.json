@@ -59,6 +59,7 @@
     "body_edge":     "#4a4745",
     "view_cube":     "#e4e2e0",
     "view_cube_text": "#2a2827",
+    "view_cube_nav":  "#5a5755",
     "hover":         "#e08c00*0.35",
 
     "ink_reference":       "#73808c*0.75",

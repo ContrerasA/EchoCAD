@@ -879,6 +879,7 @@ func _build_ui() -> void:
 	view_cube.position = Vector2(-ViewCube.SIZE_PX - 8,
 		ThemeService.metric("hud_height") + 8)
 	view_cube.face_picked.connect(_on_cube_face)
+	view_cube.nav_requested.connect(_on_cube_nav)
 	# The rig already emitted `moved` from its own _ready, before this widget
 	# existed — hand it the current orientation so it starts in agreement with
 	# the 3/4 home view instead of facing front until the first orbit.
@@ -2124,7 +2125,7 @@ func _on_views_pick(index: int) -> void:
 	if id == _VIEWS_ID_SAVE:
 		save_named_view()
 	elif id == _VIEWS_ID_HOME:
-		rig.frame_view(Vector3(0.5, -0.7, 0.5), Vector3(0, 0, 1))
+		go_home_view()
 	elif id >= 0 and id < doc.named_views.size():
 		apply_named_view(doc.named_views[id])
 
@@ -2589,7 +2590,7 @@ func finish_sketch() -> void:
 	world.set_grid_plane("XY")
 	world.rebuild_sketches(doc)
 	if _model_view_before_sketch.is_empty():
-		rig.frame_view(Vector3(0.5, -0.7, 0.5), Vector3(0, 0, 1))
+		rig.frame_home()
 	else:
 		rig.restore_view(_model_view_before_sketch)
 	_model_view_before_sketch = {}
@@ -4827,6 +4828,31 @@ func return_to_sketch_plane() -> void:
 		_sync_camera_to_sketch_view()
 		_refresh_ui())
 	_refresh_ui()
+
+
+## Home = the standard 3/4 view (front-right-top), Z up — the same pose the
+## app starts in (OrbitCamera.HOME_YAW / HOME_PITCH).
+func go_home_view() -> void:
+	if mode == Mode.SKETCH and not sketch_orbit:
+		return
+	rig.frame_home()
+
+
+## View-cube navigation widgets: quarter-turn steps around the model, or home.
+func _on_cube_nav(kind: String) -> void:
+	if mode == Mode.SKETCH and not sketch_orbit:
+		return   # square-on sketch editing owns the camera
+	match kind:
+		"home":
+			go_home_view()
+		"left":
+			rig.step_view(PI / 2.0, 0.0)
+		"right":
+			rig.step_view(-PI / 2.0, 0.0)
+		"up":
+			rig.step_view(0.0, PI / 2.0)
+		"down":
+			rig.step_view(0.0, -PI / 2.0)
 
 
 func _on_cube_face(normal: Vector3, up: Vector3) -> void:
